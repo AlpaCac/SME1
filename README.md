@@ -1,137 +1,122 @@
-# SME1
+## 方案整理
 
-这个仓库当前包含一个适合编译成 MLIR 的 C 语言矩阵计算 kernel：
-
-- [gemm_mlir_kernel.c](/Users/alpaca/Documents/SME/SME1/gemm_mlir_kernel.c)
-
-它参考了论文 [202512 国防科大 Demystifying ARM SME to Optimize  General Matrix Multiplications](/Users/alpaca/Documents/SME/论文/202512%20国防科大%20Demystifying%20ARM%20SME%20to%20Optimize%20%20General%20Matrix%20Multiplications.pdf) 的整体 GEMM 组织方式：
-
-- 外积式 GEMM
-- `mc / nc / kc` 分块
-- `mr / nr` 子块更新
-
-但实现上现在刻意保持为“单函数 + 规则分块循环 + 规则矩阵访存”，并去掉了显式向量类型、SME intrinsic、汇编和复杂打包逻辑。这样更适合作为“自定义 C -> 高层 MLIR 提升器”的输入。
-
-函数入口：
+### 1.**输入程序**
 
 ```c
-void gemm_fp32_mlir_kernel(int m,
-                           int n,
-                           int k,
-                           const float *restrict a,
+#include <stddef.h>
+
+/*
+ * @kernel gemm_fp32
+ * @semantic C = A * B
+ * @layout A row-major, B row-major, C row-major
+ * @blocking mc=128 nc=128 kc=128 mr=16 nr=16
+ * @lift-target linalg.matmul -> scf/affine -> vector -> arm_sme
+ */
+void gemm_fp32_mlir_kernel(int M,
+                           int N,
+                           int K,
+                           const float *A,
                            int lda,
-                           const float *restrict b,
+                           const float *B,
                            int ldb,
-                           float *restrict c,
-                           int ldc);
+                           float *C,
+                           int ldc) {
+  const int mc0 = 128;
+  const int nc0 = 128;
+  const int kc0 = 128;
+  const int mr0 = 16;
+  const int nr0 = 16;
+
+  int i;
+  int j;
+  int k;
+  int ii;
+  int jj;
+  int kk;
+
+  /*
+   * L1/L2/L3:
+   */
+  for (i = 0; i < M; i += mc0) {
+    int mc = (M - i < mc0) ? (M - i) : mc0;
+
+    for (j = 0; j < N; j += nc0) {
+      int nc = (N - j < nc0) ? (N - j) : nc0;
+
+      for (k = 0; k < K; k += kc0) {
+        int kc = (K - k < kc0) ? (K - k) : kc0;
+
+        /*
+         * L4/L5:
+         */
+        for (ii = 0; ii < mc; ii += mr0) {
+          int mr = (mc - ii < mr0) ? (mc - ii) : mr0;
+
+          for (jj = 0; jj < nc; jj += nr0) {
+            int nr = (nc - jj < nr0) ? (nc - jj) : nr0;
+            float Cr[16][16];
+            int i_inner;
+            int j_inner;
+            for (i_inner = 0; i_inner < mr; ++i_inner) {
+              for (j_inner = 0; j_inner < nr; ++j_inner) {
+                Cr[i_inner][j_inner] = 0.0f;
+              }
+            }
+
+            /*
+             * L6:
+             */
+            for (kk = 0; kk < kc; ++kk) {
+              for (i_inner = 0; i_inner < mr; ++i_inner) {
+                int a_row = i + ii + i_inner;
+                int a_col = k + kk;
+                float a_val = A[a_row * lda + a_col];
+
+                for (j_inner = 0; j_inner < nr; ++j_inner) {
+                  int b_row = k + kk;
+                  int b_col = j + jj + j_inner;
+                  Cr[i_inner][j_inner] += a_val * B[b_row * ldb + b_col];
+                }
+              }
+            }
+
+            /* 当前 mr x nr 输出子块累加完成后，写回到 C。 */
+            for (i_inner = 0; i_inner < mr; ++i_inner) {
+              for (j_inner = 0; j_inner < nr; ++j_inner) {
+                int c_row = i + ii + i_inner;
+                int c_col = j + jj + j_inner;
+                C[c_row * ldc + c_col] = Cr[i_inner][j_inner];
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
 ```
 
-约定：
+### 2.**MLIR 语义层**
 
-- `A` 为 row-major `m x k`
-- `B` 为 row-major `k x n`
-- `C` 为 row-major `m x n`
-- 计算语义为 `C = A * B`
-- 函数内部使用局部 `Cr` 子块缓冲区
-- 代码顶部有 `@kernel / @semantic / @blocking / @lift-target` 标注，便于后续自定义解析
+把输入的c代码转换成以下层级的mlir
 
-这个版本更适合后续做：
+`linalg` 层
 
-- 从受限 C 子集提升到 `linalg` / `scf` / `affine`
-- 再从高层 MLIR 继续 lowering 到 `vector` / `arm_sme`
+`affine/scf` 层
 
-## 当前代码如何对应 MLIR 各层
+`vector` 层
 
-这份 C 代码本身不是为了直接让 `clang` 产出高层 `ArmSME` MLIR，
-而是作为“高层语义输入”来使用。它最适合映射到下面几层：
+`arm_sme`层
 
-### 1. `linalg` 层
+gpt给的方案：
 
-最核心的数学语义是：
-
-```text
-C = A * B
 ```
+这份 gemm_mlir_kernel.c 提供规则循环和矩阵乘语义。
+你自己的工具识别注释和循环结构，把它变成高层 MLIR。
+再复用 LLVM/MLIR 现有的 vector / ArmSME pass 往下走。
 
-因此最理想的高层表示是一个 `linalg.matmul`。
-
-这一步里，当前 C 代码中的：
-
-- `A(a_row, a_col)`
-- `B(b_row, b_col)`
-- `Cr[i_inner][j_inner] += ...`
-
-可以整体识别为一个局部 matmul 子块，而不是逐条保留成标量加法。
-
-### 2. `scf` / `affine` 层
-
-当前代码里的规则分块循环：
-
-- `i` 对应 `mc`
-- `j` 对应 `nc`
-- `k` 对应 `kc`
-- `ii` 对应 `mr`
-- `jj` 对应 `nr`
-- `kk` 对应归约维
-
-非常适合直接映射成：
-
-- `scf.for`
-- 或 `affine.for`
-
-如果你想研究循环结构、tile 结构、归约维与空间维，这一层最重要。
-
-### 3. `vector` 层
-
-在高层 MLIR 中，通常不会直接从 C 里保留显式 SIMD 类型，
-而是先从 `linalg.matmul` 或 `scf/affine` 的乘加归约结构出发，再做：
-
-- tile
-- vectorize
-- contraction lowering
-
-之后才得到：
-
-- `vector.transfer_read`
-- `vector.transfer_write`
-- `vector.contract`
-- `vector.outerproduct`
-
-### 4. `arm_sme` 层
-
-你本地 LLVM/MLIR 的官方路径是：
-
-```text
-linalg.matmul -> vector -> arm_sme
-```
-
-本地参考材料：
-
-- [ArmSME.md](/Users/alpaca/Documents/SME/external/llvm-project/mlir/docs/Dialects/ArmSME.md)
-- [matmul.mlir](/Users/alpaca/Documents/SME/external/llvm-project/mlir/test/Integration/Dialect/Linalg/CPU/ArmSME/matmul.mlir)
-
-也就是说，`arm_sme.outerproduct`、`arm_sme.fmopa` 这些形式，
-不是直接从 C 语法产生的，而是从更高层的 `linalg` / `vector` lowering 下来的。
-
-### 5. `llvm` 层
-
-如果你直接走：
-
-```bash
-clang -O1 -S -emit-llvm gemm_mlir_kernel.c -o gemm_mlir_kernel.ll
-mlir-translate --import-llvm gemm_mlir_kernel.ll -o gemm_mlir_kernel.mlir
-```
-
-得到的通常是低层 LLVM dialect MLIR，不是你想研究的高层 `linalg` / `vector` / `arm_sme` 结构。
-
-所以这条路径可以保留用于“低层对照”，但不应该作为高层研究主线。
-
-## 推荐的转换路线
-
-建议把这份代码放进下面这条研究链路：
-
-```text
-受限 C kernel
+具体流程如下：
+C kernel
 -> 自定义提升器
 -> 高层 MLIR（linalg / scf / affine）
 -> vector 化
@@ -139,114 +124,139 @@ mlir-translate --import-llvm gemm_mlir_kernel.ll -o gemm_mlir_kernel.mlir
 -> LLVM
 ```
 
-对应到当前项目，可以理解成：
+### 3.**高层语义分析**
 
-1. 这份 `gemm_mlir_kernel.c` 提供规则循环和矩阵乘语义。
-2. 你自己的工具识别注释和循环结构，把它变成高层 MLIR。
-3. 再复用 LLVM/MLIR 现有的 `vector` / `ArmSME` pass 往下走。
+在 `linalg` 层 IR 上判断数据流的整体性质。
 
-## 哪些步骤可以自动做
+```
+当前数据是小而热，还是大而冷？
+是规则密集计算，还是稀疏/条件计算？
+是适合保留在缓存，还是应该流式处理？
+哪些数据流可能污染 L2/LLC？
+例如：
+小块矩阵、多次复用的数据：倾向 KEEP
+大数组顺序扫描、只用一次的数据：倾向 STRM
+稀疏 gather 数据：倾向低保留、低污染策略
+Stencil 中短距重用数据：可能不需要预取
+这一阶段产生的是粗粒度策略，比如：某个数据流应该走 KEEP，某个数据流应该走 STRM。
 
-这些步骤比较适合自动化：
-
-- 解析文件头注释中的 `@kernel / @semantic / @blocking / @lift-target`
-- 识别 `i/j/k` 外层分块循环
-- 识别 `ii/jj/kk` 内层微块和归约循环
-- 识别 `Cr[i][j] += A(...) * B(...)` 的乘加归约模式
-- 生成 `scf.for` 或 `affine.for`
-- 在合适的时候把局部模式提升成 `linalg.matmul`
-
-## 哪些步骤需要手工编写
-
-目前这几部分通常需要你手工写，不能指望 `clang` 直接帮你完成：
-
-### 1. `C -> 高层 MLIR` 提升器
-
-这是最关键的一步。
-
-你需要自己决定：
-
-- 用 Clang AST 解析
-- 还是用 `clang -Xclang -ast-dump=json`
-- 还是自己做一个更小的语法匹配器
-
-然后手工实现：
-
-- 哪种循环结构识别为 tile
-- 哪种乘加模式识别为 matmul
-- 什么时候生成 `linalg.matmul`
-- 什么时候保留为 `scf/affine`
-
-### 2. `linalg` 到 `vector` 的变换策略
-
-虽然 LLVM/MLIR 有现成 pass，但 tile size、vectorize 策略、是否先 bufferize，
-这些都需要你手工选择。
-
-本地样例 [matmul.mlir](/Users/alpaca/Documents/SME/external/llvm-project/mlir/test/Integration/Dialect/Linalg/CPU/ArmSME/matmul.mlir)
-就展示了一种参考流程：
-
-- tile
-- vectorize
-- bufferize
-- `vector.contract -> vector.outerproduct`
-
-### 3. `vector` 到 `arm_sme` 的实验配置
-
-这一层虽然有官方 pass，但你仍然需要自己决定：
-
-- 研究的 tile size
-- 想观察的向量形态
-- 何时进入 `arm_sme`
-- 是否继续降到 LLVM
-
-## 实际研究时建议保留的两条产物线
-
-建议同时维护两条产物：
-
-### A. 高层研究线
-
-```text
-gemm_mlir_kernel.c
--> 自定义提升
--> linalg/scf/affine/vector/arm_sme
+KEEP 和 STRM 是 Arm 预取指令里的 缓存保留策略 hint，用来告诉硬件：预取进来的数据，应该“尽量留着”，还是“用完就别污染缓存”。
 ```
 
-这是主线，用来研究 SME 在高层 MLIR 中的形式。
+### 4.**中层循环与多面体分析**
 
-### B. 低层对照线
+在 `affine` 层分析循环、访存函数和重用距离
 
-```text
-clang
--> LLVM IR
--> mlir-translate --import-llvm
+```
+提取循环迭代空间
+提取访存表达式，如 A[i][j]、A[i+1][j]
+计算 stride、reuse distance、working set
+判断访问是否跨 cache line、跨行、跨平面
+判断硬件自动预取器是否能覆盖
+计算预取距离 D
+
+D = ceil(Memory_Latency_Cycles / SME_Compute_Cycles_Per_Block)
+如果一次内存访问要等很多周期，而 SME 处理一个 block 需要若干周期，那么就提前 D 个 block 发出预取，让访存延迟被计算覆盖。
 ```
 
-这是对照线，用来看同一份 C 在低层 LLVM dialect 里会变成什么样。
+### 
 
-## 最小可执行建议
 
-如果你现在就要开始做，建议按下面顺序推进：
 
-1. 把这份 C 当作“受限输入语言”。
-2. 先手工写一个对应的 `linalg.matmul` 版 `.mlir` 文件。
-3. 对照本地样例 [matmul.mlir](/Users/alpaca/Documents/SME/external/llvm-project/mlir/test/Integration/Dialect/Linalg/CPU/ArmSME/matmul.mlir) 验证从 `linalg` 到 `arm_sme` 的 pass 流程。
-4. 再回过头实现自动的 `C -> 高层 MLIR` 提升器。
 
-它当前采用的核心循环结构是：
 
-```text
-for i in mc blocks
-  for j in nc blocks
-    for k in kc blocks
-      for ii in mr blocks
-        for jj in nr blocks
-          initialize Cr from zero
-          update Cr by reduction over kk
-          write Cr back to C
+
+
+### 5.**Transform Dialect 决策与 IR 注入**
+
+定义Transform Dialect ，Transform Dialect 相当于编译器的优化插件，根据前面的信息，对原始MLIR IR进行改写
+
+输入：
+
+```
+原始 MLIR IR
++ 预取策略
++ 硬件画像
++ Transform Dialect 控制脚本
 ```
 
-一个最小编译示例：
+输出：
 
-```bash
-clang -O1 -S -emit-llvm gemm_mlir_kernel.c -o gemm_mlir_kernel.ll
 ```
+插入了预取、地址计算、掩码和边界保护的新 MLIR IR
+```
+
+### 6.**Vector/SVE/LLVM 降级**
+
+输入是阶段 6 产出的 **带预取操作的 MLIR IR**
+
+输出是带 LLVM/SVE intrinsic 的 LLVM IR
+
+需要保留上层的预取信息，但是通用llvm的预取指令没有 目标缓存层级 预取策略：`KEEP / STRM` Predicate mask：用于条件预取或 gather prefetch 等信息
+
+```
+declare void @llvm.prefetch.p0.i32(i8* <addr>, i32 <rw>, i32 <locality>, i32 <cache_type>)
+
+
+addr：要预取的内存地址（任意指针类型需 bitcast 到 i8*）
+rw：
+	0 = 读预取
+	1 = 写预取
+locality：局部性提示（0～3）
+	0 = 无局部性（一次性使用）
+	3 = 高局部性（很快会再次访问）
+cache_type：
+	0 = 数据缓存
+	1 = 指令缓存
+	（但多数后端只使用 0）
+```
+
+```
+gemini：
+语义信息无损传递（Zero-Semantic-Loss）：
+MLIR 的高级属性（如 vector.gather_prefetch 中绑定的掩码和特定架构参数）可以直接完美映射为标准 LLVM IR 中的 Target-specific Intrinsics（例如 @llvm.aarch64.sve.prfw）。毕昇编译器在读入这种形式的 LLVM IR 时，能够无缝识别其完整的硬件语义（包括寄存器约束和掩码关系）。
+```
+
+Target-specific Intrinsic 是专门服务某个硬件架构的 intrinsic。
+
+```
+@llvm.aarch64.sve.prfw
+```
+
+直接使用 `mlir-opt + mlir-translate`无法实现，需要人工编写Pass让mliropt调用，从而将之前的mlir编译成llvmir
+
+### 7.**毕昇编译与 LX2 实机验证**
+
+需要验证：
+
+1. 毕昇能不能正确编译出目标预取指令
+
+2. 这些预取指令在 LX2 真实硬件上有没有性能收益
+
+将llvm ir编译成汇编，确定：
+
+```
+LLVM IR 能否被毕昇接受
+SVE intrinsic 是否被识别
+predicate/gather 语义是否保留
+KEEP/STRM 是否映射到正确 prfop
+最终汇编中是否出现 PRFW/svprfw
+```
+
+```
+-O3：开启毕昇最激进的全局优化。
+-march=armv9-a：激活 SVE2 和 SME 的硬件指令集支持（确保 svprfw 不会被退化为标量操作）。
+-mllvm -enable-implicit-prefetching=false（或相关选项）：重要！ 论文中如果想单纯验证你的“多面体分析模型”的效能，建议通过此项或类似参数关闭毕昇自带的纯启发式硬件/软件预取猜测，从而实现对你自己的多面体模型的“净效果”评测，排除毕昇原生软件预取的干扰。
+```
+
+
+
+实验一：利用毕昇编译器编译三个版本并在 LX2 上运行，配合 ARM PMU 计数器（如 `perf stat -e r0004` 等硬件事件）抓取 L2D 缺失率：
+
+1. **Baseline 1 (No Prefetch)**：原始代码，纯靠硬件自动预取。
+2. **Baseline 2 (BiSheng Native Prefetch)**：开启毕昇编译器自研的软件预取优化。
+3. **Proposed (MLIR Polyhedral Model + BiSheng)**：关闭毕昇自带预取，由你的多面体模型控制发射
+
+实验二：不规则控制流下的带宽与吞吐表现（FlagGEMM）
+
+在不同的 Flag 稀疏度（0.1 到 0.9）下，对比性能（GFLOPS）
