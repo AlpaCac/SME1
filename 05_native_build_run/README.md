@@ -8,11 +8,7 @@
 
 1. 把第四步的统一产物 [09_unified_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch.mlir) 继续翻译、编译，并在本机实际运行。
 
-同时保留一个辅助验证工件：
-
-1. 把 [03_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir) 编译并运行，用来证明“预取语义已经可以下沉到本机可执行程序”。
-
-这里不再把它们表述成两条研究路线。研究主线只有一条，即：
+研究主线只有一条，即：
 
 ```text
 高层 MLIR
@@ -21,8 +17,6 @@
 -> vector / arm_sme / llvm
 -> 本机编译验证
 ```
-
-辅助验证工件现在仍然保留，但它只是一个对照项，用来继续证明“预取语义已经能稳定下沉到本机可执行程序”。
 
 ## 当前状态
 
@@ -54,18 +48,6 @@
 - 统一主线函数本身已经可以运行
 - 但原始 lowering 直接导出的返回 ABI，在 Darwin + 当前 llc 产物上不适合作为稳定的普通 C 接口
 - 因此第五步单独增加一层稳定 wrapper，把“执行语义”和“研究接口 ABI”解耦
-
-随后脚本再运行辅助验证工件：
-
-```text
-03_llvm_prefetch.mlir
--> mlir-translate --mlir-to-llvmir
--> llc
--> clang 链接 harness
--> 本机运行
-```
-
-这部分目前也能够跑通。
 
 ## 当前阶段结论
 
@@ -106,11 +88,9 @@ C_from_descriptor =
 ## 目录结构
 
 - [build_and_run.py](/Users/alpaca/Documents/SME/SME1/05_native_build_run/build_and_run.py)：第五步自动化脚本
-- [prefetch_harness.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/prefetch_harness.c)：运行 `gemm_fp32_affine` 的本机 C harness
 - [unified_wrapper.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/unified_wrapper.c)：统一主线的稳定 ABI wrapper
 - [unified_harness.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/unified_harness.c)：运行统一主线 `gemm_step4_compute` 的最小本机 C harness
 - [output/summary.txt](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/summary.txt)：本次构建和运行摘要
-- [output/prefetch_demo.log](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/prefetch_demo.log)：本机运行输出
 - [output/unified_demo.log](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/unified_demo.log)：统一主线本机运行输出
 
 ## 如何运行
@@ -126,6 +106,5 @@ python3 05_native_build_run/build_and_run.py
 根据现在的中间结果：
 
 - 统一主线已经能走到“LLVM IR -> 目标对象 -> 可执行文件 -> 本机运行”
-- 辅助验证工件会继续证明预取语义已经能走到本机可执行程序
 
-所以第五步现在记录的是“统一主线已经完成运行级验证”，而不是“研究方案重新分成两条线”。
+所以第五步现在记录的是“统一主线已经完成运行级验证”。

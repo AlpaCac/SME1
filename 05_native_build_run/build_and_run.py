@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step 5: build the unified step-4 result and keep one local validation artifact."""
+"""Step 5: build and run the unified step-4 result locally."""
 
 from __future__ import annotations
 
@@ -92,48 +92,6 @@ def main() -> int:
                     summary_lines.append(
                         f"unified_mainline_run: failed ({result.returncode})"
                     )
-
-    # 再保留一个“辅助验证工件”：
-    # 它不代表另一条研究路线，只用于证明预取语义已经能下沉到本机可执行程序。
-    prefetch_mlir = ROOT / "04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir"
-    prefetch_ll = output / "03_llvm_prefetch.ll"
-    prefetch_obj = output / "03_llvm_prefetch.o"
-    prefetch_exe = output / "prefetch_demo"
-    prefetch_log = output / "prefetch_demo.log"
-
-    result = run(
-        [str(MLIR_TRANSLATE), "--mlir-to-llvmir", str(prefetch_mlir), "-o", str(prefetch_ll)],
-        ROOT,
-    )
-    if result.returncode != 0:
-        write_text(output / "prefetch_translate.stderr", result.stderr)
-        summary_lines.append("prefetch_aux_translate: failed")
-    else:
-        remove_if_exists(output / "prefetch_translate.stderr")
-        summary_lines.append("prefetch_aux_translate: ok")
-        result = run([str(LLC), str(prefetch_ll), "-filetype=obj", "-o", str(prefetch_obj)], ROOT)
-        if result.returncode != 0:
-            write_text(output / "prefetch_llc.stderr", result.stderr)
-            summary_lines.append("prefetch_aux_object: failed")
-        else:
-            remove_if_exists(output / "prefetch_llc.stderr")
-            summary_lines.append("prefetch_aux_object: ok")
-            result = run(
-                [str(CLANG), str(prefetch_obj), str(workdir / "prefetch_harness.c"), "-o", str(prefetch_exe)],
-                ROOT,
-            )
-            if result.returncode != 0:
-                write_text(output / "prefetch_link.stderr", result.stderr)
-                summary_lines.append("prefetch_aux_link: failed")
-            else:
-                remove_if_exists(output / "prefetch_link.stderr")
-                summary_lines.append("prefetch_aux_link: ok")
-                result = run([str(prefetch_exe)], ROOT)
-                write_text(prefetch_log, (result.stdout or "") + (result.stderr or ""))
-                if result.returncode == 0:
-                    summary_lines.append("prefetch_aux_run: ok")
-                else:
-                    summary_lines.append(f"prefetch_aux_run: failed ({result.returncode})")
 
     write_text(output / "summary.txt", "\n".join(summary_lines) + "\n")
     return 0

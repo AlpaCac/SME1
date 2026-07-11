@@ -1,0 +1,13 @@
+.DS_Store
+
+# Native build artifacts
+*.o
+
+# Locally generated executables in step outputs
+/05_native_build_run/output/unified_demo
+/05_native_build_run/output/prefetch_demo
+/07_local_benchmark/output/c_baseline
+/07_local_benchmark/output/affine_no_prefetch
+/07_local_benchmark/output/affine_prefetch
+/07_local_benchmark/output/unified_no_prefetch
+/07_local_benchmark/output/unified_prefetch
