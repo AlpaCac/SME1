@@ -3,11 +3,15 @@
 # Native build artifacts
 *.o
 
+# Step-4 temporary lowering artifacts
+/04_vector_arm_sme_llvm/step4_*/
+/04_vector_arm_sme_llvm/input/
+/04_vector_arm_sme_llvm/output/02_memref_prefetch.mlir
+/04_vector_arm_sme_llvm/output/04_compute_vector.mlir
+/04_vector_arm_sme_llvm/output/05_compute_arm_sme.mlir
+/04_vector_arm_sme_llvm/output/06_compute_llvm.mlir
+/04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch_pre_legalize.mlir
+/04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch_legalized.mlir
+
 # Locally generated executables in step outputs
 /05_native_build_run/output/unified_demo
-/05_native_build_run/output/prefetch_demo
-/07_local_benchmark/output/c_baseline
-/07_local_benchmark/output/affine_no_prefetch
-/07_local_benchmark/output/affine_prefetch
-/07_local_benchmark/output/unified_no_prefetch
-/07_local_benchmark/output/unified_prefetch

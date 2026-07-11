@@ -8,6 +8,7 @@ import json
 import pathlib
 import re
 import subprocess
+import tempfile
 
 
 MLIR_OPT = pathlib.Path("/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt")
@@ -185,89 +186,79 @@ def main() -> int:
     cfg = analysis["tile_config"]
     prefetch_input_text = args.prefetch_input.read_text(encoding="utf-8")
 
-    input_dir = args.workdir / "input"
     output_dir = args.workdir / "output"
-    input_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 先把第三步中的预取语义桥接到标准 MLIR prefetch op，确保语义可以继续下沉。
-    affine_prefetch_input = input_dir / "gemm_step4_prefetch_input.mlir"
-    affine_prefetch_input.write_text(prefetch_input_text, encoding="utf-8")
+    with tempfile.TemporaryDirectory(prefix="step4_", dir=str(args.workdir)) as temp_dir_str:
+        temp_dir = pathlib.Path(temp_dir_str)
 
-    affine_prefetch_std = output_dir / "01_affine_prefetch_std.mlir"
-    affine_prefetch_std.write_text(
-        bridge_research_prefetch_to_affine(prefetch_input_text),
-        encoding="utf-8",
-    )
+        # 先把第三步中的预取语义桥接到标准 MLIR prefetch op，确保语义可以继续下沉。
+        affine_prefetch_std = output_dir / "01_affine_prefetch_std.mlir"
+        affine_prefetch_std.write_text(
+            bridge_research_prefetch_to_affine(prefetch_input_text),
+            encoding="utf-8",
+        )
 
-    run_pipeline(
-        affine_prefetch_std,
-        output_dir / "02_memref_prefetch.mlir",
-        ["-lower-affine", "-canonicalize", "-cse"],
-    )
-    run_pipeline(
-        output_dir / "02_memref_prefetch.mlir",
-        output_dir / "03_llvm_prefetch.mlir",
-        [
-            "-convert-scf-to-cf",
-            "-expand-strided-metadata",
-            "-finalize-memref-to-llvm",
-            "-convert-arith-to-llvm",
-            "-convert-func-to-llvm",
-            "-convert-cf-to-llvm",
-            "-reconcile-unrealized-casts",
-        ],
-    )
+        memref_prefetch_tmp = temp_dir / "02_memref_prefetch.mlir"
+        run_pipeline(
+            affine_prefetch_std,
+            memref_prefetch_tmp,
+            ["-lower-affine", "-canonicalize", "-cse"],
+        )
+        run_pipeline(
+            memref_prefetch_tmp,
+            output_dir / "03_llvm_prefetch.mlir",
+            [
+                "-convert-scf-to-cf",
+                "-expand-strided-metadata",
+                "-finalize-memref-to-llvm",
+                "-convert-arith-to-llvm",
+                "-convert-func-to-llvm",
+                "-convert-cf-to-llvm",
+                "-reconcile-unrealized-casts",
+            ],
+        )
 
-    # 再构造官方计算 lowering 主线，并把预取决策重新注入这条主线，形成统一产物。
-    compute_input = input_dir / "gemm_step4_compute_mainline.mlir"
-    compute_input.write_text(
-        build_compute_input_mlir(cfg["mr"], cfg["nr"]),
-        encoding="utf-8",
-    )
-    common = ["-transform-interpreter", "-test-transform-dialect-erase-schedule"]
-    run_pipeline(compute_input, output_dir / "04_compute_vector.mlir", common)
-    run_pipeline(
-        compute_input,
-        output_dir / "05_compute_arm_sme.mlir",
-        common + ["-test-lower-to-arm-sme"],
-    )
-    run_pipeline(
-        compute_input,
-        output_dir / "06_compute_llvm.mlir",
-        common + ["-test-lower-to-arm-sme", "-test-lower-to-llvm"],
-    )
+        # 再构造官方计算 lowering 主线，并把预取决策重新注入这条主线，形成统一产物。
+        compute_input = temp_dir / "gemm_step4_compute_mainline.mlir"
+        compute_input.write_text(
+            build_compute_input_mlir(cfg["mr"], cfg["nr"]),
+            encoding="utf-8",
+        )
+        common = ["-transform-interpreter", "-test-transform-dialect-erase-schedule"]
+        compute_vector_tmp = temp_dir / "04_compute_vector.mlir"
+        run_pipeline(compute_input, compute_vector_tmp, common)
 
-    unified_vector = output_dir / "07_unified_vector_prefetch.mlir"
-    unified_vector.write_text(
-        inject_memref_prefetch_into_vector(
-            (output_dir / "04_compute_vector.mlir").read_text(encoding="utf-8")
-        ),
-        encoding="utf-8",
-    )
-    run_pipeline(
-        unified_vector,
-        output_dir / "08_unified_arm_sme_prefetch.mlir",
-        ["-test-lower-to-arm-sme"],
-    )
-    run_pipeline(
-        unified_vector,
-        output_dir / "09_unified_llvm_prefetch_pre_legalize.mlir",
-        ["-test-lower-to-arm-sme", "-test-lower-to-llvm"],
-    )
-    run_pipeline(
-        output_dir / "09_unified_llvm_prefetch_pre_legalize.mlir",
-        output_dir / "09_unified_llvm_prefetch_legalized.mlir",
-        ["-convert-vector-to-llvm=enable-arm-sve", "-reconcile-unrealized-casts"],
-    )
-    (output_dir / "09_unified_llvm_prefetch.mlir").write_text(
-        repair_arm_sve_index_bridges(
-            (output_dir / "09_unified_llvm_prefetch_legalized.mlir").read_text(
-                encoding="utf-8"
-            )
-        ),
-        encoding="utf-8",
-    )
+        unified_vector = output_dir / "07_unified_vector_prefetch.mlir"
+        unified_vector.write_text(
+            inject_memref_prefetch_into_vector(
+                compute_vector_tmp.read_text(encoding="utf-8")
+            ),
+            encoding="utf-8",
+        )
+        run_pipeline(
+            unified_vector,
+            output_dir / "08_unified_arm_sme_prefetch.mlir",
+            ["-test-lower-to-arm-sme"],
+        )
+        pre_legalize_tmp = temp_dir / "09_unified_llvm_prefetch_pre_legalize.mlir"
+        run_pipeline(
+            unified_vector,
+            pre_legalize_tmp,
+            ["-test-lower-to-arm-sme", "-test-lower-to-llvm"],
+        )
+        legalized_tmp = temp_dir / "09_unified_llvm_prefetch_legalized.mlir"
+        run_pipeline(
+            pre_legalize_tmp,
+            legalized_tmp,
+            ["-convert-vector-to-llvm=enable-arm-sve", "-reconcile-unrealized-casts"],
+        )
+        (output_dir / "09_unified_llvm_prefetch.mlir").write_text(
+            repair_arm_sve_index_bridges(
+                legalized_tmp.read_text(encoding="utf-8")
+            ),
+            encoding="utf-8",
+        )
     return 0
 
 
