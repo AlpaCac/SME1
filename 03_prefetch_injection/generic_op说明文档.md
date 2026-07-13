@@ -658,3 +658,532 @@ generic op 的语义核心，往往更多体现在属性里。
 如果只用一句话概括第三步的 `generic op`：
 
 它就是一种“先把研究中的预取决策写进 MLIR，再交给后续 pass 继续解释和 lowering 的语义占位符”。
+
+---
+
+## 11. 当前 Python 脚本是如何插入预取的
+
+第三步当前不是通过正式 `MLIR pass` 做注入，而是通过脚本：
+
+- [inject_prefetch.py](/Users/alpaca/Documents/SME/SME1/03_prefetch_injection/inject_prefetch.py)
+
+来完成一次“研究版文本注入”。
+
+这件事可以分成四步理解。
+
+### 11.1 先读取两份输入
+
+脚本在默认情况下会读取：
+
+- 第一步生成的 [gemm_fp32_affine.mlir](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/output/gemm_fp32_affine.mlir)
+- 第二步生成的 [prefetch_analysis.json](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/output/prefetch_analysis.json)
+
+对应代码是：
+
+```python
+affine_text = args.affine.read_text(encoding="utf-8")
+analysis = json.loads(args.analysis.read_text(encoding="utf-8"))
+output_text = inject_prefetch(affine_text, analysis["cost_module"])
+```
+
+这里说明：
+
+- `affine_text`
+  - 是第一步 `affine` MLIR 的原始文本
+- `analysis["cost_module"]`
+  - 是第二步给出的结构化预取决策
+
+也就是说，第三步并不是“自己重新分析一遍”，而是：
+
+- 第二步负责分析
+- 第三步负责消费决策并注入
+
+### 11.2 先把决策转换成预取 op 文本
+
+脚本里有一个函数：
+
+```python
+def build_prefetch_ops(cost_module: dict) -> list[str]:
+```
+
+它做的事情是：
+
+- 先从 `cost_module["decisions"]` 里取出各个 tensor 的决策
+- 再根据 `enable`、`kind`、`priority`、`target_cache`、`policy`、`distance`
+  这些字段拼出真正的 `research.prefetch` 文本
+
+例如对 `B`：
+
+```python
+b_decision = decisions.get("B")
+if b_decision and b_decision["enable"]:
+    ops.extend([...])
+```
+
+这表示：
+
+- 如果第二步判定 `B` 应该预取
+- 那就生成一段针对 `B` 的 `research.prefetch`
+
+对 `A` 也是同样逻辑。
+
+而 `C` 在当前决策中是：
+
+- `enable = false`
+
+所以第三步不会为 `C` 生成预取语句。
+
+### 11.3 再定位注入点
+
+第三步脚本没有做通用 AST 级模式匹配，而是先用一个明确的文本标记来定位：
+
+```python
+marker = "                    scf.if %in_k_bound {\n"
+```
+
+然后检查：
+
+```python
+if marker not in affine_text:
+    raise ValueError("failed to locate kk-guard injection point in affine MLIR")
+```
+
+它的意思是：
+
+- 先找到 `kk` 归约循环内部的边界判断
+- 也就是：
+
+```mlir
+scf.if %in_k_bound {
+```
+
+这个位置
+
+之所以选这里，是因为它同时满足三点：
+
+1. 已经进入有效 `kk` 迭代
+2. 周围保留了完整循环上下文变量
+3. 后面紧接着真实 `affine.load`
+
+因此很适合作为“预取发生点”。
+
+### 11.4 最后做文本替换
+
+真正的注入动作在这里：
+
+```python
+injection = marker + "\n".join(prefetch_lines) + "\n"
+body = body.replace(marker, injection, 1)
+```
+
+它的逻辑是：
+
+- 保留原始的 `scf.if %in_k_bound {`
+- 紧接着把两条 `research.prefetch` 插进去
+- 再继续保留原本后面的计算体
+
+所以注入后的结构就变成：
+
+```mlir
+scf.if %in_k_bound {
+  "research.prefetch"(B...)
+  "research.prefetch"(A...)
+  ...
+  %a_val = affine.load ...
+  ...
+  %b_val = affine.load ...
+```
+
+这就是为什么第三步的预取语义会出现在“真实读之前、归约推进内部”的原因。
+
+### 11.5 附带更新函数属性
+
+脚本还会把：
+
+```mlir
+mlir_level = "affine"
+```
+
+改成：
+
+```mlir
+mlir_level = "affine",
+prefetch_injected = "true"
+```
+
+对应代码是：
+
+```python
+body = body.replace(
+    '    mlir_level = "affine"\n',
+    '    mlir_level = "affine",\n    prefetch_injected = "true"\n',
+    1,
+)
+```
+
+这表示：
+
+- 当前函数已经完成预取注入
+- 后续工具或 pass 可以直接据此识别
+
+---
+
+## 12. 当前预取决策是如何做出来的
+
+第三步本身不做决策，决策来自第二步：
+
+- [analyze_prefetch.py](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/analyze_prefetch.py)
+- [prefetch_analysis.json](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/output/prefetch_analysis.json)
+
+它的整体思路可以概括成：
+
+- 先分析第一步得到的 `linalg` 和 `affine` 两份 MLIR
+- 再根据块大小、访问模式、复用关系构造一个简化 `cost module`
+- 最后输出结构化决策结果给第三步使用
+
+### 12.1 第二步先恢复 tile 配置
+
+脚本里的：
+
+```python
+def parse_tile_config(linalg_text: str) -> TileConfig:
+```
+
+会从第一步生成的 `linalg` 文件里读取常量，恢复：
+
+- `mc`
+- `nc`
+- `kc`
+- `mr`
+- `nr`
+
+在当前仓库中，恢复结果是：
+
+- `mc = nc = kc = 128`
+- `mr = nr = 16`
+
+这一步的意义是：
+
+- 第二步不需要重新理解 C 代码
+- 直接从第一步生成的高层 MLIR 中恢复块配置
+
+### 12.2 再分别分析 linalg 和 affine
+
+第二步有两个分析函数：
+
+```python
+analyze_linalg(...)
+analyze_affine(...)
+```
+
+它们分别提取不同层次的信息。
+
+`linalg` 层重点看：
+
+- 有没有 `linalg.matmul`
+- 有没有 `linalg.fill`
+- `memref.subview` 数量
+- `scf.for` 数量
+- A/B/C 的数据流角色
+- 宏块与微块的字节规模
+- A、B、C 的复用关系
+
+`affine` 层重点看：
+
+- `affine.for` 数量
+- `affine.load/store` 数量
+- 边界保护数量
+- A/B/C 的访问模式
+- 哪些方向是连续访问
+- 哪些方向存在跨迭代复用
+
+### 12.3 最后由 cost module 给出排序和策略
+
+真正的决策函数是：
+
+```python
+def build_cost_model(cfg: TileConfig) -> dict:
+```
+
+当前版本虽然是研究原型，但逻辑已经是清楚的。
+
+它先构造一些基础假设，例如：
+
+- 元素类型是 `f32`
+- cache line 是 `64 bytes`
+- 宏块工作集大小
+- A/B/C 在微块级别的流量规模
+
+然后定义一个策略准则：
+
+```python
+"guideline": "优先预取读流且优先选择同时具备连续访问和跨迭代复用的数据对象。"
+```
+
+这句话其实就是当前决策的核心。
+
+据此得到当前排序：
+
+- `B`
+- `A`
+- `C`
+
+原因是：
+
+#### B 为什么优先级最高
+
+第二步给出的原因是：
+
+- `B` 在 `j_inner` 上连续访问
+- 同时在 `i_inner` 上会被重复使用
+
+也就是说，`B` 同时具备：
+
+- 好的流式访问特征
+- 明显复用价值
+
+所以它最值得优先预取。
+
+#### A 为什么次一级
+
+第二步给出的原因是：
+
+- `A` 在 `kk` 上连续推进
+- 单个 `a_val` 会在 `j_inner` 上被重复消费
+
+因此它也适合做读预取，但预期收益略低于 `B`。
+
+#### C 为什么当前不预取
+
+第二步认为：
+
+- `C` 微块较小
+- 生命周期主要局限在当前微块
+- 主要是局部读改写
+
+因此主动软件预取的收益不明显，所以：
+
+- `enable = false`
+
+### 12.4 第三步实际消费的是哪些字段
+
+第三步真正读的是 `cost_module["decisions"]` 中每个对象的这些字段：
+
+- `tensor`
+- `enable`
+- `kind`
+- `priority`
+- `target_cache`
+- `distance`
+- `policy`
+
+例如当前 `B` 的决策是：
+
+- `enable = true`
+- `kind = "read"`
+- `priority = "high"`
+- `target_cache = "L1"`
+- `distance = "按未来 2 个 kk-cache-line 或未来 1 个 B 微块边界"`
+- `policy = "KEEP"`
+
+第三步脚本正是把这些字段逐一拷贝进：
+
+```mlir
+"research.prefetch"(...)
+```
+
+的属性字典里。
+
+所以可以把第三步理解成：
+
+- 第二步负责“想清楚”
+- 第三步负责“写进去”
+
+---
+
+## 13. 之后如何改用 Transform Dialect
+
+当前 Python 注入方式的优点是：
+
+- 简单
+- 直观
+- 方便快速做原型
+
+但它的不足也很明显：
+
+- 依赖文本标记
+- 不够结构化
+- 对 IR 形状变化较敏感
+
+如果后续想更接近正式 `MLIR` 工作流，可以改成 `Transform Dialect`。
+
+### 13.1 基本思路
+
+`Transform Dialect` 的核心思路是：
+
+- 不直接手工改文本
+- 而是在一份“变换脚本”里声明：
+  - 匹配哪些 op
+  - 在哪里插入新 op
+  - 对哪些对象做重写
+
+对于第三步来说，可以这样设计：
+
+1. 先匹配目标函数 `@gemm_fp32_affine`
+2. 再匹配 `affine.for %kk`
+3. 再匹配它内部的 `scf.if %in_k_bound`
+4. 在该位置前后插入自定义预取 op
+
+### 13.2 适合 Transform Dialect 的部分
+
+如果未来仍想保留“高层规则驱动注入”，那么 `Transform Dialect` 适合做：
+
+- 规则化定位注入点
+- 基于结构匹配插入 op
+- 在统一流水线上对不同函数应用不同注入策略
+
+### 13.3 当前迁移到 Transform Dialect 的难点
+
+主要难点在于：
+
+- 当前 `research.prefetch` 还是未注册 generic op
+- 第二步决策结果现在保存在 JSON 里
+- `Transform Dialect` 更擅长声明式结构变换，不直接擅长读取外部 JSON 决策并注入复杂属性
+
+所以如果要走这条路，通常需要先补两样东西：
+
+1. 把 `research.prefetch` 升级成正式自定义 dialect op
+2. 把第二步决策从“外部 JSON”变成“能在 pass / pipeline 中消费的结构化属性或分析结果”
+
+也就是说，`Transform Dialect` 更适合做：
+
+- 结构匹配
+- 注入位置控制
+
+但“决策内容从哪来”这件事，往往还需要额外配套。
+
+---
+
+## 14. 之后如何改用正式 MLIR pass
+
+如果想把第三步真正工程化，更自然的方向其实是写正式 `MLIR pass`。
+
+### 14.1 pass 版的大致流程
+
+可以把未来的 pass 设计成下面这样：
+
+1. 读取目标函数
+2. 遍历 `affine.for` / `scf.if` / `affine.load` 等结构
+3. 根据第二步分析结果建立内部决策对象
+4. 在合适位置构造并插入预取 op
+5. 给函数加上 `prefetch_injected = "true"` 等属性
+
+### 14.2 pass 版相对 Python 的优势
+
+正式 `MLIR pass` 的优势主要有：
+
+- 基于 IR 结构，不依赖字符串匹配
+- 对格式变化更稳健
+- 可以直接使用 `MLIR` 的分析与重写 API
+- 更容易接入完整 pipeline
+- 更容易继续做后续 lowering
+
+### 14.3 pass 版可以怎么组织
+
+比较自然的做法是拆成两层。
+
+第一层：分析 pass
+
+- 在 `affine` 层分析：
+  - 访问模式
+  - 复用
+  - 流量
+  - 预取距离
+- 产出内部分析结果
+
+第二层：注入 pass
+
+- 消费上面的分析结果
+- 构造 `research.prefetch`
+  或直接构造正式自定义 `prefetch` op
+
+这样就不需要中间 JSON 文件了。
+
+### 14.4 如果继续往正式流程推进，最推荐的演化顺序
+
+结合当前仓库状态，一个比较稳妥的演化顺序是：
+
+1. 先保留第二步的 Python 分析脚本作为研究参考实现
+2. 先把第三步的 `research.prefetch` 定义成正式自定义 dialect op
+3. 再把第三步的 Python 文本注入改成 C++ `MLIR pass`
+4. 最后再决定是否需要用 `Transform Dialect` 管理更高层的注入调度
+
+这样做的原因是：
+
+- 先把 op 语义稳定下来
+- 再把注入机制工程化
+- 最后再决定是否需要更声明式的变换调度
+
+---
+
+## 15. 当前 Python / Transform Dialect / MLIR pass 三种方式怎么理解
+
+可以把它们理解成三个成熟度阶段。
+
+### 15.1 Python 文本注入
+
+定位：
+
+- 研究原型
+- 快速试验
+- 便于说明思路
+
+优点：
+
+- 改起来快
+- 逻辑直观
+
+缺点：
+
+- 不够稳健
+- 不够结构化
+
+### 15.2 Transform Dialect
+
+定位：
+
+- 更声明式的结构匹配与重写
+
+优点：
+
+- 适合描述“在哪里做变换”
+- 更贴近 MLIR 原生工作流
+
+缺点：
+
+- 对“外部决策数据如何接入”支持不如 pass 自然
+
+### 15.3 正式 MLIR pass
+
+定位：
+
+- 更完整的工程形态
+
+优点：
+
+- 最稳健
+- 最适合集成分析与重写
+- 最适合后续长期演进
+
+缺点：
+
+- 开发成本最高
+
+---
+
+## 16. 一句话补充总结
+
+第三步当前用 Python，不是因为它比 `Transform Dialect` 或 `MLIR pass` 更高级，而是因为：
+
+- 现在的重点是先把“决策内容”和“注入位置”研究清楚
+- 等语义和策略稳定后，再迁移到更正式的 `MLIR` 机制会更合适
