@@ -1,18 +1,107 @@
 #!/usr/bin/env python3
-"""Restricted GEMM lifter: annotated C kernel -> two high-level MLIR files."""
+"""Restricted GEMM lifter: Clang AST + annotations -> high-level MLIR files."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import pathlib
 import re
+import subprocess
 import sys
+from dataclasses import dataclass
 
 
-FUNCTION_RE = re.compile(
-    r"void\s+(?P<name>gemm_fp32_mlir_kernel)\s*\(\s*int\s+M\s*,\s*int\s+N\s*,\s*int\s+K\s*,",
-    re.MULTILINE,
-)
+DEFAULT_CLANG = "clang"
+
+
+@dataclass
+class KernelAstSummary:
+    function_name: str
+    return_type: str
+    parameters: list[tuple[str, str]]
+    for_count: int
+    array_subscript_count: int
+    compound_assign_count: int
+    binary_operator_count: int
+
+
+def walk_ast(node: dict):
+    yield node
+    for child in node.get("inner", []):
+        if isinstance(child, dict):
+            yield from walk_ast(child)
+
+
+def find_declared_functions(ast: dict) -> list[dict]:
+    functions: list[dict] = []
+    for node in walk_ast(ast):
+        if node.get("kind") != "FunctionDecl":
+            continue
+        if node.get("isImplicit"):
+            continue
+        if not any(child.get("kind") == "CompoundStmt" for child in node.get("inner", [])):
+            continue
+        functions.append(node)
+    return functions
+
+
+def run_clang_ast_dump(
+    input_path: pathlib.Path, clang: str, clang_args: list[str]
+) -> dict:
+    cmd = [
+        clang,
+        *clang_args,
+        "-Xclang",
+        "-ast-dump=json",
+        "-fsyntax-only",
+        str(input_path),
+    ]
+    result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError("clang AST dump failed:\n" + result.stderr.strip())
+    return json.loads(result.stdout)
+
+
+def summarize_kernel_ast(ast: dict, expected_function: str | None = None) -> KernelAstSummary:
+    functions = find_declared_functions(ast)
+    if expected_function:
+        functions = [item for item in functions if item.get("name") == expected_function]
+    if not functions:
+        if expected_function:
+            raise ValueError(f"failed to locate function '{expected_function}' in Clang AST")
+        raise ValueError("failed to locate a C function body in Clang AST")
+    if len(functions) > 1:
+        names = ", ".join(function.get("name", "<unnamed>") for function in functions)
+        raise ValueError(
+            "multiple function bodies found; pass --function to select one: " + names
+        )
+
+    function = functions[0]
+    parameters = [
+        (
+            child.get("name", ""),
+            child.get("type", {}).get("qualType", ""),
+        )
+        for child in function.get("inner", [])
+        if child.get("kind") == "ParmVarDecl"
+    ]
+    body_nodes = list(walk_ast(function))
+    return KernelAstSummary(
+        function_name=function.get("name", ""),
+        return_type=function.get("type", {}).get("qualType", "").split("(", 1)[0].strip(),
+        parameters=parameters,
+        for_count=sum(1 for node in body_nodes if node.get("kind") == "ForStmt"),
+        array_subscript_count=sum(
+            1 for node in body_nodes if node.get("kind") == "ArraySubscriptExpr"
+        ),
+        compound_assign_count=sum(
+            1 for node in body_nodes if node.get("kind") == "CompoundAssignOperator"
+        ),
+        binary_operator_count=sum(
+            1 for node in body_nodes if node.get("kind") == "BinaryOperator"
+        ),
+    )
 
 
 def extract_required_annotation(source: str, key: str) -> str:
@@ -41,11 +130,39 @@ def extract_blocking(source: str) -> dict[str, int]:
     return values
 
 
-def validate_source(source: str) -> None:
-    if not FUNCTION_RE.search(source):
+def validate_kernel_ast(summary: KernelAstSummary) -> None:
+    if summary.return_type != "void":
+        raise ValueError("only void C kernel functions are supported")
+    if len(summary.parameters) != 9:
         raise ValueError(
-            "only the restricted gemm_fp32_mlir_kernel signature is supported"
+            "expected 9 GEMM parameters: M, N, K, A, lda, B, ldb, C, ldc"
         )
+    parameter_types = [item[1] for item in summary.parameters]
+    expected_fragments = [
+        "int",
+        "int",
+        "int",
+        "float *",
+        "int",
+        "float *",
+        "int",
+        "float *",
+        "int",
+    ]
+    for index, (actual, expected) in enumerate(zip(parameter_types, expected_fragments)):
+        if expected not in actual:
+            raise ValueError(
+                f"parameter {index + 1} has unsupported type '{actual}', expected {expected}"
+            )
+    if summary.for_count < 6:
+        raise ValueError("expected a blocked GEMM kernel with at least 6 for-loops")
+    if summary.array_subscript_count < 3:
+        raise ValueError("expected array subscripts for A/B/C or local accumulator")
+    if summary.compound_assign_count < 1:
+        raise ValueError("expected at least one compound assignment for reduction")
+
+
+def validate_source_annotations(source: str) -> None:
     semantic = extract_required_annotation(source, "semantic")
     if semantic != "C = A * B":
         raise ValueError("this research lifter only supports '@semantic C = A * B'")
@@ -292,9 +409,24 @@ module {{
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Lift the repository GEMM C kernel into linalg and affine MLIR."
+        description="Lift a restricted GEMM C kernel into linalg and affine MLIR."
     )
     parser.add_argument("input", type=pathlib.Path, help="path to the restricted C kernel")
+    parser.add_argument(
+        "--clang",
+        default=DEFAULT_CLANG,
+        help="clang executable used to produce the JSON AST dump",
+    )
+    parser.add_argument(
+        "--clang-arg",
+        action="append",
+        default=[],
+        help="extra argument forwarded to clang; may be repeated",
+    )
+    parser.add_argument(
+        "--function",
+        help="C function name to lift when the source file contains multiple functions",
+    )
     parser.add_argument(
         "-o",
         "--output-dir",
@@ -305,7 +437,10 @@ def main() -> int:
     args = parser.parse_args()
 
     source = args.input.read_text(encoding="utf-8")
-    validate_source(source)
+    validate_source_annotations(source)
+    ast = run_clang_ast_dump(args.input, args.clang, args.clang_arg)
+    summary = summarize_kernel_ast(ast, args.function)
+    validate_kernel_ast(summary)
 
     kernel = extract_required_annotation(source, "kernel")
     semantic = extract_required_annotation(source, "semantic")

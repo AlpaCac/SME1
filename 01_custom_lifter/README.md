@@ -6,6 +6,12 @@
 
 当前提升器不是通用的 `C -> MLIR` 前端，而是一个面向研究的自定义提升器，专门处理本仓库这类带结构化标注的 GEMM kernel。
 
+现在第一步已经从早期“正则匹配示例文件”的方式，调整为“Clang AST + 结构化标注”的方案：
+
+- `Clang AST` 用来识别 C 函数、参数、循环、数组访问和归约形态
+- 源码中的结构化标注继续用来说明研究语义、分块参数和 lowering 目标
+- Python 脚本不再直接依赖固定函数签名文本，而是消费 Clang 导出的 JSON AST
+
 - 输入：`gemm_mlir_kernel.c`
 - 输出一：`linalg` 研究版 `MLIR`
 - 输出二：`affine` 分析版 `MLIR`
@@ -17,7 +23,8 @@
 
 ## 目录结构
 
-- [lift_gemm.py](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/lift_gemm.py)：自定义提升器脚本
+- [lift_gemm.py](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/lift_gemm.py)：基于 Clang AST 的自定义提升器脚本
+- [Clang_AST提升器方案.md](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/Clang_AST提升器方案.md)：说明为什么采用 Clang AST，以及后续如何增强普适性
 - [output/gemm_fp32_linalg.mlir](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/output/gemm_fp32_linalg.mlir)：`linalg + scf` 版本
 - [output/gemm_fp32_affine.mlir](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/output/gemm_fp32_affine.mlir)：`affine` 版本
 
@@ -31,10 +38,13 @@
 - `@blocking`
 - `@lift-target`
 
+同时会调用 Clang 生成 JSON AST，用 AST 校验当前 C kernel 是否满足受限 GEMM 子集。
+
 然后完成下面几件事：
 
-1. 校验输入是否符合当前受限 GEMM kernel 约束。
-2. 解析 `mc / nc / kc / mr / nr` 分块参数。
+1. 通过 Clang AST 找到目标 C 函数。
+2. 校验函数返回类型、参数数量、参数类型、循环数量、数组访问和归约赋值。
+3. 解析 `mc / nc / kc / mr / nr` 分块参数。
 3. 一次生成两个高层 `MLIR` 文件。
 4. 在 `linalg` 文件中恢复：
    - 外层 tile 循环
@@ -45,7 +55,7 @@
    - 标量 `load/store`
    - 显式乘加归约结构
 
-## 为什么这里不用直接的 Clang/MLIR 工具链
+## 为什么这里使用 Clang AST，而不是直接的 Clang/LLVM IR
 
 如果直接走：
 
@@ -60,7 +70,16 @@ C/C++ -> Clang -> LLVM IR -> mlir-translate --import-llvm
 - 归约维与空间维的角色
 - 后续可供预取分析使用的结构化信息
 
-这个自定义提升器的意义，就是把“受限 C kernel”直接恢复成高层 `linalg` 和 `affine` 两类研究入口。
+所以这里采用的是另一条路线：
+
+```text
+C kernel
+-> Clang AST
+-> 受限 KernelIR / 模式识别
+-> 高层 linalg / affine MLIR
+```
+
+`Clang AST` 的作用不是把 C 直接降到 LLVM IR，而是给自定义提升器提供结构化输入。这样比纯文本匹配更稳，也更容易扩展到变量名变化、格式变化或多个相近 kernel 的情况。
 
 ## 如何运行
 
@@ -81,6 +100,22 @@ python3 01_custom_lifter/lift_gemm.py gemm_mlir_kernel.c
 python3 01_custom_lifter/lift_gemm.py \
   gemm_mlir_kernel.c \
   --output-dir /tmp/gemm_mlir_outputs
+```
+
+如果源码文件中有多个函数，可以显式指定要提升的函数：
+
+```bash
+python3 01_custom_lifter/lift_gemm.py \
+  gemm_mlir_kernel.c \
+  --function gemm_fp32_mlir_kernel
+```
+
+如果需要使用特定 Clang，也可以指定：
+
+```bash
+python3 01_custom_lifter/lift_gemm.py \
+  gemm_mlir_kernel.c \
+  --clang /path/to/clang
 ```
 
 ## 如何验证输出
