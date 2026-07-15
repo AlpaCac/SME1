@@ -1,126 +1,70 @@
-// ============================================================================ 
-// 自动生成文件：gemm_fp32_affine_prefetch.mlir
-// 来源：gemm_fp32_affine.mlir + 第二步 cost module 决策
-// 目标：在 affine 层显式注入研究版预取语义，为后续自定义 pass 提供输入
-//
-// 说明：
-// 1. 这里注入的是研究版 `research.prefetch`，暂时不是 LLVM 官方方言 op。
-// 2. 采用 generic op 形式，便于后续自定义 pass 识别与重写。
-// 3. 预取注入点放在 kk 归约循环内部，紧贴真实读流发生之前。
-// ============================================================================
-// ============================================================================ 
-// 自动生成文件：gemm_fp32_affine.mlir
-// 来源：gemm_mlir_kernel.c
-// 目标：保留规则循环、索引关系和标量访存，作为后续 affine 分析与预取研究的输入
-//
-// 阅读建议：
-// 1. 先看 affine.for，它们对应论文中的分块循环层次。
-// 2. 再看 affine.load / affine.store，它们暴露了最直接的访存行为。
-// 3. 这里故意不使用 linalg.matmul，而是保留标量归约结构，方便研究 reuse distance、
-//    working set、stride 和预取距离。
-// ============================================================================
-#tile_outer = affine_map<(d0, d1) -> (128, d0 - d1)>
-#row_index = affine_map<(d0, d1, d2) -> (d0 + d1 + d2)>
-#col_index = affine_map<(d0, d1, d2) -> (d0 + d1 + d2)>
-
+#map = affine_map<(d0, d1) -> (128, d0 - d1)>
+#map1 = affine_map<(d0, d1, d2) -> (d0 + d1 + d2)>
 module {
-  // 这个函数保留的是“规则循环 + 标量访存 + 标量归约”形式，适合做 affine 层分析。
-  func.func @gemm_fp32_affine(%a: memref<?x?xf32>, %b: memref<?x?xf32>, %c: memref<?x?xf32>) attributes {
-    c_kernel = "gemm_fp32",
-    semantic = "C = A * B",
-    layout = "A row-major, B row-major, C row-major",
-    mlir_level = "affine",
-    prefetch_injected = "true"
-  } {
+  func.func @gemm_fp32_affine(%arg0: memref<?x?xf32>, %arg1: memref<?x?xf32>, %arg2: memref<?x?xf32>) attributes {c_kernel = "gemm_fp32", layout = "A row-major, B row-major, C row-major", mlir_level = "affine", prefetch_injected = "true", semantic = "C = A * B"} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c128 = arith.constant 128 : index
-    %c128_n = arith.constant 128 : index
-    %c128_k = arith.constant 128 : index
+    %c128_0 = arith.constant 128 : index
+    %c128_1 = arith.constant 128 : index
     %c16 = arith.constant 16 : index
-    %c16_n = arith.constant 16 : index
-    %f0 = arith.constant 0.0 : f32
-
-    // 从输入矩阵中恢复问题规模。
-    %m = memref.dim %a, %c0 : memref<?x?xf32>
-    %k = memref.dim %a, %c1 : memref<?x?xf32>
-    %n = memref.dim %b, %c1 : memref<?x?xf32>
-
-    // 外层三层 affine.for 对应论文中的 mc / nc / kc。
-    affine.for %i = 0 to %m step 128 {
-      %mc = affine.min #tile_outer(%m, %i)
-
-      affine.for %j = 0 to %n step 128 {
-        %nc = affine.min #tile_outer(%n, %j)
-
-        affine.for %ko = 0 to %k step 128 {
-          %kc = affine.min #tile_outer(%k, %ko)
-
-          // 这里把 ii / jj / kk 都固定在论文给定的块大小上，
-          // 再用条件判断裁掉边界块。这样既保留 affine 结构，
-          // 又避免动态上界在嵌套 affine.for 中触发符号约束。
-          affine.for %ii = 0 to 128 step 16 {
-            %ii_in_bound = arith.cmpi ult, %ii, %mc : index
-            scf.if %ii_in_bound {
-              affine.for %jj = 0 to 128 step 16 {
-                %jj_in_bound = arith.cmpi ult, %jj, %nc : index
-                scf.if %jj_in_bound {
-                  // 第一步：对当前输出微块清零。
-                  affine.for %i_inner = 0 to 16 {
-                    %c_row_offset = affine.apply #row_index(%ii, %c0, %i_inner)
-                    %row_valid = arith.cmpi ult, %c_row_offset, %mc : index
-                    scf.if %row_valid {
-                      %c_row = affine.apply #row_index(%i, %ii, %i_inner)
-
-                      affine.for %j_inner = 0 to 16 {
-                        %c_col_offset = affine.apply #col_index(%jj, %c0, %j_inner)
-                        %col_valid = arith.cmpi ult, %c_col_offset, %nc : index
-                        scf.if %col_valid {
-                          %c_col = affine.apply #col_index(%j, %jj, %j_inner)
-                          affine.store %f0, %c[%c_row, %c_col] : memref<?x?xf32>
+    %c16_2 = arith.constant 16 : index
+    %cst = arith.constant 0.000000e+00 : f32
+    %dim = memref.dim %arg0, %c0 : memref<?x?xf32>
+    %dim_3 = memref.dim %arg0, %c1 : memref<?x?xf32>
+    %dim_4 = memref.dim %arg1, %c1 : memref<?x?xf32>
+    affine.for %arg3 = 0 to %dim step 128 {
+      %0 = affine.min #map(%dim, %arg3)
+      affine.for %arg4 = 0 to %dim_4 step 128 {
+        %1 = affine.min #map(%dim_4, %arg4)
+        affine.for %arg5 = 0 to %dim_3 step 128 {
+          %2 = affine.min #map(%dim_3, %arg5)
+          affine.for %arg6 = 0 to 128 step 16 {
+            %3 = arith.cmpi ult, %arg6, %0 : index
+            scf.if %3 {
+              affine.for %arg7 = 0 to 128 step 16 {
+                %4 = arith.cmpi ult, %arg7, %1 : index
+                scf.if %4 {
+                  affine.for %arg8 = 0 to 16 {
+                    %5 = affine.apply #map1(%arg6, %c0, %arg8)
+                    %6 = arith.cmpi ult, %5, %0 : index
+                    scf.if %6 {
+                      %7 = affine.apply #map1(%arg3, %arg6, %arg8)
+                      affine.for %arg9 = 0 to 16 {
+                        %8 = affine.apply #map1(%arg7, %c0, %arg9)
+                        %9 = arith.cmpi ult, %8, %1 : index
+                        scf.if %9 {
+                          %10 = affine.apply #map1(%arg4, %arg7, %arg9)
+                          affine.store %cst, %arg2[%7, %10] : memref<?x?xf32>
                         }
                       }
                     }
                   }
-
-                  // 第二步：显式保留 kk 归约循环和标量乘加模式。
-                  affine.for %kk = 0 to 128 {
-                    %in_k_bound = arith.cmpi ult, %kk, %kc : index
-                    scf.if %in_k_bound {
-                      // 根据第二步 cost module 的决策，优先对 B 注入高优先级读预取。
-                      "research.prefetch"(%b, %ko, %j, %jj, %kk) <{
-                        target = "B", kind = "read", priority = "high",
-                        cache = "L1", locality = "KEEP",
-                        distance = "按未来 2 个 kk-cache-line 或未来 1 个 B 微块边界"
-                      }> : (memref<?x?xf32>, index, index, index, index) -> ()
-                      // A 的预取次于 B，但仍然在 kk 归约推进前发出，以覆盖后续读取延迟。
-                      "research.prefetch"(%a, %i, %ii, %ko, %kk) <{
-                        target = "A", kind = "read", priority = "medium",
-                        cache = "L1", locality = "KEEP",
-                        distance = "按未来 1 到 2 个 kk-cache-line"
-                      }> : (memref<?x?xf32>, index, index, index, index) -> ()
-                      affine.for %i_inner = 0 to 16 {
-                        %a_row_offset = affine.apply #row_index(%ii, %c0, %i_inner)
-                        %row_valid = arith.cmpi ult, %a_row_offset, %mc : index
-                        scf.if %row_valid {
-                          %a_row = affine.apply #row_index(%i, %ii, %i_inner)
-                          %a_col = affine.apply #col_index(%ko, %c0, %kk)
-                          %a_val = affine.load %a[%a_row, %a_col] : memref<?x?xf32>
-
-                          affine.for %j_inner = 0 to 16 {
-                            %b_col_offset = affine.apply #col_index(%jj, %c0, %j_inner)
-                            %col_valid = arith.cmpi ult, %b_col_offset, %nc : index
-                            scf.if %col_valid {
-                              %b_row = affine.apply #row_index(%ko, %c0, %kk)
-                              %b_col = affine.apply #col_index(%j, %jj, %j_inner)
-                              %c_row = affine.apply #row_index(%i, %ii, %i_inner)
-                              %c_col = affine.apply #col_index(%j, %jj, %j_inner)
-
-                              %b_val = affine.load %b[%b_row, %b_col] : memref<?x?xf32>
-                              %c_old = affine.load %c[%c_row, %c_col] : memref<?x?xf32>
-                              %prod = arith.mulf %a_val, %b_val : f32
-                              %sum = arith.addf %c_old, %prod : f32
-                              affine.store %sum, %c[%c_row, %c_col] : memref<?x?xf32>
+                  affine.for %arg8 = 0 to 128 {
+                    %5 = arith.cmpi ult, %arg8, %2 : index
+                    scf.if %5 {
+                      "research.prefetch"(%arg1, %arg5, %arg4, %arg7, %arg8) {cache = "L1", distance = "\E6\8C\89\E6\9C\AA\E6\9D\A5 2 \E4\B8\AA kk-cache-line \E6\88\96\E6\9C\AA\E6\9D\A5 1 \E4\B8\AA B \E5\BE\AE\E5\9D\97\E8\BE\B9\E7\95\8C", kind = "read", locality = "KEEP", priority = "high", target = "B"} : (memref<?x?xf32>, index, index, index, index) -> ()
+                      "research.prefetch"(%arg0, %arg3, %arg6, %arg5, %arg8) {cache = "L1", distance = "\E6\8C\89\E6\9C\AA\E6\9D\A5 1 \E5\88\B0 2 \E4\B8\AA kk-cache-line", kind = "read", locality = "KEEP", priority = "medium", target = "A"} : (memref<?x?xf32>, index, index, index, index) -> ()
+                      affine.for %arg9 = 0 to 16 {
+                        %6 = affine.apply #map1(%arg6, %c0, %arg9)
+                        %7 = arith.cmpi ult, %6, %0 : index
+                        scf.if %7 {
+                          %8 = affine.apply #map1(%arg3, %arg6, %arg9)
+                          %9 = affine.apply #map1(%arg5, %c0, %arg8)
+                          %10 = affine.load %arg0[%8, %9] : memref<?x?xf32>
+                          affine.for %arg10 = 0 to 16 {
+                            %11 = affine.apply #map1(%arg7, %c0, %arg10)
+                            %12 = arith.cmpi ult, %11, %1 : index
+                            scf.if %12 {
+                              %13 = affine.apply #map1(%arg5, %c0, %arg8)
+                              %14 = affine.apply #map1(%arg4, %arg7, %arg10)
+                              %15 = affine.apply #map1(%arg3, %arg6, %arg9)
+                              %16 = affine.apply #map1(%arg4, %arg7, %arg10)
+                              %17 = affine.load %arg1[%13, %14] : memref<?x?xf32>
+                              %18 = affine.load %arg2[%15, %16] : memref<?x?xf32>
+                              %19 = arith.mulf %10, %17 : f32
+                              %20 = arith.addf %18, %19 : f32
+                              affine.store %20, %arg2[%15, %16] : memref<?x?xf32>
                             }
                           }
                         }
@@ -134,7 +78,7 @@ module {
         }
       }
     }
-
     return
   }
 }
+

@@ -2,6 +2,7 @@
 
 # Native build artifacts
 *.o
+/03_prefetch_injection/build/
 
 # Step-4 temporary lowering artifacts
 /04_vector_arm_sme_llvm/step4_*/
