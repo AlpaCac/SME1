@@ -6,8 +6,8 @@
 //   i / j / ko / ii / jj / kk 分块循环
 //   kk 归约循环内部包含 A/B/C 的 affine.load / affine.store
 //
-// pass 做的事情不是直接生成机器预取指令，而是在 affine 层插入
-// generic op：research.prefetch。这个 op 用来保留“对谁预取、预取到哪一级、
+// pass 做的事情不是直接生成机器预取指令，而是在 affine 层插入已注册的
+// research.prefetch op。这个 op 用来保留“对谁预取、预取到哪一级、
 // 优先级如何、预取距离是什么”等高层研究语义，后续再由 lowering pass 继续处理。
 //
 //===----------------------------------------------------------------------===//
@@ -22,10 +22,17 @@
 #include "mlir/IR/Builders.h"
 // BuiltinAttributes 提供 StringAttr 等基础属性类型。
 #include "mlir/IR/BuiltinAttributes.h"
+// BuiltinTypes 提供 MemRefType、IndexType 等基础类型。
+#include "mlir/IR/BuiltinTypes.h"
+// ExtensibleDialect 提供 DynamicDialect 和 DynamicOpDefinition，
+// 这里用它注册研究版 research.prefetch op，避免先引入 TableGen。
+#include "mlir/IR/ExtensibleDialect.h"
 // Operation 是 MLIR IR 中所有 op 的公共基类。
 #include "mlir/IR/Operation.h"
 // Pass.h 提供 PassWrapper、OperationPass、PassRegistration 等 pass 基础设施。
 #include "mlir/Pass/Pass.h"
+// DialectPlugin.h 提供 mlir-opt --load-dialect-plugin 所需的插件入口类型。
+#include "mlir/Tools/Plugins/DialectPlugin.h"
 // PassPlugin.h 提供 mlir-opt --load-pass-plugin 所需的插件入口类型。
 #include "mlir/Tools/Plugins/PassPlugin.h"
 // STLExtras 提供 llvm::reverse 等 LLVM 常用辅助工具。
@@ -44,6 +51,75 @@ using namespace mlir;
 // 匿名命名空间让本文件中的 pass 类型和辅助函数只在当前编译单元可见，
 // 避免和其他插件或 MLIR pass 发生符号冲突。
 namespace {
+
+//===----------------------------------------------------------------------===//
+// research dialect 注册
+//===----------------------------------------------------------------------===//
+
+// 检查某个属性是否存在且是 StringAttr。
+// research.prefetch 的高层语义当前都通过字符串属性承载，
+// 例如 target/cache/locality/distance。
+static LogicalResult requireStringAttr(Operation *op, StringRef name) {
+  if (op->getAttrOfType<StringAttr>(name))
+    return success();
+  return op->emitOpError() << "expected string attribute `" << name << "`";
+}
+
+// research.prefetch 的 verifier。
+//
+// 由于这里用的是 DynamicDialect，没有写 TableGen ODS，
+// 所以需要手工检查 operand、result、region 和关键属性。
+static LogicalResult verifyResearchPrefetchOp(Operation *op) {
+  // research.prefetch 是语义标记，不产生 SSA result。
+  if (op->getNumResults() != 0)
+    return op->emitOpError("expected zero results");
+
+  // 当前 op 不包含 region，只是一个带 operands/attributes 的预取语义点。
+  if (op->getNumRegions() != 0)
+    return op->emitOpError("expected zero regions");
+
+  // 第一个 operand 是要预取的 memref，后面至少要有一个 index 描述位置。
+  if (op->getNumOperands() < 2)
+    return op->emitOpError("expected a memref operand followed by indices");
+
+  // operand 0 必须是 memref，否则无法表达“预取哪个内存对象”。
+  if (!isa<MemRefType>(op->getOperand(0).getType()))
+    return op->emitOpError("expected first operand to be a memref");
+
+  // operand 1..N 必须是 index，用来保留块坐标和归约坐标。
+  for (Value index : op->getOperands().drop_front()) {
+    if (!index.getType().isIndex())
+      return op->emitOpError("expected all prefetch indices to have index type");
+  }
+
+  // 检查当前研究语义依赖的字符串属性是否存在。
+  if (failed(requireStringAttr(op, "target")) ||
+      failed(requireStringAttr(op, "kind")) ||
+      failed(requireStringAttr(op, "priority")) ||
+      failed(requireStringAttr(op, "cache")) ||
+      failed(requireStringAttr(op, "locality")) ||
+      failed(requireStringAttr(op, "distance")))
+    return failure();
+
+  // 当前 pass 只生成读预取，因此 kind 必须是 read。
+  StringAttr kind = op->getAttrOfType<StringAttr>("kind");
+  if (kind.getValue() != "read")
+    return op->emitOpError("currently only supports kind = \"read\"");
+
+  return success();
+}
+
+// 向 DialectRegistry 注册 research dialect 和 research.prefetch op。
+//
+// insertDynamic("research", ...) 会创建一个运行时 dialect。
+// registerDynamicOp("prefetch", ...) 会注册完整 op 名称 research.prefetch。
+static void registerResearchDialect(DialectRegistry &registry) {
+  registry.insertDynamic("research", [](MLIRContext *, DynamicDialect *dialect) {
+    auto verifyRegions = [](Operation *) -> LogicalResult { return success(); };
+    dialect->registerDynamicOp(DynamicOpDefinition::get(
+        "prefetch", dialect, verifyResearchPrefetchOp, verifyRegions));
+  });
+}
 
 // InjectResearchPrefetchPass 是真正的 pass 实现。
 //
@@ -69,6 +145,7 @@ struct InjectResearchPrefetchPass
   // 声明本 pass 会依赖哪些 dialect。
   // mlir-opt 加载 pass 后，会确保这些 dialect 可以被 context 使用。
   void getDependentDialects(DialectRegistry &registry) const final {
+    registerResearchDialect(registry);
     registry.insert<affine::AffineDialect, func::FuncDialect,
                     scf::SCFDialect>();
   }
@@ -219,8 +296,9 @@ private:
   static bool alreadyHasResearchPrefetch(scf::IfOp guard) {
     bool found = false;
 
-    // research.prefetch 当前还是未注册 generic op，
-    // 所以不能用具体 C++ op 类型 dyn_cast，只能按 operation name 字符串判断。
+    // research.prefetch 现在已经由 research dialect 注册。
+    // 这里仍按 operation name 判断，是为了兼容 DynamicDialect 下没有 C++ typed op
+    // wrapper 的实现方式。
     guard.getThenRegion().walk([&](Operation *op) {
       found |= op->getName().getStringRef() == "research.prefetch";
     });
@@ -257,15 +335,16 @@ private:
     return ordered;
   }
 
-  // 构造一条 research.prefetch generic op。
+  // 构造一条 research.prefetch op。
   //
-  // 由于当前还没有定义正式 research dialect，
-  // 这里使用 OperationState 手动创建名字为 "research.prefetch" 的 generic op。
+  // 当前通过 DynamicDialect 注册了 research.prefetch，
+  // 因此这里虽然仍使用 OperationState 创建，但创建出的 op 已经是已注册 op，
+  // 会接受 verifyResearchPrefetchOp 的结构检查。
   static void createResearchPrefetch(OpBuilder &builder, Location loc,
                                      StringRef target, Value memref,
                                      ValueRange indices, StringRef priority,
                                      StringRef distance) {
-    // OperationState 是 MLIR 创建未知/generic operation 的底层描述对象。
+    // OperationState 是 MLIR 创建 operation 的底层描述对象。
     // loc 表示源码/IR 位置信息，"research.prefetch" 是 op 名称。
     OperationState state(loc, "research.prefetch");
 
@@ -360,7 +439,7 @@ private:
   }
 };
 
-// 把 pass 注册到 MLIR PassRegistry。
+// 把 pass 和 research dialect 注册到 MLIR PassRegistry/DialectRegistry。
 // 插件被 mlir-opt 加载后，会调用下面的 mlirGetPassPluginInfo，
 // 进而执行这个注册函数，使 --inject-research-prefetch 可见。
 void registerInjectResearchPrefetchPass() {
@@ -368,6 +447,18 @@ void registerInjectResearchPrefetchPass() {
 }
 
 } // namespace
+
+// 这是 MLIR dialect 插件的动态库入口。
+//
+// 如果只想解析或验证已经包含 research.prefetch 的 MLIR 文件，
+// 可以使用 mlir-opt --load-dialect-plugin=... 加载这个入口，
+// 此时不需要运行 inject-research-prefetch pass。
+extern "C" LLVM_ATTRIBUTE_WEAK DialectPluginLibraryInfo
+mlirGetDialectPluginInfo() {
+  return {MLIR_PLUGIN_API_VERSION, "SMEPrefetchResearchDialect",
+          LLVM_VERSION_STRING,
+          [](DialectRegistry *registry) { registerResearchDialect(*registry); }};
+}
 
 // 这是 MLIR pass 插件的动态库入口。
 //

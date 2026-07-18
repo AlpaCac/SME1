@@ -34,7 +34,7 @@ scf.if %in_k_bound {
 - 遍历 `func.func`
 - 查找受限 GEMM affine 结构中的 `kk` 归约循环
 - 定位 `scf.if` 边界保护
-- 在 then block 中构造 `research.prefetch` generic op
+- 在 then block 中构造已注册的 `research.prefetch` op
 - 给函数增加 `prefetch_injected = "true"` 属性
 
 这更接近正式 MLIR 工作流，也为后续升级为完整自定义 dialect/pass 留出空间。
@@ -121,25 +121,25 @@ i, j, ko, ii, jj, kk
 
 第六，当前 pass 只处理第一处匹配到的 GEMM-like `kk` 循环。如果一个文件里有多个相同结构的函数或多个可预取循环，目前不会做全局多点注入。
 
-第七，当前输出仍然使用未注册的 generic op：
+第七，当前输出使用插件注册的 `research.prefetch` op，但文本上仍采用 MLIR generic assembly 格式：
 
 ```mlir
 "research.prefetch"(...)
 ```
 
-因此后续验证或继续处理时需要使用：
+因此后续验证或继续处理时不再需要 `--allow-unregistered-dialect`，但需要加载提供 `research` dialect 的插件：
 
 ```text
---allow-unregistered-dialect
+--load-dialect-plugin=03_prefetch_injection/build/SMEPrefetchInjectionPass.dylib
 ```
 
-如果未来把 `research.prefetch` 定义成正式 MLIR dialect op，这个限制可以去掉。
+如果不加载插件，MLIR 仍然无法知道 `research.prefetch` 的注册信息和 verifier。
 
 ## 目录结构
 
 - [CMakeLists.txt](/Users/alpaca/Documents/SME/SME1/03_prefetch_injection/CMakeLists.txt)：外部 MLIR pass 插件构建入口
 - [passes/InjectResearchPrefetch.cpp](/Users/alpaca/Documents/SME/SME1/03_prefetch_injection/passes/InjectResearchPrefetch.cpp)：第三步预取注入 pass
-- [generic_op说明文档.md](/Users/alpaca/Documents/SME/SME1/03_prefetch_injection/generic_op说明文档.md)：说明 `research.prefetch` generic op 和 pass 迁移思路
+- [generic_op说明文档.md](/Users/alpaca/Documents/SME/SME1/03_prefetch_injection/generic_op说明文档.md)：说明 `research.prefetch` 的 generic assembly 形式、注册方式和 pass 迁移思路
 - [output/gemm_fp32_affine_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/03_prefetch_injection/output/gemm_fp32_affine_prefetch.mlir)：带研究版预取语义的 `affine` MLIR
 
 ## 当前 pass 做了什么
@@ -161,7 +161,7 @@ inject-research-prefetch
 i, j, ko, ii, jj, kk
 ```
 
-5. 在 `scf.if` 的 then block 开头插入两个 generic op：
+5. 在 `scf.if` 的 then block 开头插入两个已注册的 `research.prefetch` op：
 
 ```mlir
 "research.prefetch"(...)
@@ -182,7 +182,7 @@ prefetch_injected = "true"
 - 对 `A` 注入中优先级 `read` 预取
 - 对 `C` 不注入预取
 
-生成的语义仍然采用 generic op：
+生成的语义仍然采用 generic assembly 打印形式，但 op 已经由插件中的 `research` dialect 注册：
 
 ```mlir
 "research.prefetch"(%b, %ko, %j, %jj, %kk) <{
@@ -195,7 +195,7 @@ prefetch_injected = "true"
 }> : (memref<?x?xf32>, index, index, index, index) -> ()
 ```
 
-后续可以把这些字段进一步改成 pass option、函数属性、外部 analysis result，或者正式自定义 dialect attribute。
+后续可以把这些字段进一步改成 pass option、函数属性、外部 analysis result，或者从当前 DynamicDialect 版本升级为 TableGen/ODS 定义的正式自定义 dialect attribute。
 
 ## 如何构建 pass 插件
 
@@ -229,7 +229,6 @@ cmake --build 03_prefetch_injection/build
 
 ```bash
 /Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
-  --allow-unregistered-dialect \
   --load-pass-plugin=03_prefetch_injection/build/SMEPrefetchInjectionPass.dylib \
   --pass-pipeline='builtin.module(func.func(inject-research-prefetch))' \
   01_custom_lifter/output/gemm_fp32_affine.mlir \
@@ -240,18 +239,20 @@ cmake --build 03_prefetch_injection/build
 
 ## 如何验证输出
 
-因为当前使用的是研究版未注册方言 op，验证时仍然需要允许未注册 dialect：
+因为 `research.prefetch` 已经由插件注册，验证输出时应加载 dialect 插件：
 
 ```bash
 /Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
-  --allow-unregistered-dialect \
+  --load-dialect-plugin=03_prefetch_injection/build/SMEPrefetchInjectionPass.dylib \
   03_prefetch_injection/output/gemm_fp32_affine_prefetch.mlir
 ```
+
+如果不加载 dialect 插件，MLIR 会报告 `research` 是未注册 dialect；这正好说明当前输出已经依赖正式注册信息，而不是裸 unknown op。
 
 ## 后续演进
 
 下一步可以继续做三件事：
 
-1. 把 `research.prefetch` 从 generic op 升级为正式自定义 dialect op。
+1. 把当前 DynamicDialect 版本的 `research.prefetch` 升级为 TableGen/ODS 定义的正式自定义 dialect op。
 2. 把当前 pass 中硬编码的 A/B 预取策略改为读取第二步 analysis result。
 3. 把注入点匹配从“受限 GEMM 形态”扩展为更通用的 affine 访存模式匹配。

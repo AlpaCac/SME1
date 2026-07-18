@@ -2,8 +2,8 @@
 
 这份文档的目标是说明三件事：
 
-1. 什么是 `generic op`
-2. 为什么第三步选择用 `generic op` 表达研究版预取语义
+1. 什么是 `generic assembly` 形式
+2. 为什么第三步仍用这种文本形式表达研究版预取语义
 3. 结合第三步生成的 [gemm_fp32_affine_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/03_prefetch_injection/output/gemm_fp32_affine_prefetch.mlir)，解释它包含哪些部分、各类语句是什么意思
 
 ---
@@ -32,9 +32,9 @@
 - 这种语义现在还没有正式 dialect
 - 但又想先把它放进 IR 里继续实验
 
-这时就可以使用 `generic op`。
+这时可以先使用 MLIR 的 generic assembly 形式表达它。
 
-### 1.1 generic op 的写法
+### 1.1 generic assembly 的写法
 
 第三步里采用的写法是：
 
@@ -45,14 +45,16 @@
 这类写法的特点是：
 
 - 操作名写成字符串形式
-- 不要求当前工具链已经正式注册这个 op
 - 可以携带操作数
 - 可以携带属性
 - 可以显式写出类型签名
+- 如果 dialect/op 已注册，它就是“注册 op 的通用打印形式”
+- 如果 dialect/op 未注册，它也可以作为研究原型临时承载语义
 
-也就是说，`generic op` 本质上是一种“通用文本表示形式”：
+也就是说，generic assembly 本质上是一种“通用文本表示形式”：
 
-- 先把一个暂时未正式建模的操作写进 IR
+- 既可以打印已注册 op
+- 也可以临时表达未注册 op
 - 后续再由自定义 pass 去识别、解释、桥接或重写
 
 ### 1.2 generic op 和“正式自定义 dialect op”的区别
@@ -73,14 +75,16 @@
 - 更适合长期维护
 - 更适合做验证、推理和大规模 pass 配合
 
-所以可以把第三步的 `generic op` 理解成：
+当前第三步已经比最早的未注册 generic op 更进一步：
 
-- 不是最终工程形态
-- 而是研究阶段的“语义占位符”
+- 文本上仍打印成 `"research.prefetch"(...)`
+- 插件里已经用 DynamicDialect 注册 `research.prefetch`
+- verifier 可以检查 operand、result、region 和关键属性
+- 后续还可以升级为 TableGen/ODS 定义的正式 dialect op
 
 ---
 
-## 2. 为什么第三步要使用 generic op
+## 2. 为什么第三步仍保留 generic assembly 形式
 
 第三步的任务不是立刻生成最终机器预取指令，而是先把第二步得到的预取决策写进高层 IR。
 
@@ -121,7 +125,7 @@
 - 转写为 `memref.prefetch`
 - 再继续转到 `llvm.prefetch`
 
-这正是 generic op 在研究原型阶段最有价值的地方。
+这正是 generic assembly 在研究原型阶段最有价值的地方。
 
 ---
 
@@ -194,7 +198,7 @@ prefetch_injected = "true"
 - 当前这份函数已经注入预取语义
 - 后续 pass 可以据此快速识别它
 
-### 4.4 新增的 generic op
+### 4.4 新增的 research.prefetch op
 
 例如：
 
@@ -434,7 +438,8 @@ affine.store %f0, %c[%c_row, %c_col] : memref<?x?xf32>
 
 含义：
 
-- 这是一个 generic op
+- 这是一个通过插件注册的 `research.prefetch` op
+- 当前文件使用 generic assembly 形式打印它
 - 名字叫 `research.prefetch`
 - 说明它是研究阶段定义的预取语义操作
 
@@ -713,7 +718,7 @@ prefetch_injected = "true"
 
 它表示第三步 pass 已经处理过这个函数。
 
-第二类是新增 generic op：
+第二类是新增已注册的 `research.prefetch` op：
 
 ```mlir
 "research.prefetch"(...)
@@ -801,15 +806,21 @@ i, j, ko, ii, jj, kk
 
 如果一个 module 里有多个 GEMM 函数，或者一个函数中有多个可预取的计算区域，当前实现不会逐个处理。后续如果要扩展，需要把 `injected` 这个单点控制改成按函数或按 loop 多点处理。
 
-第七，输出使用未注册 dialect 的 generic op。
+第七，输出使用已注册 dialect 的 op，但仍采用 generic assembly 格式打印。
 
-因为 `research.prefetch` 还不是正式定义的 MLIR dialect op，所以运行和验证输出时需要：
+当前 pass 插件通过 `DynamicDialect` 注册了：
 
 ```text
---allow-unregistered-dialect
+research.prefetch
 ```
 
-如果后续定义正式 `research` dialect，则可以让 MLIR verifier 检查 op 参数、属性和类型，这会比当前 generic op 更严格。
+因此运行 pass 生成输出时不需要 `--allow-unregistered-dialect`。验证输出文件时，需要加载同一个插件提供的 dialect 注册入口：
+
+```text
+--load-dialect-plugin=03_prefetch_injection/build/SMEPrefetchInjectionPass.dylib
+```
+
+如果不加载 dialect 插件，MLIR 会把 `research` 看作未知 dialect 并拒绝解析。这个行为是预期的，因为注册信息在插件里，而不是内置在 `mlir-opt` 主程序里。
 
 这意味着当前 pass 已经摆脱文本替换，但还没有变成任意 affine 程序的通用预取注入器。
 
@@ -837,7 +848,7 @@ i, j, ko, ii, jj, kk
 
 ### 11.5 pass 如何构造 research.prefetch
 
-pass 使用 MLIR 的 `OperationState` 构造 generic op：
+pass 使用 MLIR 的 `OperationState` 构造 `research.prefetch` op：
 
 ```cpp
 OperationState state(loc, "research.prefetch");
@@ -853,9 +864,27 @@ builder.create(state);
 
 这说明：
 
-- `research.prefetch` 仍然是 generic op
+- `research.prefetch` 已经在插件中注册
+- 当前文本仍用 generic assembly 形式打印
 - 但它已经由 MLIR pass 在 IR 上创建
+- verifier 会检查 operand、result、region 和关键字符串属性
 - 不再是 Python 字符串拼接
+
+当前注册方式不是 TableGen/ODS，而是 DynamicDialect：
+
+```cpp
+registry.insertDynamic("research", ...);
+dialect->registerDynamicOp(DynamicOpDefinition::get(
+    "prefetch", dialect, verifyResearchPrefetchOp, verifyRegions));
+```
+
+这样做的含义是：
+
+- `research` dialect 已经被插件注册
+- `research.prefetch` op 已经被插件注册
+- 可以通过 `verifyResearchPrefetchOp` 做基础合法性检查
+- 暂时不需要维护 `.td` 文件和生成代码
+- 后续如果语义稳定，可以升级为 ODS/TableGen 形式
 
 ### 11.6 pass 插入的两条预取
 
@@ -996,7 +1025,7 @@ Transform Dialect 仍然有价值，但更适合做：
 而当前第三步需要：
 
 - 根据 IR 结构识别注入点
-- 构造 generic op
+- 构造 `research.prefetch` op
 - 携带复杂属性
 - 后续接入 cost analysis
 
@@ -1013,7 +1042,7 @@ C++ MLIR analysis/injection pass
 
 ## 15. 当前实现的边界
 
-当前 pass 已经比 Python 文本替换更稳健，但仍然是研究版。
+当前 pass 已经比 Python 文本替换更稳健，并且 `research.prefetch` 已由插件注册，但仍然是研究版。
 
 当前边界是：
 
@@ -1021,11 +1050,11 @@ C++ MLIR analysis/injection pass
 - 默认函数参数顺序是 `A, B, C` 对应 func arguments 0、1、2
 - 只注入 A/B 的读预取
 - 决策内容暂时固化在 pass 中
-- `research.prefetch` 仍然是 generic op，不是正式 dialect op
+- `research.prefetch` 当前通过 DynamicDialect 注册，还不是 ODS/TableGen 形式的完整 dialect op
 
 后续最重要的改进是：
 
-- 定义正式 `research` dialect
+- 将当前 DynamicDialect 版 `research` dialect 升级为 ODS/TableGen 版正式 dialect
 - 把第二步 cost module 迁移成 MLIR analysis pass
 - 让注入 pass 消费分析结果，而不是固化策略
 
