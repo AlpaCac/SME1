@@ -24,18 +24,17 @@ add_definitions(${LLVM_DEFINITIONS})
 
 add_llvm_library(SMEPrefetchInjectionPass
   MODULE
-  passes/InjectResearchPrefetch.cpp
+  passes/InjectVectorPrefetch.cpp
 
   DEPENDS
   PLUGIN_TOOL
   mlir-opt
 
   LINK_LIBS
-  MLIRAffineDialect
-  MLIRArithDialect
   MLIRFuncDialect
   MLIRIR
+  MLIRMemRefDialect
   MLIRPass
-  MLIRSCFDialect
   MLIRSupport
+  MLIRVectorDialect
 )
