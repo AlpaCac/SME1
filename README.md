@@ -4,7 +4,7 @@
 
 本实验的总体目标是：
 
-针对 现有预取优化主要依赖后端启发式、高层计算语义在传统编译链中快速丢失、预取语义在跨层 lowering 时容易丢失的问题，
+针对现有预取优化主要依赖后端启发式、高层计算语义在传统编译链中快速丢失、预取语义在跨层 lowering 时容易丢失的问题，
 
 采用“C kernel + 自定义提升器 + 高层 MLIR 语义分析 + 预取语义注入 + LLVM lowering + LX2 验证”的方法，
 
@@ -12,7 +12,7 @@
 
 并期望在 LX2 实机上获得优于无预取 baseline 的性能结果。
 
-## 2.研究问题
+## 2. 研究问题
 
 ### 2.1 现有预取优化主要依赖后端启发式，缺少高层语义支撑
 
@@ -22,7 +22,7 @@
 - 静态启发式规则
 - 硬件自动预取器的假设
 
-这种方式缺少计算语义的支撑， 对于 SME 场景下的大规模分块矩阵计算，单纯依赖后端启发式未必能得到最优效果。
+这种方式缺少计算语义的支撑，对于 SME 场景下的大规模分块矩阵计算，单纯依赖后端启发式未必能得到最优效果。
 
 ### 2.2 高层计算语义在传统编译链中快速丢失
 
@@ -36,39 +36,39 @@ C/C++ -> Clang -> LLVM IR
 
 ### 2.3 预取语义在跨层 lowering 时容易丢失
 
-即使在高层 IR 中做出了合理的预取决策，仍然存在一个关键难点：如何将预取语义从 `linalg / affine / scf / vector`一直保留到 `arm_sme` / LLVM IR，并最终映射成编译器能够识别的目标预取形式。
+即使在高层 IR 中做出了合理的预取决策，仍然存在一个关键难点：如何将预取语义从 `linalg / affine / scf / vector` 一直保留到 `arm_sme` / LLVM IR，并最终映射成编译器能够识别的目标预取形式。
 
-## 3.研究方案
+## 3. 研究方案
 
 ### 3.1 总体技术路线
 
 ```
 C kernel
--> linalg（通过自定义的提升器将c语言转化成linalg）
-	-> 转换成affine层并进行高层语义分析
-	-> 转换成vector层并进行预取语义注入
+-> linalg（通过自定义提升器将 C 语言转换成 linalg）
+    -> 转换成 affine 层并进行高层语义分析
+    -> 转换成 vector 层并进行预取语义注入
 -> ArmSME lowering
 -> LLVM IR / Target-specific intrinsics
 -> 实机验证
 ```
 
-### 3.2 C kernel输入
+### 3.2 C kernel 输入
 
 输入程序选取为规则分块的 GEMM kernel，参考国防科大论文的实现方案，体现 `mc / nc / kc / mr / nr` 分块结构，避免显式 SME intrinsic、汇编、复杂指针技巧和运行时机制。这样做的目的是让自定义前端更方便把输入程序转换到高层 MLIR。
 
 形成的产出：一个适合自动分析和提升的 C kernel
 
-第一步的目标是跑通实验流程，所以对输入程序进行了简化：仅包含单个 kernel 函数、规则的 `for` 循环、固定格式的语义标注注释、只保留 `C=A*B`、
+第一步的目标是跑通实验流程，所以对输入程序进行了简化：仅包含单个 kernel 函数、规则的 `for` 循环、固定格式的语义标注注释，并且只保留 `C = A * B` 语义。
 
 ### 3.3 将 C kernel 转换为高层 MLIR
 
 起始条件：已有 C kernel
 
-采用的技术：使用自定义提升器识别循环结构和矩阵乘模式，将 C 程序提升到 `linalg`层。显式恢复矩阵乘语义。
+采用的技术：使用自定义提升器识别循环结构和矩阵乘模式，将 C 程序提升到 `linalg` 层，显式恢复矩阵乘语义。
 
-形成的产出：lingal层MLIR
+形成的产出：`linalg` 层 MLIR
 
-### 3.2 转换成affine层并进行高层语义分析（蒋涛）
+### 3.4 转换成 affine 层并进行高层语义分析
 
 高层语义分析应主要在 `linalg` 和 `affine/scf` 层开展。
 
@@ -99,31 +99,31 @@ C kernel
 - 也是“优化落地目标”里预取策略生成的起点
 - 直接回应“现有预取优化主要依赖后端启发式”的问题
 
-### 3.3 转换成vector层&预取语义表示与 IR 注入
+### 3.5 转换成 vector 层并进行预取语义表示与 IR 注入
 
-起始条件：已有linalg层 MLIR、已有 Cost Module 输出的预取决策结果
+起始条件：已有 `linalg` 层 MLIR、已有 Cost Module 输出的预取决策结果
 
 采用的技术：
 
-首先将linalg层MLIR转换成vector层MLIR，
+首先将 `linalg` 层 MLIR 转换成 `vector` 层 MLIR。
 
-对于vector层的mlir，根据语义分析的结果，插入预取语义。
+对于 `vector` 层 MLIR，根据语义分析的结果插入预取语义。
 
-将预取语义作为单独的中间表示来设计，自定义预取 op实现，通过**自定义 MLIR pass**或者**Transform Dialect 脚本**实现注入
+将预取语义作为单独的中间表示来设计，通过**自定义 MLIR pass**实现注入；Transform Dialect 可作为后续描述调度和匹配策略的补充方案。
 
-预取决策要考虑CPU、SVE、SME并行的情况。SME一般是计算完整的分块，SVE一般用于计算矩阵边界、CPU负责其他计算。
+预取决策要考虑 CPU、SVE、SME 并行的情况。SME 一般用于计算完整的分块，SVE 一般用于计算矩阵边界，CPU 负责其他计算。
 
-形成的产出：带预取语义的vector层 MLIR
+形成的产出：带预取语义的 `vector` 层 MLIR
 
 与研究目标的对应关系：对应“优化落地目标”中的预取语义注入部分，直接应对“预取语义在跨层 lowering 时容易丢失”的问题
 
-### 3.4 Vector / ArmSME / LLVM 降级
+### 3.6 Vector / ArmSME / LLVM 降级
 
-起始条件：已得到带预取语义的vector层 MLIR
+起始条件：已得到带预取语义的 `vector` 层 MLIR
 
 采用的技术：
 
-预取注入后的 MLIR 需要继续完成 lowering，最终降级到llvm层，并且需要保留上层注入的预取语义，需要编写Pass实现
+预取注入后的 MLIR 需要继续完成 lowering，最终降级到 LLVM 层，并且需要保留上层注入的预取语义，需要编写 pass 实现。
 
 ```
 vector
@@ -150,7 +150,7 @@ vector
 
 1. **Baseline 1 (No Prefetch)**：原始代码，纯靠硬件自动预取。
 2. **Baseline 2 (BiSheng Native Prefetch)**：开启毕昇编译器自研的软件预取优化。
-3. **Proposed (MLIR Polyhedral Model + BiSheng)**：关闭毕昇自带预取，由你的多面体模型控制发射
+3. **Proposed (MLIR 高层语义 Cost Model + BiSheng)**：关闭毕昇自带预取，由高层语义 Cost Model 控制预取发射。
 
 实验二：不规则控制流下的带宽与吞吐表现（FlagGEMM）
 
