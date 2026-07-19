@@ -33,6 +33,8 @@ C kernel
 -> LLVM IR
 ```
 
+当前第四步已经重构为 C++ MLIR pass 插件实现。自定义 pass 只处理研究相关的语义桥接与少量末端清理，具体的 `affine`、`vector`、`arm_sme`、`llvm` 降级仍然使用本机 MLIR 工具链中的官方 pass。
+
 ---
 
 ## 2. 各层的定位
@@ -77,6 +79,8 @@ C = A * B
 ```mlir
 "research.prefetch"(...)
 ```
+
+第四步读取这类输入时，需要加载第三步的 dialect 插件来完成解析；第四步自己的插件只注册 lowering pass，不重复注册 `research` dialect。
 
 ### 2.4 affine.prefetch / memref.prefetch
 
@@ -187,7 +191,7 @@ prfm ...
 
 ## 3. 第四步当前文件对应关系
 
-当前第四步不是保存所有中间文件，而是只保存关键证据文件。
+当前第四步不是保存所有中间文件，而是只保存关键证据文件。生成这些文件时，研究相关改写由 `04_vector_arm_sme_llvm/build/SMEStep4LoweringPasses.dylib` 中的 MLIR pass 完成。
 
 | 文件 | 所在层级 | 说明 |
 | --- | --- | --- |

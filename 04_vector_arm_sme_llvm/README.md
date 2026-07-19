@@ -1,94 +1,216 @@
-# 04 Vector ArmSME LLVM
+# 04 Vector / Arm SME / LLVM 降级
 
-这个目录现在服务于同一条统一主线：从第三步已经带有预取语义的高层 MLIR 出发，继续向 `vector / arm_sme / llvm` 方向降级。
+本目录实现总体方案的第四步：从第三步已经带有预取语义的高层 MLIR 出发，使用 MLIR pass 和官方 lowering pipeline，将计算与预取逐步降到 `vector / arm_sme / llvm` 层。
 
-## 第四步的统一定义
+这一版已经不再使用 Python 脚本文本改写。目录中的自定义逻辑被重构为 C++ MLIR pass 插件，官方已有的降级工作仍交给 `mlir-opt` pipeline 完成。
 
-第四步的研究目标不是长期保留“两条路线”，而是把下面这条主线尽量走通：
+## 1. 第四步目标
+
+第四步对应总体方案中的这一段：
 
 ```text
-高层 MLIR + 预取语义
--> vector
--> arm_sme
--> llvm
+带预取语义的高层 MLIR
+-> 标准 MLIR 预取表示
+-> vector 层计算主线
+-> Arm SME 相关表示
+-> LLVM dialect
+-> LLVM IR
 ```
 
-对应起点是第三步产物：
+目标不是重新实现 MLIR 的全部 lowering，而是在关键位置补充研究所需的语义桥接：
 
-- [gemm_fp32_affine_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/03_prefetch_injection/output/gemm_fp32_affine_prefetch.mlir)
+- 把第三步的 `research.prefetch` 转成 MLIR 标准 `affine.prefetch`
+- 在 vector 主线中的 `vector.transfer_read` 前插入 `memref.prefetch`
+- 修复末端少量 `i64 -> index -> i32` 桥接残留，使结果可以导出为 LLVM IR
 
-当前实现之所以还保留少量“证据型输出”，是因为 MLIR 官方 lowering 更擅长分别处理：
+## 2. 目录结构
 
-- `affine.prefetch -> memref.prefetch -> llvm.intr.prefetch`
-- `linalg.matmul -> vector -> arm_sme -> llvm`
+- [CMakeLists.txt](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/CMakeLists.txt)：构建第 04 步 MLIR pass 插件
+- [passes/Step4LoweringPasses.cpp](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/passes/Step4LoweringPasses.cpp)：第 04 步自定义 pass 实现
+- [input/gemm_step4_compute_mainline.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/input/gemm_step4_compute_mainline.mlir)：用于生成 vector/Arm SME 计算主线的高层输入
+- [output/01_affine_prefetch_std.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/01_affine_prefetch_std.mlir)：`research.prefetch -> affine.prefetch`
+- [output/03_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir)：预取语义降到 `llvm.intr.prefetch`
+- [output/07_unified_vector_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/07_unified_vector_prefetch.mlir)：vector 计算主线中插入标准预取
+- [output/08_unified_arm_sme_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/08_unified_arm_sme_prefetch.mlir)：继续降到 Arm SME 相关表示
+- [output/09_unified_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch.mlir)：可导出 LLVM IR 的最终 MLIR 结果
 
-所以这里的做法不是把研究方案拆成两条平行路线，而是借助这些已有 lowering 片段，把统一主线逐步压实。当前仓库只保留总体方案真正需要的关键产物，不再保存所有过渡中间件。
+## 3. 自定义 pass
 
-## 目录结构
+当前插件注册三个 pass：
 
-- [build_lowering_pipeline.py](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/build_lowering_pipeline.py)：第四步重构脚本
+```text
+step4-convert-research-prefetch-to-affine
+step4-inject-vector-memref-prefetch
+step4-repair-llvm-index-bridges
+```
 
-输出文件：
+### 3.1 `step4-convert-research-prefetch-to-affine`
 
-- [01_affine_prefetch_std.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/01_affine_prefetch_std.mlir)：把 `research.prefetch` 桥接为标准 `affine.prefetch`
-- [03_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir)：预取语义继续降到 `llvm.intr.prefetch`
-- [07_unified_vector_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/07_unified_vector_prefetch.mlir)：把第三步预取决策注入 `vector` 计算主线后的统一中间结果
-- [08_unified_arm_sme_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/08_unified_arm_sme_prefetch.mlir)：继续降到 `arm_sme` 后的统一中间结果
-- [09_unified_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch.mlir)：去掉末端桥接残留后，可直接翻译为 LLVM IR 的统一主线结果
+输入是第三步生成的：
 
-## 当前方法
+```text
+03_prefetch_injection/output/gemm_fp32_affine_prefetch.mlir
+```
 
-当前脚本分三段推进，但对仓库只落必要结果：
+这个 pass 读取 `research.prefetch` 的操作数和属性，将其转换为标准 `affine.prefetch`。
 
-1. 先把第三步中的研究版 `research.prefetch` 桥接成标准 `affine.prefetch`，证明预取语义能够继续稳定下沉。
-2. 再利用官方 `linalg -> vector -> arm_sme -> llvm` lowering，在脚本内部生成临时计算中间件。
-3. 最后把第三步的预取决策重新注入到 `vector` 计算主线中，得到 `07 -> 08 -> 09` 这组统一产物。
-4. 对 `09` 的直接 lowering 结果补一轮 `convert-vector-to-llvm=enable-arm-sve`，让 `arm_sve.psel` 进一步落到可导出形态。
-5. 对末端残留的 `i64 -> index -> i32` 桥接做一个很小的清理，把它规整成等价的 `llvm.trunc i64 -> i32`。
+当前支持的输入限制：
 
-## 当前阶段结论
+- `research.prefetch` 必须来自第三步已注册的 `research` dialect
+- 预取对象当前支持 `target = "A"` 或 `target = "B"`
+- 当前只支持读预取，即 `kind = "read"`
+- 当前要求每条 `research.prefetch` 携带 4 个 index 操作数
+- `A` 的下标语义固定解释为 `A[i + ii, ko + kk]`
+- `B` 的下标语义固定解释为 `B[ko + kk, j + jj]`
 
-现在第四步已经具备了统一主线的骨架：
+### 3.2 `step4-inject-vector-memref-prefetch`
 
-- 高层预取语义已经能落到 `llvm.intr.prefetch`
-- 计算主线已经能落到 `arm_sme`
-- 统一后的 `07 -> 08 -> 09` 产物已经形成
+输入是 vector 化后的计算主线。
 
-现在统一主线的 LLVM 侧已经收口到可导出状态：`09_unified_llvm_prefetch.mlir` 可以直接被 `mlir-translate` 转成 LLVM IR。
+这个 pass 在 rank-1 `vector.transfer_read` 前插入：
 
-需要注意的是，末端仍然包含一个研究型的小后处理：它不是在改算法语义，而是在把官方 lowering 末端留下的少量桥接残留，规整成 LLVM 后端能直接接受的等价形式。
+```mlir
+memref.prefetch ..., read, locality<3>, data
+```
 
-## 如何运行
+当前支持的输入限制：
+
+- 输入中需要已经存在 `vector.transfer_read`
+- 读源需要是 rank-1 `memref`
+- 当前只对 rank-1 vector read 插入预取
+- rank-2 tile 读写暂时不插入预取，避免把 C tile 初始化或回写误判为 A/B 流式读
+- 当前预取 hint 固定为 `read, locality<3>, data`
+
+### 3.3 `step4-repair-llvm-index-bridges`
+
+输入是已经接近 LLVM dialect 的 MLIR。
+
+这个 pass 查找官方 lowering 后可能残留的：
+
+```text
+i64 -> index -> i32
+```
+
+并将其规整为：
+
+```mlir
+llvm.trunc %x : i64 to i32
+```
+
+它不改变矩阵计算语义，只是让最终 `mlir-translate --mlir-to-llvmir` 可以接受当前输出。
+
+## 4. 构建插件
 
 在仓库根目录执行：
 
 ```bash
-python3 04_vector_arm_sme_llvm/build_lowering_pipeline.py
+cmake -S 04_vector_arm_sme_llvm \
+  -B 04_vector_arm_sme_llvm/build \
+  -DMLIR_DIR=/Users/alpaca/Documents/SME/external/llvm-project/build/lib/cmake/mlir \
+  -DLLVM_DIR=/Users/alpaca/Documents/SME/external/llvm-project/build/lib/cmake/llvm
+
+cmake --build 04_vector_arm_sme_llvm/build
 ```
 
-## 你现在应该重点看什么
+构建产物是：
 
-如果你要证明“第四步已经转入统一主线”，建议重点看五份文件：
+```text
+04_vector_arm_sme_llvm/build/SMEStep4LoweringPasses.dylib
+```
 
-1. [01_affine_prefetch_std.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/01_affine_prefetch_std.mlir)  
-   说明预取语义已经进入标准高层 op
+可以用下面命令确认 pass 已注册：
 
-2. [03_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir)  
-   说明预取语义已经能落到 LLVM 侧
+```bash
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  --load-pass-plugin=04_vector_arm_sme_llvm/build/SMEStep4LoweringPasses.dylib \
+  --help-list-hidden | rg "step4-|SMEStep4"
+```
 
-3. [07_unified_vector_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/07_unified_vector_prefetch.mlir)  
-   说明预取决策已经重新进入统一计算主线
+## 5. 重新生成输出
 
-4. [08_unified_arm_sme_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/08_unified_arm_sme_prefetch.mlir)  
-   说明统一后的计算与预取信息已经共同进入 `arm_sme` 阶段
+第 04 步输入中的 `research.prefetch` 由第 03 步插件注册。因此转换第一段时需要同时加载：
 
-5. [09_unified_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch.mlir)  
-   说明统一主线已经可以被导出为 LLVM IR
+- 第 03 步 dialect 插件：负责解析 `research.prefetch`
+- 第 04 步 pass 插件：负责执行 lowering 改写
 
-## 下一步建议
+```bash
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  --load-dialect-plugin=03_prefetch_injection/build/SMEPrefetchInjectionPass.dylib \
+  --load-pass-plugin=04_vector_arm_sme_llvm/build/SMEStep4LoweringPasses.dylib \
+  --pass-pipeline='builtin.module(func.func(step4-convert-research-prefetch-to-affine))' \
+  03_prefetch_injection/output/gemm_fp32_affine_prefetch.mlir \
+  -o 04_vector_arm_sme_llvm/output/01_affine_prefetch_std.mlir
+```
 
-完成这一阶段后，最关键的下一步是：
+继续把标准预取降到 LLVM dialect：
 
-1. 把当前脚本式末端清理逐步替换成正式 pass。
-2. 为统一主线补一个更直接的运行 harness，继续往可执行程序推进。
-3. 让同一份带预取语义的高层 MLIR 真正稳定地一路走到 `vector / arm_sme / llvm` 而不丢失预取信息。
+```bash
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  04_vector_arm_sme_llvm/output/01_affine_prefetch_std.mlir \
+  -lower-affine -canonicalize -cse \
+  -o /private/tmp/step4_02_memref_prefetch.mlir
+
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  /private/tmp/step4_02_memref_prefetch.mlir \
+  -convert-scf-to-cf -expand-strided-metadata -finalize-memref-to-llvm \
+  -convert-arith-to-llvm -convert-func-to-llvm -convert-cf-to-llvm \
+  -reconcile-unrealized-casts \
+  -o 04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir
+```
+
+生成 vector 计算主线并插入预取：
+
+```bash
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  04_vector_arm_sme_llvm/input/gemm_step4_compute_mainline.mlir \
+  -transform-interpreter -test-transform-dialect-erase-schedule \
+  -o /private/tmp/step4_04_compute_vector.mlir
+
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  --load-pass-plugin=04_vector_arm_sme_llvm/build/SMEStep4LoweringPasses.dylib \
+  --pass-pipeline='builtin.module(func.func(step4-inject-vector-memref-prefetch))' \
+  /private/tmp/step4_04_compute_vector.mlir \
+  -o 04_vector_arm_sme_llvm/output/07_unified_vector_prefetch.mlir
+```
+
+继续降到 Arm SME 和 LLVM dialect：
+
+```bash
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  04_vector_arm_sme_llvm/output/07_unified_vector_prefetch.mlir \
+  -test-lower-to-arm-sme \
+  -o 04_vector_arm_sme_llvm/output/08_unified_arm_sme_prefetch.mlir
+
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  04_vector_arm_sme_llvm/output/07_unified_vector_prefetch.mlir \
+  -test-lower-to-arm-sme -test-lower-to-llvm \
+  -o /private/tmp/step4_09_unified_llvm_prefetch_pre_legalize.mlir
+
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  /private/tmp/step4_09_unified_llvm_prefetch_pre_legalize.mlir \
+  -convert-vector-to-llvm=enable-arm-sve -reconcile-unrealized-casts \
+  -o /private/tmp/step4_09_unified_llvm_prefetch_legalized.mlir
+
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  --load-pass-plugin=04_vector_arm_sme_llvm/build/SMEStep4LoweringPasses.dylib \
+  --pass-pipeline='builtin.module(step4-repair-llvm-index-bridges)' \
+  /private/tmp/step4_09_unified_llvm_prefetch_legalized.mlir \
+  -o 04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch.mlir
+```
+
+## 6. 验证 LLVM IR 导出
+
+```bash
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-translate \
+  --mlir-to-llvmir \
+  04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch.mlir \
+  -o /private/tmp/step4_09.ll
+```
+
+当前该命令可以成功执行，说明第 04 步最终产物已经收口到可导出的 LLVM dialect 形式。
+
+## 7. 当前注意事项
+
+- `-test-lower-to-arm-sme` 会输出 SME tile allocation 相关 warning，提示性能可能下降；这是当前测试 lowering 的性能提示，不是本步骤失败。
+- 第 04 步不重复注册 `research` dialect。解析第三步输出时，需要加载第 03 步插件。
+- 现在仍保留 `output/03_llvm_prefetch.mlir` 作为预取语义下沉证据；统一主线最终以 `output/07 -> output/08 -> output/09` 为主。

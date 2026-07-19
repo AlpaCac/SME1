@@ -1,7 +1,7 @@
 #map = affine_map<(d0)[s0, s1] -> (-d0 + s0, s1)>
 #map1 = affine_map<(d0)[s0, s1] -> (d0 * s1 + s0)>
 module {
-  func.func @gemm_step4_compute(%arg0: memref<?x?xf32, strided<[?, ?], offset: ?>>, %arg1: memref<?x?xf32, strided<[?, ?], offset: ?>>, %arg2: memref<?x?xf32, strided<[?, ?], offset: ?>>) -> memref<?x?xf32, strided<[?, ?], offset: ?>> {
+  func.func @gemm_step4_compute(%arg0: memref<?x?xf32, strided<[?, ?], offset: ?>>, %arg1: memref<?x?xf32, strided<[?, ?], offset: ?>>, %arg2: memref<?x?xf32, strided<[?, ?], offset: ?>>) -> memref<?x?xf32, strided<[?, ?], offset: ?>> attributes {step4_vector_prefetch = "memref_prefetch"} {
     %0 = ub.poison : f32
     %c16 = arith.constant 16 : index
     %c1 = arith.constant 1 : index
@@ -27,11 +27,9 @@ module {
           %subview_5 = memref.subview %arg0[%arg3, %arg5] [%1, 1] [1, 1] : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<?x1xf32, strided<[?, ?], offset: ?>>
           %subview_6 = memref.subview %arg1[%arg5, %arg4] [1, %3] [1, 1] : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<1x?xf32, strided<[?, ?], offset: ?>>
           %subview_7 = memref.subview %subview_5[0, 0] [%1, 1] [1, 1] : memref<?x1xf32, strided<[?, ?], offset: ?>> to memref<?xf32, #map1>
-          // 从第三步的预取决策继续向下传递：A 在当前 kk 推进前做读预取。
           memref.prefetch %subview_7[%c0], read, locality<3>, data : memref<?xf32, #map1>
           %7 = vector.transfer_read %subview_7[%c0], %0, %2 {in_bounds = [true]} : memref<?xf32, #map1>, vector<[16]xf32>
           %subview_8 = memref.subview %subview_6[0, 0] [1, %3] [1, 1] : memref<1x?xf32, strided<[?, ?], offset: ?>> to memref<?xf32, #map1>
-          // B 仍然是更高优先级的读流，因此同样在 transfer_read 之前发出预取。
           memref.prefetch %subview_8[%c0], read, locality<3>, data : memref<?xf32, #map1>
           %8 = vector.transfer_read %subview_8[%c0], %0, %4 {in_bounds = [true]} : memref<?xf32, #map1>, vector<[16]xf32>
           %9 = vector.transfer_read %subview[%c0, %c0], %0, %5 {in_bounds = [true, true]} : memref<?x?xf32, strided<[?, ?], offset: ?>>, vector<[16]x[16]xf32>

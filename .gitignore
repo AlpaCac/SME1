@@ -3,10 +3,10 @@
 # Native build artifacts
 *.o
 /03_prefetch_injection/build/
+/04_vector_arm_sme_llvm/build/
 
 # Step-4 temporary lowering artifacts
 /04_vector_arm_sme_llvm/step4_*/
-/04_vector_arm_sme_llvm/input/
 /04_vector_arm_sme_llvm/output/02_memref_prefetch.mlir
 /04_vector_arm_sme_llvm/output/04_compute_vector.mlir
 /04_vector_arm_sme_llvm/output/05_compute_arm_sme.mlir

@@ -53,7 +53,9 @@ research.prefetch
 
 ## 2. research.prefetch 支持的参数
 
-第三步中使用的 `research.prefetch` 是一个 generic op，不是 MLIR 官方标准 op。
+第三步中使用的 `research.prefetch` 现在由第 03 步插件注册为 `research` dialect 中的动态 op，但它仍然采用 MLIR generic assembly 形式打印，不是 MLIR 官方标准 op。
+
+第 04 步不再重复注册 `research` dialect，而是通过加载第 03 步插件解析该 op，再用第 04 步 C++ MLIR pass 将它桥接到标准 `affine.prefetch`。
 
 当前形式如下：
 

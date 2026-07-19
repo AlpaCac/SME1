@@ -1,5 +1,5 @@
 module {
-  llvm.func @gemm_step4_compute(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: i64, %arg6: i64, %arg7: !llvm.ptr, %arg8: !llvm.ptr, %arg9: i64, %arg10: i64, %arg11: i64, %arg12: i64, %arg13: i64, %arg14: !llvm.ptr, %arg15: !llvm.ptr, %arg16: i64, %arg17: i64, %arg18: i64, %arg19: i64, %arg20: i64) -> !llvm.struct<(ptr, ptr, i64, array<2 x i64>, array<2 x i64>)> attributes {arm_locally_streaming, arm_new_za} {
+  llvm.func @gemm_step4_compute(%arg0: !llvm.ptr, %arg1: !llvm.ptr, %arg2: i64, %arg3: i64, %arg4: i64, %arg5: i64, %arg6: i64, %arg7: !llvm.ptr, %arg8: !llvm.ptr, %arg9: i64, %arg10: i64, %arg11: i64, %arg12: i64, %arg13: i64, %arg14: !llvm.ptr, %arg15: !llvm.ptr, %arg16: i64, %arg17: i64, %arg18: i64, %arg19: i64, %arg20: i64) -> !llvm.struct<(ptr, ptr, i64, array<2 x i64>, array<2 x i64>)> attributes {arm_locally_streaming, arm_new_za, step4_vector_prefetch = "memref_prefetch"} {
     %0 = llvm.mlir.constant(0 : index) : i64
     %1 = llvm.mlir.constant(dense<true> : vector<[4]xi1>) : vector<[4]xi1>
     %2 = llvm.mlir.constant(0 : i64) : i64
@@ -1490,545 +1490,545 @@ module {
     "arm_sme.intr.mopa"(%1044, %825, %1038, %819) <{tile_id = 3 : i32}> : (vector<[4]xi1>, vector<[4]xi1>, vector<[4]xf32>, vector<[4]xf32>) -> ()
     llvm.br ^bb194(%0 : i64)
   ^bb194(%1045: i64):  // 2 preds: ^bb193, ^bb267
-    %1047 = llvm.icmp "slt" %1045, %26 : i64
-    llvm.cond_br %1047, ^bb195, ^bb268
+    %1046 = llvm.icmp "slt" %1045, %26 : i64
+    llvm.cond_br %1046, ^bb195, ^bb268
   ^bb195:  // pred: ^bb194
-    %1048 = "arm_sve.intr.convert.to.svbool"(%75) : (vector<[16]xi1>) -> vector<[16]xi1>
-    %1049 = llvm.trunc %1045 : i64 to i32
-    %1050 = "arm_sve.intr.psel"(%1048, %61, %1049) : (vector<[16]xi1>, vector<[16]xi1>, i32) -> vector<[16]xi1>
-    %1051 = "arm_sve.intr.convert.from.svbool"(%1050) : (vector<[16]xi1>) -> vector<[16]xi1>
-    %1052 = llvm.intr.vector.extract %1051[0] : vector<[4]xi1> from vector<[16]xi1>
+    %1047 = "arm_sve.intr.convert.to.svbool"(%75) : (vector<[16]xi1>) -> vector<[16]xi1>
+    %1048 = llvm.trunc %1045 : i64 to i32
+    %1049 = "arm_sve.intr.psel"(%1047, %61, %1048) : (vector<[16]xi1>, vector<[16]xi1>, i32) -> vector<[16]xi1>
+    %1050 = "arm_sve.intr.convert.from.svbool"(%1049) : (vector<[16]xi1>) -> vector<[16]xi1>
+    %1051 = llvm.intr.vector.extract %1050[0] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb196(%0 : i64)
-  ^bb196(%1053: i64):  // 2 preds: ^bb195, ^bb197
-    %1054 = llvm.icmp "slt" %1053, %26 : i64
-    llvm.cond_br %1054, ^bb197, ^bb198
+  ^bb196(%1052: i64):  // 2 preds: ^bb195, ^bb197
+    %1053 = llvm.icmp "slt" %1052, %26 : i64
+    llvm.cond_br %1053, ^bb197, ^bb198
   ^bb197:  // pred: ^bb196
-    %1055 = llvm.trunc %1053 : i64 to i32
-    %1056 = llvm.mul %1053, %26 : i64
-    %1057 = llvm.add %1056, %2 : i64
-    %1058 = llvm.getelementptr %50[%1057] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1059 = "arm_sme.intr.read.horiz"(%10, %1, %1055) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1058, %1055) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1060 = llvm.mul %1053, %26 : i64
-    %1061 = llvm.add %1060, %0 : i64
-    %1062 = llvm.getelementptr %50[%1061] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1059, %1062 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1063 = llvm.add %1053, %3 : i64
-    llvm.br ^bb196(%1063 : i64)
+    %1054 = llvm.trunc %1052 : i64 to i32
+    %1055 = llvm.mul %1052, %26 : i64
+    %1056 = llvm.add %1055, %2 : i64
+    %1057 = llvm.getelementptr %50[%1056] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1058 = "arm_sme.intr.read.horiz"(%10, %1, %1054) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1057, %1054) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1059 = llvm.mul %1052, %26 : i64
+    %1060 = llvm.add %1059, %0 : i64
+    %1061 = llvm.getelementptr %50[%1060] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1058, %1061 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1062 = llvm.add %1052, %3 : i64
+    llvm.br ^bb196(%1062 : i64)
   ^bb198:  // pred: ^bb196
-    %1064 = llvm.getelementptr %arg15[%69] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1065 = llvm.mul %1045, %arg19 : i64
-    %1066 = llvm.mul %arg20, %0 : i64
-    %1067 = llvm.add %1065, %1066 : i64
-    %1068 = llvm.getelementptr %1064[%1067] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1069 = llvm.trunc %1045 : i64 to i32
-    "arm_sme.intr.st1w.horiz"(%1052, %1068, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1063 = llvm.getelementptr %arg15[%69] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1064 = llvm.mul %1045, %arg19 : i64
+    %1065 = llvm.mul %arg20, %0 : i64
+    %1066 = llvm.add %1064, %1065 : i64
+    %1067 = llvm.getelementptr %1063[%1066] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1068 = llvm.trunc %1045 : i64 to i32
+    "arm_sme.intr.st1w.horiz"(%1051, %1067, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb199(%0 : i64)
-  ^bb199(%1070: i64):  // 2 preds: ^bb198, ^bb200
-    %1071 = llvm.icmp "slt" %1070, %26 : i64
-    llvm.cond_br %1071, ^bb200, ^bb201
+  ^bb199(%1069: i64):  // 2 preds: ^bb198, ^bb200
+    %1070 = llvm.icmp "slt" %1069, %26 : i64
+    llvm.cond_br %1070, ^bb200, ^bb201
   ^bb200:  // pred: ^bb199
-    %1072 = llvm.trunc %1070 : i64 to i32
-    %1073 = llvm.mul %1070, %26 : i64
-    %1074 = llvm.add %1073, %2 : i64
-    %1075 = llvm.getelementptr %50[%1074] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1076 = "arm_sme.intr.read.horiz"(%10, %1, %1072) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1075, %1072) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1077 = llvm.mul %1070, %26 : i64
-    %1078 = llvm.add %1077, %0 : i64
-    %1079 = llvm.getelementptr %50[%1078] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1076, %1079 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1080 = llvm.add %1070, %3 : i64
-    llvm.br ^bb199(%1080 : i64)
+    %1071 = llvm.trunc %1069 : i64 to i32
+    %1072 = llvm.mul %1069, %26 : i64
+    %1073 = llvm.add %1072, %2 : i64
+    %1074 = llvm.getelementptr %50[%1073] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1075 = "arm_sme.intr.read.horiz"(%10, %1, %1071) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1074, %1071) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1076 = llvm.mul %1069, %26 : i64
+    %1077 = llvm.add %1076, %0 : i64
+    %1078 = llvm.getelementptr %50[%1077] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1075, %1078 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1079 = llvm.add %1069, %3 : i64
+    llvm.br ^bb199(%1079 : i64)
   ^bb201:  // pred: ^bb199
-    %1081 = llvm.intr.vector.extract %1051[4] : vector<[4]xi1> from vector<[16]xi1>
+    %1080 = llvm.intr.vector.extract %1050[4] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb202(%0 : i64)
-  ^bb202(%1082: i64):  // 2 preds: ^bb201, ^bb203
-    %1083 = llvm.icmp "slt" %1082, %26 : i64
-    llvm.cond_br %1083, ^bb203, ^bb204
+  ^bb202(%1081: i64):  // 2 preds: ^bb201, ^bb203
+    %1082 = llvm.icmp "slt" %1081, %26 : i64
+    llvm.cond_br %1082, ^bb203, ^bb204
   ^bb203:  // pred: ^bb202
-    %1084 = llvm.trunc %1082 : i64 to i32
-    %1085 = llvm.mul %1082, %26 : i64
-    %1086 = llvm.add %1085, %2 : i64
-    %1087 = llvm.getelementptr %48[%1086] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1088 = "arm_sme.intr.read.horiz"(%10, %1, %1084) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1087, %1084) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1089 = llvm.mul %1082, %26 : i64
-    %1090 = llvm.add %1089, %0 : i64
-    %1091 = llvm.getelementptr %48[%1090] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1088, %1091 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1092 = llvm.add %1082, %3 : i64
-    llvm.br ^bb202(%1092 : i64)
+    %1083 = llvm.trunc %1081 : i64 to i32
+    %1084 = llvm.mul %1081, %26 : i64
+    %1085 = llvm.add %1084, %2 : i64
+    %1086 = llvm.getelementptr %48[%1085] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1087 = "arm_sme.intr.read.horiz"(%10, %1, %1083) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1086, %1083) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1088 = llvm.mul %1081, %26 : i64
+    %1089 = llvm.add %1088, %0 : i64
+    %1090 = llvm.getelementptr %48[%1089] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1087, %1090 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1091 = llvm.add %1081, %3 : i64
+    llvm.br ^bb202(%1091 : i64)
   ^bb204:  // pred: ^bb202
-    %1093 = llvm.mul %26, %arg20 : i64
-    %1094 = llvm.add %1065, %1093 : i64
-    %1095 = llvm.getelementptr %1064[%1094] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1081, %1095, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1092 = llvm.mul %26, %arg20 : i64
+    %1093 = llvm.add %1064, %1092 : i64
+    %1094 = llvm.getelementptr %1063[%1093] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1080, %1094, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb205(%0 : i64)
-  ^bb205(%1096: i64):  // 2 preds: ^bb204, ^bb206
-    %1097 = llvm.icmp "slt" %1096, %26 : i64
-    llvm.cond_br %1097, ^bb206, ^bb207
+  ^bb205(%1095: i64):  // 2 preds: ^bb204, ^bb206
+    %1096 = llvm.icmp "slt" %1095, %26 : i64
+    llvm.cond_br %1096, ^bb206, ^bb207
   ^bb206:  // pred: ^bb205
-    %1098 = llvm.trunc %1096 : i64 to i32
-    %1099 = llvm.mul %1096, %26 : i64
-    %1100 = llvm.add %1099, %2 : i64
-    %1101 = llvm.getelementptr %48[%1100] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1102 = "arm_sme.intr.read.horiz"(%10, %1, %1098) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1101, %1098) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1103 = llvm.mul %1096, %26 : i64
-    %1104 = llvm.add %1103, %0 : i64
-    %1105 = llvm.getelementptr %48[%1104] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1102, %1105 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1106 = llvm.add %1096, %3 : i64
-    llvm.br ^bb205(%1106 : i64)
+    %1097 = llvm.trunc %1095 : i64 to i32
+    %1098 = llvm.mul %1095, %26 : i64
+    %1099 = llvm.add %1098, %2 : i64
+    %1100 = llvm.getelementptr %48[%1099] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1101 = "arm_sme.intr.read.horiz"(%10, %1, %1097) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1100, %1097) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1102 = llvm.mul %1095, %26 : i64
+    %1103 = llvm.add %1102, %0 : i64
+    %1104 = llvm.getelementptr %48[%1103] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1101, %1104 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1105 = llvm.add %1095, %3 : i64
+    llvm.br ^bb205(%1105 : i64)
   ^bb207:  // pred: ^bb205
-    %1107 = llvm.intr.vector.extract %1051[8] : vector<[4]xi1> from vector<[16]xi1>
+    %1106 = llvm.intr.vector.extract %1050[8] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb208(%0 : i64)
-  ^bb208(%1108: i64):  // 2 preds: ^bb207, ^bb209
-    %1109 = llvm.icmp "slt" %1108, %26 : i64
-    llvm.cond_br %1109, ^bb209, ^bb210
+  ^bb208(%1107: i64):  // 2 preds: ^bb207, ^bb209
+    %1108 = llvm.icmp "slt" %1107, %26 : i64
+    llvm.cond_br %1108, ^bb209, ^bb210
   ^bb209:  // pred: ^bb208
-    %1110 = llvm.trunc %1108 : i64 to i32
-    %1111 = llvm.mul %1108, %26 : i64
-    %1112 = llvm.add %1111, %2 : i64
-    %1113 = llvm.getelementptr %46[%1112] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1114 = "arm_sme.intr.read.horiz"(%10, %1, %1110) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1113, %1110) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1115 = llvm.mul %1108, %26 : i64
-    %1116 = llvm.add %1115, %0 : i64
-    %1117 = llvm.getelementptr %46[%1116] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1114, %1117 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1118 = llvm.add %1108, %3 : i64
-    llvm.br ^bb208(%1118 : i64)
+    %1109 = llvm.trunc %1107 : i64 to i32
+    %1110 = llvm.mul %1107, %26 : i64
+    %1111 = llvm.add %1110, %2 : i64
+    %1112 = llvm.getelementptr %46[%1111] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1113 = "arm_sme.intr.read.horiz"(%10, %1, %1109) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1112, %1109) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1114 = llvm.mul %1107, %26 : i64
+    %1115 = llvm.add %1114, %0 : i64
+    %1116 = llvm.getelementptr %46[%1115] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1113, %1116 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1117 = llvm.add %1107, %3 : i64
+    llvm.br ^bb208(%1117 : i64)
   ^bb210:  // pred: ^bb208
-    %1119 = llvm.mul %204, %arg20 : i64
-    %1120 = llvm.add %1065, %1119 : i64
-    %1121 = llvm.getelementptr %1064[%1120] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1107, %1121, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1118 = llvm.mul %204, %arg20 : i64
+    %1119 = llvm.add %1064, %1118 : i64
+    %1120 = llvm.getelementptr %1063[%1119] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1106, %1120, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb211(%0 : i64)
-  ^bb211(%1122: i64):  // 2 preds: ^bb210, ^bb212
-    %1123 = llvm.icmp "slt" %1122, %26 : i64
-    llvm.cond_br %1123, ^bb212, ^bb213
+  ^bb211(%1121: i64):  // 2 preds: ^bb210, ^bb212
+    %1122 = llvm.icmp "slt" %1121, %26 : i64
+    llvm.cond_br %1122, ^bb212, ^bb213
   ^bb212:  // pred: ^bb211
-    %1124 = llvm.trunc %1122 : i64 to i32
-    %1125 = llvm.mul %1122, %26 : i64
-    %1126 = llvm.add %1125, %2 : i64
-    %1127 = llvm.getelementptr %46[%1126] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1128 = "arm_sme.intr.read.horiz"(%10, %1, %1124) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1127, %1124) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1129 = llvm.mul %1122, %26 : i64
-    %1130 = llvm.add %1129, %0 : i64
-    %1131 = llvm.getelementptr %46[%1130] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1128, %1131 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1132 = llvm.add %1122, %3 : i64
-    llvm.br ^bb211(%1132 : i64)
+    %1123 = llvm.trunc %1121 : i64 to i32
+    %1124 = llvm.mul %1121, %26 : i64
+    %1125 = llvm.add %1124, %2 : i64
+    %1126 = llvm.getelementptr %46[%1125] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1127 = "arm_sme.intr.read.horiz"(%10, %1, %1123) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1126, %1123) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1128 = llvm.mul %1121, %26 : i64
+    %1129 = llvm.add %1128, %0 : i64
+    %1130 = llvm.getelementptr %46[%1129] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1127, %1130 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1131 = llvm.add %1121, %3 : i64
+    llvm.br ^bb211(%1131 : i64)
   ^bb213:  // pred: ^bb211
-    %1133 = llvm.intr.vector.extract %1051[12] : vector<[4]xi1> from vector<[16]xi1>
+    %1132 = llvm.intr.vector.extract %1050[12] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb214(%0 : i64)
-  ^bb214(%1134: i64):  // 2 preds: ^bb213, ^bb215
-    %1135 = llvm.icmp "slt" %1134, %26 : i64
-    llvm.cond_br %1135, ^bb215, ^bb216
+  ^bb214(%1133: i64):  // 2 preds: ^bb213, ^bb215
+    %1134 = llvm.icmp "slt" %1133, %26 : i64
+    llvm.cond_br %1134, ^bb215, ^bb216
   ^bb215:  // pred: ^bb214
-    %1136 = llvm.trunc %1134 : i64 to i32
-    %1137 = llvm.mul %1134, %26 : i64
-    %1138 = llvm.add %1137, %2 : i64
-    %1139 = llvm.getelementptr %44[%1138] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1140 = "arm_sme.intr.read.horiz"(%10, %1, %1136) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1139, %1136) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1141 = llvm.mul %1134, %26 : i64
-    %1142 = llvm.add %1141, %0 : i64
-    %1143 = llvm.getelementptr %44[%1142] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1140, %1143 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1144 = llvm.add %1134, %3 : i64
-    llvm.br ^bb214(%1144 : i64)
+    %1135 = llvm.trunc %1133 : i64 to i32
+    %1136 = llvm.mul %1133, %26 : i64
+    %1137 = llvm.add %1136, %2 : i64
+    %1138 = llvm.getelementptr %44[%1137] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1139 = "arm_sme.intr.read.horiz"(%10, %1, %1135) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1138, %1135) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1140 = llvm.mul %1133, %26 : i64
+    %1141 = llvm.add %1140, %0 : i64
+    %1142 = llvm.getelementptr %44[%1141] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1139, %1142 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1143 = llvm.add %1133, %3 : i64
+    llvm.br ^bb214(%1143 : i64)
   ^bb216:  // pred: ^bb214
-    %1145 = llvm.mul %250, %arg20 : i64
-    %1146 = llvm.add %1065, %1145 : i64
-    %1147 = llvm.getelementptr %1064[%1146] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1133, %1147, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1144 = llvm.mul %250, %arg20 : i64
+    %1145 = llvm.add %1064, %1144 : i64
+    %1146 = llvm.getelementptr %1063[%1145] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1132, %1146, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb217(%0 : i64)
-  ^bb217(%1148: i64):  // 2 preds: ^bb216, ^bb218
-    %1149 = llvm.icmp "slt" %1148, %26 : i64
-    llvm.cond_br %1149, ^bb218, ^bb219
+  ^bb217(%1147: i64):  // 2 preds: ^bb216, ^bb218
+    %1148 = llvm.icmp "slt" %1147, %26 : i64
+    llvm.cond_br %1148, ^bb218, ^bb219
   ^bb218:  // pred: ^bb217
-    %1150 = llvm.trunc %1148 : i64 to i32
-    %1151 = llvm.mul %1148, %26 : i64
-    %1152 = llvm.add %1151, %2 : i64
-    %1153 = llvm.getelementptr %44[%1152] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1154 = "arm_sme.intr.read.horiz"(%10, %1, %1150) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1153, %1150) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1155 = llvm.mul %1148, %26 : i64
-    %1156 = llvm.add %1155, %0 : i64
-    %1157 = llvm.getelementptr %44[%1156] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1154, %1157 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1158 = llvm.add %1148, %3 : i64
-    llvm.br ^bb217(%1158 : i64)
+    %1149 = llvm.trunc %1147 : i64 to i32
+    %1150 = llvm.mul %1147, %26 : i64
+    %1151 = llvm.add %1150, %2 : i64
+    %1152 = llvm.getelementptr %44[%1151] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1153 = "arm_sme.intr.read.horiz"(%10, %1, %1149) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1152, %1149) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1154 = llvm.mul %1147, %26 : i64
+    %1155 = llvm.add %1154, %0 : i64
+    %1156 = llvm.getelementptr %44[%1155] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1153, %1156 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1157 = llvm.add %1147, %3 : i64
+    llvm.br ^bb217(%1157 : i64)
   ^bb219:  // pred: ^bb217
-    %1159 = llvm.add %26, %1045 : i64
-    %1161 = "arm_sve.intr.convert.to.svbool"(%75) : (vector<[16]xi1>) -> vector<[16]xi1>
-    %1162 = llvm.trunc %1159 : i64 to i32
-    %1163 = "arm_sve.intr.psel"(%1161, %61, %1162) : (vector<[16]xi1>, vector<[16]xi1>, i32) -> vector<[16]xi1>
-    %1164 = "arm_sve.intr.convert.from.svbool"(%1163) : (vector<[16]xi1>) -> vector<[16]xi1>
-    %1165 = llvm.intr.vector.extract %1164[0] : vector<[4]xi1> from vector<[16]xi1>
+    %1158 = llvm.add %26, %1045 : i64
+    %1159 = "arm_sve.intr.convert.to.svbool"(%75) : (vector<[16]xi1>) -> vector<[16]xi1>
+    %1160 = llvm.trunc %1158 : i64 to i32
+    %1161 = "arm_sve.intr.psel"(%1159, %61, %1160) : (vector<[16]xi1>, vector<[16]xi1>, i32) -> vector<[16]xi1>
+    %1162 = "arm_sve.intr.convert.from.svbool"(%1161) : (vector<[16]xi1>) -> vector<[16]xi1>
+    %1163 = llvm.intr.vector.extract %1162[0] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb220(%0 : i64)
-  ^bb220(%1166: i64):  // 2 preds: ^bb219, ^bb221
-    %1167 = llvm.icmp "slt" %1166, %26 : i64
-    llvm.cond_br %1167, ^bb221, ^bb222
+  ^bb220(%1164: i64):  // 2 preds: ^bb219, ^bb221
+    %1165 = llvm.icmp "slt" %1164, %26 : i64
+    llvm.cond_br %1165, ^bb221, ^bb222
   ^bb221:  // pred: ^bb220
-    %1168 = llvm.trunc %1166 : i64 to i32
-    %1169 = llvm.mul %1166, %26 : i64
-    %1170 = llvm.add %1169, %2 : i64
-    %1171 = llvm.getelementptr %42[%1170] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1172 = "arm_sme.intr.read.horiz"(%10, %1, %1168) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1171, %1168) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1173 = llvm.mul %1166, %26 : i64
-    %1174 = llvm.add %1173, %0 : i64
-    %1175 = llvm.getelementptr %42[%1174] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1172, %1175 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1176 = llvm.add %1166, %3 : i64
-    llvm.br ^bb220(%1176 : i64)
+    %1166 = llvm.trunc %1164 : i64 to i32
+    %1167 = llvm.mul %1164, %26 : i64
+    %1168 = llvm.add %1167, %2 : i64
+    %1169 = llvm.getelementptr %42[%1168] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1170 = "arm_sme.intr.read.horiz"(%10, %1, %1166) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1169, %1166) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1171 = llvm.mul %1164, %26 : i64
+    %1172 = llvm.add %1171, %0 : i64
+    %1173 = llvm.getelementptr %42[%1172] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1170, %1173 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1174 = llvm.add %1164, %3 : i64
+    llvm.br ^bb220(%1174 : i64)
   ^bb222:  // pred: ^bb220
-    %1177 = llvm.mul %1159, %arg19 : i64
-    %1178 = llvm.add %1177, %1066 : i64
-    %1179 = llvm.getelementptr %1064[%1178] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1165, %1179, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1175 = llvm.mul %1158, %arg19 : i64
+    %1176 = llvm.add %1175, %1065 : i64
+    %1177 = llvm.getelementptr %1063[%1176] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1163, %1177, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb223(%0 : i64)
-  ^bb223(%1180: i64):  // 2 preds: ^bb222, ^bb224
-    %1181 = llvm.icmp "slt" %1180, %26 : i64
-    llvm.cond_br %1181, ^bb224, ^bb225
+  ^bb223(%1178: i64):  // 2 preds: ^bb222, ^bb224
+    %1179 = llvm.icmp "slt" %1178, %26 : i64
+    llvm.cond_br %1179, ^bb224, ^bb225
   ^bb224:  // pred: ^bb223
-    %1182 = llvm.trunc %1180 : i64 to i32
-    %1183 = llvm.mul %1180, %26 : i64
-    %1184 = llvm.add %1183, %2 : i64
-    %1185 = llvm.getelementptr %42[%1184] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1186 = "arm_sme.intr.read.horiz"(%10, %1, %1182) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1185, %1182) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1187 = llvm.mul %1180, %26 : i64
-    %1188 = llvm.add %1187, %0 : i64
-    %1189 = llvm.getelementptr %42[%1188] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1186, %1189 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1190 = llvm.add %1180, %3 : i64
-    llvm.br ^bb223(%1190 : i64)
+    %1180 = llvm.trunc %1178 : i64 to i32
+    %1181 = llvm.mul %1178, %26 : i64
+    %1182 = llvm.add %1181, %2 : i64
+    %1183 = llvm.getelementptr %42[%1182] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1184 = "arm_sme.intr.read.horiz"(%10, %1, %1180) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1183, %1180) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1185 = llvm.mul %1178, %26 : i64
+    %1186 = llvm.add %1185, %0 : i64
+    %1187 = llvm.getelementptr %42[%1186] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1184, %1187 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1188 = llvm.add %1178, %3 : i64
+    llvm.br ^bb223(%1188 : i64)
   ^bb225:  // pred: ^bb223
-    %1191 = llvm.intr.vector.extract %1164[4] : vector<[4]xi1> from vector<[16]xi1>
+    %1189 = llvm.intr.vector.extract %1162[4] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb226(%0 : i64)
-  ^bb226(%1192: i64):  // 2 preds: ^bb225, ^bb227
-    %1193 = llvm.icmp "slt" %1192, %26 : i64
-    llvm.cond_br %1193, ^bb227, ^bb228
+  ^bb226(%1190: i64):  // 2 preds: ^bb225, ^bb227
+    %1191 = llvm.icmp "slt" %1190, %26 : i64
+    llvm.cond_br %1191, ^bb227, ^bb228
   ^bb227:  // pred: ^bb226
-    %1194 = llvm.trunc %1192 : i64 to i32
-    %1195 = llvm.mul %1192, %26 : i64
-    %1196 = llvm.add %1195, %2 : i64
-    %1197 = llvm.getelementptr %40[%1196] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1198 = "arm_sme.intr.read.horiz"(%10, %1, %1194) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1197, %1194) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1199 = llvm.mul %1192, %26 : i64
-    %1200 = llvm.add %1199, %0 : i64
-    %1201 = llvm.getelementptr %40[%1200] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1198, %1201 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1202 = llvm.add %1192, %3 : i64
-    llvm.br ^bb226(%1202 : i64)
+    %1192 = llvm.trunc %1190 : i64 to i32
+    %1193 = llvm.mul %1190, %26 : i64
+    %1194 = llvm.add %1193, %2 : i64
+    %1195 = llvm.getelementptr %40[%1194] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1196 = "arm_sme.intr.read.horiz"(%10, %1, %1192) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1195, %1192) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1197 = llvm.mul %1190, %26 : i64
+    %1198 = llvm.add %1197, %0 : i64
+    %1199 = llvm.getelementptr %40[%1198] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1196, %1199 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1200 = llvm.add %1190, %3 : i64
+    llvm.br ^bb226(%1200 : i64)
   ^bb228:  // pred: ^bb226
-    %1203 = llvm.add %1177, %1093 : i64
-    %1204 = llvm.getelementptr %1064[%1203] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1191, %1204, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1201 = llvm.add %1175, %1092 : i64
+    %1202 = llvm.getelementptr %1063[%1201] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1189, %1202, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb229(%0 : i64)
-  ^bb229(%1205: i64):  // 2 preds: ^bb228, ^bb230
-    %1206 = llvm.icmp "slt" %1205, %26 : i64
-    llvm.cond_br %1206, ^bb230, ^bb231
+  ^bb229(%1203: i64):  // 2 preds: ^bb228, ^bb230
+    %1204 = llvm.icmp "slt" %1203, %26 : i64
+    llvm.cond_br %1204, ^bb230, ^bb231
   ^bb230:  // pred: ^bb229
-    %1207 = llvm.trunc %1205 : i64 to i32
-    %1208 = llvm.mul %1205, %26 : i64
-    %1209 = llvm.add %1208, %2 : i64
-    %1210 = llvm.getelementptr %40[%1209] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1211 = "arm_sme.intr.read.horiz"(%10, %1, %1207) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1210, %1207) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1212 = llvm.mul %1205, %26 : i64
-    %1213 = llvm.add %1212, %0 : i64
-    %1214 = llvm.getelementptr %40[%1213] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1211, %1214 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1215 = llvm.add %1205, %3 : i64
-    llvm.br ^bb229(%1215 : i64)
+    %1205 = llvm.trunc %1203 : i64 to i32
+    %1206 = llvm.mul %1203, %26 : i64
+    %1207 = llvm.add %1206, %2 : i64
+    %1208 = llvm.getelementptr %40[%1207] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1209 = "arm_sme.intr.read.horiz"(%10, %1, %1205) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1208, %1205) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1210 = llvm.mul %1203, %26 : i64
+    %1211 = llvm.add %1210, %0 : i64
+    %1212 = llvm.getelementptr %40[%1211] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1209, %1212 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1213 = llvm.add %1203, %3 : i64
+    llvm.br ^bb229(%1213 : i64)
   ^bb231:  // pred: ^bb229
-    %1216 = llvm.intr.vector.extract %1164[8] : vector<[4]xi1> from vector<[16]xi1>
+    %1214 = llvm.intr.vector.extract %1162[8] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb232(%0 : i64)
-  ^bb232(%1217: i64):  // 2 preds: ^bb231, ^bb233
-    %1218 = llvm.icmp "slt" %1217, %26 : i64
-    llvm.cond_br %1218, ^bb233, ^bb234
+  ^bb232(%1215: i64):  // 2 preds: ^bb231, ^bb233
+    %1216 = llvm.icmp "slt" %1215, %26 : i64
+    llvm.cond_br %1216, ^bb233, ^bb234
   ^bb233:  // pred: ^bb232
-    %1219 = llvm.trunc %1217 : i64 to i32
-    %1220 = llvm.mul %1217, %26 : i64
-    %1221 = llvm.add %1220, %2 : i64
-    %1222 = llvm.getelementptr %38[%1221] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1223 = "arm_sme.intr.read.horiz"(%10, %1, %1219) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1222, %1219) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1224 = llvm.mul %1217, %26 : i64
-    %1225 = llvm.add %1224, %0 : i64
-    %1226 = llvm.getelementptr %38[%1225] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1223, %1226 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1227 = llvm.add %1217, %3 : i64
-    llvm.br ^bb232(%1227 : i64)
+    %1217 = llvm.trunc %1215 : i64 to i32
+    %1218 = llvm.mul %1215, %26 : i64
+    %1219 = llvm.add %1218, %2 : i64
+    %1220 = llvm.getelementptr %38[%1219] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1221 = "arm_sme.intr.read.horiz"(%10, %1, %1217) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1220, %1217) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1222 = llvm.mul %1215, %26 : i64
+    %1223 = llvm.add %1222, %0 : i64
+    %1224 = llvm.getelementptr %38[%1223] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1221, %1224 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1225 = llvm.add %1215, %3 : i64
+    llvm.br ^bb232(%1225 : i64)
   ^bb234:  // pred: ^bb232
-    %1228 = llvm.add %1177, %1119 : i64
-    %1229 = llvm.getelementptr %1064[%1228] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1216, %1229, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1226 = llvm.add %1175, %1118 : i64
+    %1227 = llvm.getelementptr %1063[%1226] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1214, %1227, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb235(%0 : i64)
-  ^bb235(%1230: i64):  // 2 preds: ^bb234, ^bb236
-    %1231 = llvm.icmp "slt" %1230, %26 : i64
-    llvm.cond_br %1231, ^bb236, ^bb237
+  ^bb235(%1228: i64):  // 2 preds: ^bb234, ^bb236
+    %1229 = llvm.icmp "slt" %1228, %26 : i64
+    llvm.cond_br %1229, ^bb236, ^bb237
   ^bb236:  // pred: ^bb235
-    %1232 = llvm.trunc %1230 : i64 to i32
-    %1233 = llvm.mul %1230, %26 : i64
-    %1234 = llvm.add %1233, %2 : i64
-    %1235 = llvm.getelementptr %38[%1234] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1236 = "arm_sme.intr.read.horiz"(%10, %1, %1232) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1235, %1232) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1237 = llvm.mul %1230, %26 : i64
-    %1238 = llvm.add %1237, %0 : i64
-    %1239 = llvm.getelementptr %38[%1238] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1236, %1239 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1240 = llvm.add %1230, %3 : i64
-    llvm.br ^bb235(%1240 : i64)
+    %1230 = llvm.trunc %1228 : i64 to i32
+    %1231 = llvm.mul %1228, %26 : i64
+    %1232 = llvm.add %1231, %2 : i64
+    %1233 = llvm.getelementptr %38[%1232] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1234 = "arm_sme.intr.read.horiz"(%10, %1, %1230) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1233, %1230) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1235 = llvm.mul %1228, %26 : i64
+    %1236 = llvm.add %1235, %0 : i64
+    %1237 = llvm.getelementptr %38[%1236] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1234, %1237 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1238 = llvm.add %1228, %3 : i64
+    llvm.br ^bb235(%1238 : i64)
   ^bb237:  // pred: ^bb235
-    %1241 = llvm.intr.vector.extract %1164[12] : vector<[4]xi1> from vector<[16]xi1>
+    %1239 = llvm.intr.vector.extract %1162[12] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb238(%0 : i64)
-  ^bb238(%1242: i64):  // 2 preds: ^bb237, ^bb239
-    %1243 = llvm.icmp "slt" %1242, %26 : i64
-    llvm.cond_br %1243, ^bb239, ^bb240
+  ^bb238(%1240: i64):  // 2 preds: ^bb237, ^bb239
+    %1241 = llvm.icmp "slt" %1240, %26 : i64
+    llvm.cond_br %1241, ^bb239, ^bb240
   ^bb239:  // pred: ^bb238
-    %1244 = llvm.trunc %1242 : i64 to i32
-    %1245 = llvm.mul %1242, %26 : i64
-    %1246 = llvm.add %1245, %2 : i64
-    %1247 = llvm.getelementptr %36[%1246] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1248 = "arm_sme.intr.read.horiz"(%10, %1, %1244) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1247, %1244) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1249 = llvm.mul %1242, %26 : i64
-    %1250 = llvm.add %1249, %0 : i64
-    %1251 = llvm.getelementptr %36[%1250] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1248, %1251 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1252 = llvm.add %1242, %3 : i64
-    llvm.br ^bb238(%1252 : i64)
+    %1242 = llvm.trunc %1240 : i64 to i32
+    %1243 = llvm.mul %1240, %26 : i64
+    %1244 = llvm.add %1243, %2 : i64
+    %1245 = llvm.getelementptr %36[%1244] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1246 = "arm_sme.intr.read.horiz"(%10, %1, %1242) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1245, %1242) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1247 = llvm.mul %1240, %26 : i64
+    %1248 = llvm.add %1247, %0 : i64
+    %1249 = llvm.getelementptr %36[%1248] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1246, %1249 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1250 = llvm.add %1240, %3 : i64
+    llvm.br ^bb238(%1250 : i64)
   ^bb240:  // pred: ^bb238
-    %1253 = llvm.add %1177, %1145 : i64
-    %1254 = llvm.getelementptr %1064[%1253] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1241, %1254, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1251 = llvm.add %1175, %1144 : i64
+    %1252 = llvm.getelementptr %1063[%1251] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1239, %1252, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb241(%0 : i64)
-  ^bb241(%1255: i64):  // 2 preds: ^bb240, ^bb242
-    %1256 = llvm.icmp "slt" %1255, %26 : i64
-    llvm.cond_br %1256, ^bb242, ^bb243
+  ^bb241(%1253: i64):  // 2 preds: ^bb240, ^bb242
+    %1254 = llvm.icmp "slt" %1253, %26 : i64
+    llvm.cond_br %1254, ^bb242, ^bb243
   ^bb242:  // pred: ^bb241
-    %1257 = llvm.trunc %1255 : i64 to i32
-    %1258 = llvm.mul %1255, %26 : i64
-    %1259 = llvm.add %1258, %2 : i64
-    %1260 = llvm.getelementptr %36[%1259] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1261 = "arm_sme.intr.read.horiz"(%10, %1, %1257) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1260, %1257) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1262 = llvm.mul %1255, %26 : i64
-    %1263 = llvm.add %1262, %0 : i64
-    %1264 = llvm.getelementptr %36[%1263] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1261, %1264 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1265 = llvm.add %1255, %3 : i64
-    llvm.br ^bb241(%1265 : i64)
+    %1255 = llvm.trunc %1253 : i64 to i32
+    %1256 = llvm.mul %1253, %26 : i64
+    %1257 = llvm.add %1256, %2 : i64
+    %1258 = llvm.getelementptr %36[%1257] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1259 = "arm_sme.intr.read.horiz"(%10, %1, %1255) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1258, %1255) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1260 = llvm.mul %1253, %26 : i64
+    %1261 = llvm.add %1260, %0 : i64
+    %1262 = llvm.getelementptr %36[%1261] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1259, %1262 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1263 = llvm.add %1253, %3 : i64
+    llvm.br ^bb241(%1263 : i64)
   ^bb243:  // pred: ^bb241
-    %1266 = llvm.add %204, %1045 : i64
-    %1268 = "arm_sve.intr.convert.to.svbool"(%75) : (vector<[16]xi1>) -> vector<[16]xi1>
-    %1269 = llvm.trunc %1266 : i64 to i32
-    %1270 = "arm_sve.intr.psel"(%1268, %61, %1269) : (vector<[16]xi1>, vector<[16]xi1>, i32) -> vector<[16]xi1>
-    %1271 = "arm_sve.intr.convert.from.svbool"(%1270) : (vector<[16]xi1>) -> vector<[16]xi1>
-    %1272 = llvm.intr.vector.extract %1271[0] : vector<[4]xi1> from vector<[16]xi1>
+    %1264 = llvm.add %204, %1045 : i64
+    %1265 = "arm_sve.intr.convert.to.svbool"(%75) : (vector<[16]xi1>) -> vector<[16]xi1>
+    %1266 = llvm.trunc %1264 : i64 to i32
+    %1267 = "arm_sve.intr.psel"(%1265, %61, %1266) : (vector<[16]xi1>, vector<[16]xi1>, i32) -> vector<[16]xi1>
+    %1268 = "arm_sve.intr.convert.from.svbool"(%1267) : (vector<[16]xi1>) -> vector<[16]xi1>
+    %1269 = llvm.intr.vector.extract %1268[0] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb244(%0 : i64)
-  ^bb244(%1273: i64):  // 2 preds: ^bb243, ^bb245
-    %1274 = llvm.icmp "slt" %1273, %26 : i64
-    llvm.cond_br %1274, ^bb245, ^bb246
+  ^bb244(%1270: i64):  // 2 preds: ^bb243, ^bb245
+    %1271 = llvm.icmp "slt" %1270, %26 : i64
+    llvm.cond_br %1271, ^bb245, ^bb246
   ^bb245:  // pred: ^bb244
-    %1275 = llvm.trunc %1273 : i64 to i32
-    %1276 = llvm.mul %1273, %26 : i64
-    %1277 = llvm.add %1276, %2 : i64
-    %1278 = llvm.getelementptr %34[%1277] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1279 = "arm_sme.intr.read.horiz"(%10, %1, %1275) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1278, %1275) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1280 = llvm.mul %1273, %26 : i64
-    %1281 = llvm.add %1280, %0 : i64
-    %1282 = llvm.getelementptr %34[%1281] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1279, %1282 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1283 = llvm.add %1273, %3 : i64
-    llvm.br ^bb244(%1283 : i64)
+    %1272 = llvm.trunc %1270 : i64 to i32
+    %1273 = llvm.mul %1270, %26 : i64
+    %1274 = llvm.add %1273, %2 : i64
+    %1275 = llvm.getelementptr %34[%1274] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1276 = "arm_sme.intr.read.horiz"(%10, %1, %1272) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1275, %1272) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1277 = llvm.mul %1270, %26 : i64
+    %1278 = llvm.add %1277, %0 : i64
+    %1279 = llvm.getelementptr %34[%1278] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1276, %1279 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1280 = llvm.add %1270, %3 : i64
+    llvm.br ^bb244(%1280 : i64)
   ^bb246:  // pred: ^bb244
-    %1284 = llvm.mul %1266, %arg19 : i64
-    %1285 = llvm.add %1284, %1066 : i64
-    %1286 = llvm.getelementptr %1064[%1285] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1272, %1286, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1281 = llvm.mul %1264, %arg19 : i64
+    %1282 = llvm.add %1281, %1065 : i64
+    %1283 = llvm.getelementptr %1063[%1282] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1269, %1283, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb247(%0 : i64)
-  ^bb247(%1287: i64):  // 2 preds: ^bb246, ^bb248
-    %1288 = llvm.icmp "slt" %1287, %26 : i64
-    llvm.cond_br %1288, ^bb248, ^bb249
+  ^bb247(%1284: i64):  // 2 preds: ^bb246, ^bb248
+    %1285 = llvm.icmp "slt" %1284, %26 : i64
+    llvm.cond_br %1285, ^bb248, ^bb249
   ^bb248:  // pred: ^bb247
-    %1289 = llvm.trunc %1287 : i64 to i32
-    %1290 = llvm.mul %1287, %26 : i64
-    %1291 = llvm.add %1290, %2 : i64
-    %1292 = llvm.getelementptr %34[%1291] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1293 = "arm_sme.intr.read.horiz"(%10, %1, %1289) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1292, %1289) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1294 = llvm.mul %1287, %26 : i64
-    %1295 = llvm.add %1294, %0 : i64
-    %1296 = llvm.getelementptr %34[%1295] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1293, %1296 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1297 = llvm.add %1287, %3 : i64
-    llvm.br ^bb247(%1297 : i64)
+    %1286 = llvm.trunc %1284 : i64 to i32
+    %1287 = llvm.mul %1284, %26 : i64
+    %1288 = llvm.add %1287, %2 : i64
+    %1289 = llvm.getelementptr %34[%1288] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1290 = "arm_sme.intr.read.horiz"(%10, %1, %1286) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1289, %1286) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1291 = llvm.mul %1284, %26 : i64
+    %1292 = llvm.add %1291, %0 : i64
+    %1293 = llvm.getelementptr %34[%1292] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1290, %1293 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1294 = llvm.add %1284, %3 : i64
+    llvm.br ^bb247(%1294 : i64)
   ^bb249:  // pred: ^bb247
-    %1298 = llvm.intr.vector.extract %1271[4] : vector<[4]xi1> from vector<[16]xi1>
+    %1295 = llvm.intr.vector.extract %1268[4] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb250(%0 : i64)
-  ^bb250(%1299: i64):  // 2 preds: ^bb249, ^bb251
-    %1300 = llvm.icmp "slt" %1299, %26 : i64
-    llvm.cond_br %1300, ^bb251, ^bb252
+  ^bb250(%1296: i64):  // 2 preds: ^bb249, ^bb251
+    %1297 = llvm.icmp "slt" %1296, %26 : i64
+    llvm.cond_br %1297, ^bb251, ^bb252
   ^bb251:  // pred: ^bb250
-    %1301 = llvm.trunc %1299 : i64 to i32
-    %1302 = llvm.mul %1299, %26 : i64
-    %1303 = llvm.add %1302, %2 : i64
-    %1304 = llvm.getelementptr %32[%1303] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1305 = "arm_sme.intr.read.horiz"(%10, %1, %1301) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1304, %1301) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1306 = llvm.mul %1299, %26 : i64
-    %1307 = llvm.add %1306, %0 : i64
-    %1308 = llvm.getelementptr %32[%1307] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1305, %1308 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1309 = llvm.add %1299, %3 : i64
-    llvm.br ^bb250(%1309 : i64)
+    %1298 = llvm.trunc %1296 : i64 to i32
+    %1299 = llvm.mul %1296, %26 : i64
+    %1300 = llvm.add %1299, %2 : i64
+    %1301 = llvm.getelementptr %32[%1300] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1302 = "arm_sme.intr.read.horiz"(%10, %1, %1298) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1301, %1298) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1303 = llvm.mul %1296, %26 : i64
+    %1304 = llvm.add %1303, %0 : i64
+    %1305 = llvm.getelementptr %32[%1304] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1302, %1305 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1306 = llvm.add %1296, %3 : i64
+    llvm.br ^bb250(%1306 : i64)
   ^bb252:  // pred: ^bb250
-    %1310 = llvm.add %1284, %1093 : i64
-    %1311 = llvm.getelementptr %1064[%1310] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1298, %1311, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1307 = llvm.add %1281, %1092 : i64
+    %1308 = llvm.getelementptr %1063[%1307] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1295, %1308, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb253(%0 : i64)
-  ^bb253(%1312: i64):  // 2 preds: ^bb252, ^bb254
-    %1313 = llvm.icmp "slt" %1312, %26 : i64
-    llvm.cond_br %1313, ^bb254, ^bb255
+  ^bb253(%1309: i64):  // 2 preds: ^bb252, ^bb254
+    %1310 = llvm.icmp "slt" %1309, %26 : i64
+    llvm.cond_br %1310, ^bb254, ^bb255
   ^bb254:  // pred: ^bb253
-    %1314 = llvm.trunc %1312 : i64 to i32
-    %1315 = llvm.mul %1312, %26 : i64
-    %1316 = llvm.add %1315, %2 : i64
-    %1317 = llvm.getelementptr %32[%1316] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1318 = "arm_sme.intr.read.horiz"(%10, %1, %1314) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1317, %1314) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1319 = llvm.mul %1312, %26 : i64
-    %1320 = llvm.add %1319, %0 : i64
-    %1321 = llvm.getelementptr %32[%1320] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1318, %1321 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1322 = llvm.add %1312, %3 : i64
-    llvm.br ^bb253(%1322 : i64)
+    %1311 = llvm.trunc %1309 : i64 to i32
+    %1312 = llvm.mul %1309, %26 : i64
+    %1313 = llvm.add %1312, %2 : i64
+    %1314 = llvm.getelementptr %32[%1313] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1315 = "arm_sme.intr.read.horiz"(%10, %1, %1311) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1314, %1311) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1316 = llvm.mul %1309, %26 : i64
+    %1317 = llvm.add %1316, %0 : i64
+    %1318 = llvm.getelementptr %32[%1317] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1315, %1318 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1319 = llvm.add %1309, %3 : i64
+    llvm.br ^bb253(%1319 : i64)
   ^bb255:  // pred: ^bb253
-    %1323 = llvm.intr.vector.extract %1271[8] : vector<[4]xi1> from vector<[16]xi1>
+    %1320 = llvm.intr.vector.extract %1268[8] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb256(%0 : i64)
-  ^bb256(%1324: i64):  // 2 preds: ^bb255, ^bb257
-    %1325 = llvm.icmp "slt" %1324, %26 : i64
-    llvm.cond_br %1325, ^bb257, ^bb258
+  ^bb256(%1321: i64):  // 2 preds: ^bb255, ^bb257
+    %1322 = llvm.icmp "slt" %1321, %26 : i64
+    llvm.cond_br %1322, ^bb257, ^bb258
   ^bb257:  // pred: ^bb256
-    %1326 = llvm.trunc %1324 : i64 to i32
-    %1327 = llvm.mul %1324, %26 : i64
-    %1328 = llvm.add %1327, %2 : i64
-    %1329 = llvm.getelementptr %30[%1328] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1330 = "arm_sme.intr.read.horiz"(%10, %1, %1326) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1329, %1326) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1331 = llvm.mul %1324, %26 : i64
-    %1332 = llvm.add %1331, %0 : i64
-    %1333 = llvm.getelementptr %30[%1332] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1330, %1333 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1334 = llvm.add %1324, %3 : i64
-    llvm.br ^bb256(%1334 : i64)
+    %1323 = llvm.trunc %1321 : i64 to i32
+    %1324 = llvm.mul %1321, %26 : i64
+    %1325 = llvm.add %1324, %2 : i64
+    %1326 = llvm.getelementptr %30[%1325] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1327 = "arm_sme.intr.read.horiz"(%10, %1, %1323) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1326, %1323) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1328 = llvm.mul %1321, %26 : i64
+    %1329 = llvm.add %1328, %0 : i64
+    %1330 = llvm.getelementptr %30[%1329] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1327, %1330 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1331 = llvm.add %1321, %3 : i64
+    llvm.br ^bb256(%1331 : i64)
   ^bb258:  // pred: ^bb256
-    %1335 = llvm.add %1284, %1119 : i64
-    %1336 = llvm.getelementptr %1064[%1335] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1323, %1336, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1332 = llvm.add %1281, %1118 : i64
+    %1333 = llvm.getelementptr %1063[%1332] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1320, %1333, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb259(%0 : i64)
-  ^bb259(%1337: i64):  // 2 preds: ^bb258, ^bb260
-    %1338 = llvm.icmp "slt" %1337, %26 : i64
-    llvm.cond_br %1338, ^bb260, ^bb261
+  ^bb259(%1334: i64):  // 2 preds: ^bb258, ^bb260
+    %1335 = llvm.icmp "slt" %1334, %26 : i64
+    llvm.cond_br %1335, ^bb260, ^bb261
   ^bb260:  // pred: ^bb259
-    %1339 = llvm.trunc %1337 : i64 to i32
-    %1340 = llvm.mul %1337, %26 : i64
-    %1341 = llvm.add %1340, %2 : i64
-    %1342 = llvm.getelementptr %30[%1341] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1343 = "arm_sme.intr.read.horiz"(%10, %1, %1339) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1342, %1339) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1344 = llvm.mul %1337, %26 : i64
-    %1345 = llvm.add %1344, %0 : i64
-    %1346 = llvm.getelementptr %30[%1345] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1343, %1346 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1347 = llvm.add %1337, %3 : i64
-    llvm.br ^bb259(%1347 : i64)
+    %1336 = llvm.trunc %1334 : i64 to i32
+    %1337 = llvm.mul %1334, %26 : i64
+    %1338 = llvm.add %1337, %2 : i64
+    %1339 = llvm.getelementptr %30[%1338] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1340 = "arm_sme.intr.read.horiz"(%10, %1, %1336) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1339, %1336) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1341 = llvm.mul %1334, %26 : i64
+    %1342 = llvm.add %1341, %0 : i64
+    %1343 = llvm.getelementptr %30[%1342] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1340, %1343 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1344 = llvm.add %1334, %3 : i64
+    llvm.br ^bb259(%1344 : i64)
   ^bb261:  // pred: ^bb259
-    %1348 = llvm.intr.vector.extract %1271[12] : vector<[4]xi1> from vector<[16]xi1>
+    %1345 = llvm.intr.vector.extract %1268[12] : vector<[4]xi1> from vector<[16]xi1>
     llvm.br ^bb262(%0 : i64)
-  ^bb262(%1349: i64):  // 2 preds: ^bb261, ^bb263
-    %1350 = llvm.icmp "slt" %1349, %26 : i64
-    llvm.cond_br %1350, ^bb263, ^bb264
+  ^bb262(%1346: i64):  // 2 preds: ^bb261, ^bb263
+    %1347 = llvm.icmp "slt" %1346, %26 : i64
+    llvm.cond_br %1347, ^bb263, ^bb264
   ^bb263:  // pred: ^bb262
-    %1351 = llvm.trunc %1349 : i64 to i32
-    %1352 = llvm.mul %1349, %26 : i64
-    %1353 = llvm.add %1352, %2 : i64
-    %1354 = llvm.getelementptr %28[%1353] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1355 = "arm_sme.intr.read.horiz"(%10, %1, %1351) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1354, %1351) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1356 = llvm.mul %1349, %26 : i64
-    %1357 = llvm.add %1356, %0 : i64
-    %1358 = llvm.getelementptr %28[%1357] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1355, %1358 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1359 = llvm.add %1349, %3 : i64
-    llvm.br ^bb262(%1359 : i64)
+    %1348 = llvm.trunc %1346 : i64 to i32
+    %1349 = llvm.mul %1346, %26 : i64
+    %1350 = llvm.add %1349, %2 : i64
+    %1351 = llvm.getelementptr %28[%1350] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1352 = "arm_sme.intr.read.horiz"(%10, %1, %1348) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1351, %1348) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1353 = llvm.mul %1346, %26 : i64
+    %1354 = llvm.add %1353, %0 : i64
+    %1355 = llvm.getelementptr %28[%1354] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1352, %1355 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1356 = llvm.add %1346, %3 : i64
+    llvm.br ^bb262(%1356 : i64)
   ^bb264:  // pred: ^bb262
-    %1360 = llvm.add %1284, %1145 : i64
-    %1361 = llvm.getelementptr %1064[%1360] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1348, %1361, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1357 = llvm.add %1281, %1144 : i64
+    %1358 = llvm.getelementptr %1063[%1357] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1345, %1358, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
     llvm.br ^bb265(%0 : i64)
-  ^bb265(%1362: i64):  // 2 preds: ^bb264, ^bb266
-    %1363 = llvm.icmp "slt" %1362, %26 : i64
-    llvm.cond_br %1363, ^bb266, ^bb267
+  ^bb265(%1359: i64):  // 2 preds: ^bb264, ^bb266
+    %1360 = llvm.icmp "slt" %1359, %26 : i64
+    llvm.cond_br %1360, ^bb266, ^bb267
   ^bb266:  // pred: ^bb265
-    %1364 = llvm.trunc %1362 : i64 to i32
-    %1365 = llvm.mul %1362, %26 : i64
-    %1366 = llvm.add %1365, %2 : i64
-    %1367 = llvm.getelementptr %28[%1366] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    %1368 = "arm_sme.intr.read.horiz"(%10, %1, %1364) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
-    "arm_sme.intr.ld1w.horiz"(%1, %1367, %1364) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1369 = llvm.mul %1362, %26 : i64
-    %1370 = llvm.add %1369, %0 : i64
-    %1371 = llvm.getelementptr %28[%1370] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    llvm.store %1368, %1371 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
-    %1372 = llvm.add %1362, %3 : i64
-    llvm.br ^bb265(%1372 : i64)
+    %1361 = llvm.trunc %1359 : i64 to i32
+    %1362 = llvm.mul %1359, %26 : i64
+    %1363 = llvm.add %1362, %2 : i64
+    %1364 = llvm.getelementptr %28[%1363] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    %1365 = "arm_sme.intr.read.horiz"(%10, %1, %1361) <{tile_id = 0 : i32}> : (vector<[4]xf32>, vector<[4]xi1>, i32) -> vector<[4]xf32>
+    "arm_sme.intr.ld1w.horiz"(%1, %1364, %1361) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1366 = llvm.mul %1359, %26 : i64
+    %1367 = llvm.add %1366, %0 : i64
+    %1368 = llvm.getelementptr %28[%1367] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    llvm.store %1365, %1368 {alignment = 4 : i64} : vector<[4]xf32>, !llvm.ptr
+    %1369 = llvm.add %1359, %3 : i64
+    llvm.br ^bb265(%1369 : i64)
   ^bb267:  // pred: ^bb265
-    %1373 = llvm.add %250, %1045 : i64
-    %1375 = "arm_sve.intr.convert.to.svbool"(%75) : (vector<[16]xi1>) -> vector<[16]xi1>
-    %1376 = llvm.trunc %1373 : i64 to i32
-    %1377 = "arm_sve.intr.psel"(%1375, %61, %1376) : (vector<[16]xi1>, vector<[16]xi1>, i32) -> vector<[16]xi1>
-    %1378 = "arm_sve.intr.convert.from.svbool"(%1377) : (vector<[16]xi1>) -> vector<[16]xi1>
-    %1379 = llvm.intr.vector.extract %1378[0] : vector<[4]xi1> from vector<[16]xi1>
-    %1380 = llvm.mul %1373, %arg19 : i64
-    %1381 = llvm.add %1380, %1066 : i64
-    %1382 = llvm.getelementptr %1064[%1381] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1379, %1382, %1069) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1383 = llvm.intr.vector.extract %1378[4] : vector<[4]xi1> from vector<[16]xi1>
-    %1384 = llvm.add %1380, %1093 : i64
-    %1385 = llvm.getelementptr %1064[%1384] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1383, %1385, %1069) <{tile_id = 1 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1386 = llvm.intr.vector.extract %1378[8] : vector<[4]xi1> from vector<[16]xi1>
-    %1387 = llvm.add %1380, %1119 : i64
-    %1388 = llvm.getelementptr %1064[%1387] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1386, %1388, %1069) <{tile_id = 2 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1389 = llvm.intr.vector.extract %1378[12] : vector<[4]xi1> from vector<[16]xi1>
-    %1390 = llvm.add %1380, %1145 : i64
-    %1391 = llvm.getelementptr %1064[%1390] : (!llvm.ptr, i64) -> !llvm.ptr, f32
-    "arm_sme.intr.st1w.horiz"(%1389, %1391, %1069) <{tile_id = 3 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
-    %1392 = llvm.add %1045, %3 : i64
-    llvm.br ^bb194(%1392 : i64)
+    %1370 = llvm.add %250, %1045 : i64
+    %1371 = "arm_sve.intr.convert.to.svbool"(%75) : (vector<[16]xi1>) -> vector<[16]xi1>
+    %1372 = llvm.trunc %1370 : i64 to i32
+    %1373 = "arm_sve.intr.psel"(%1371, %61, %1372) : (vector<[16]xi1>, vector<[16]xi1>, i32) -> vector<[16]xi1>
+    %1374 = "arm_sve.intr.convert.from.svbool"(%1373) : (vector<[16]xi1>) -> vector<[16]xi1>
+    %1375 = llvm.intr.vector.extract %1374[0] : vector<[4]xi1> from vector<[16]xi1>
+    %1376 = llvm.mul %1370, %arg19 : i64
+    %1377 = llvm.add %1376, %1065 : i64
+    %1378 = llvm.getelementptr %1063[%1377] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1375, %1378, %1068) <{tile_id = 0 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1379 = llvm.intr.vector.extract %1374[4] : vector<[4]xi1> from vector<[16]xi1>
+    %1380 = llvm.add %1376, %1092 : i64
+    %1381 = llvm.getelementptr %1063[%1380] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1379, %1381, %1068) <{tile_id = 1 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1382 = llvm.intr.vector.extract %1374[8] : vector<[4]xi1> from vector<[16]xi1>
+    %1383 = llvm.add %1376, %1118 : i64
+    %1384 = llvm.getelementptr %1063[%1383] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1382, %1384, %1068) <{tile_id = 2 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1385 = llvm.intr.vector.extract %1374[12] : vector<[4]xi1> from vector<[16]xi1>
+    %1386 = llvm.add %1376, %1144 : i64
+    %1387 = llvm.getelementptr %1063[%1386] : (!llvm.ptr, i64) -> !llvm.ptr, f32
+    "arm_sme.intr.st1w.horiz"(%1385, %1387, %1068) <{tile_id = 3 : i32}> : (vector<[4]xi1>, !llvm.ptr, i32) -> ()
+    %1388 = llvm.add %1045, %3 : i64
+    llvm.br ^bb194(%1388 : i64)
   ^bb268:  // pred: ^bb194
-    %1393 = llvm.add %76, %3 : i64
-    llvm.br ^bb5(%1393 : i64)
+    %1389 = llvm.add %76, %3 : i64
+    llvm.br ^bb5(%1389 : i64)
   ^bb269:  // pred: ^bb5
-    %1394 = llvm.add %62, %51 : i64
-    llvm.br ^bb3(%1394 : i64)
+    %1390 = llvm.add %62, %51 : i64
+    llvm.br ^bb3(%1390 : i64)
   ^bb270:  // pred: ^bb3
-    %1395 = llvm.add %52, %51 : i64
-    llvm.br ^bb1(%1395 : i64)
+    %1391 = llvm.add %52, %51 : i64
+    llvm.br ^bb1(%1391 : i64)
   ^bb271:  // pred: ^bb1
     llvm.return %24 : !llvm.struct<(ptr, ptr, i64, array<2 x i64>, array<2 x i64>)>
   }

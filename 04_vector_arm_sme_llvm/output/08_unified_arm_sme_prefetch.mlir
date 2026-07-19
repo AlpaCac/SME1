@@ -1,7 +1,7 @@
 #map = affine_map<()[s0, s1, s2] -> (s1, s0 - s2)>
 #map1 = affine_map<(d0)[s0, s1] -> (d0 * s1 + s0)>
 module {
-  func.func @gemm_step4_compute(%arg0: memref<?x?xf32, strided<[?, ?], offset: ?>>, %arg1: memref<?x?xf32, strided<[?, ?], offset: ?>>, %arg2: memref<?x?xf32, strided<[?, ?], offset: ?>>) -> memref<?x?xf32, strided<[?, ?], offset: ?>> attributes {llvm.arm_locally_streaming, llvm.arm_new_za} {
+  func.func @gemm_step4_compute(%arg0: memref<?x?xf32, strided<[?, ?], offset: ?>>, %arg1: memref<?x?xf32, strided<[?, ?], offset: ?>>, %arg2: memref<?x?xf32, strided<[?, ?], offset: ?>>) -> memref<?x?xf32, strided<[?, ?], offset: ?>> attributes {llvm.arm_locally_streaming, llvm.arm_new_za, step4_vector_prefetch = "memref_prefetch"} {
     %c0_i64 = arith.constant 0 : i64
     %0 = llvm.mlir.poison : vector<[4]xf32>
     %cst = arith.constant dense<true> : vector<[4]xi1>
