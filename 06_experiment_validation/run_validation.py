@@ -52,7 +52,7 @@ def main() -> int:
         "performance_validation": {},
     }
 
-    unified_mlir = ROOT / "04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir"
+    unified_mlir = ROOT / "04_vector_arm_sme_llvm/output/02_llvm_prefetch.mlir"
     unified_ll = ROOT / "05_native_build_run/output/step4_llvm_prefetch.ll"
     unified_log = ROOT / "05_native_build_run/output/unified_demo.log"
     unified_obj = ROOT / "05_native_build_run/output/step4_llvm_prefetch.o"

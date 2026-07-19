@@ -6,7 +6,7 @@
 
 第五步现在只有一个主目标：
 
-1. 把第四步的统一产物 [03_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir) 继续翻译、编译，并在本机实际运行。
+1. 把第四步的统一产物 [02_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/02_llvm_prefetch.mlir) 继续翻译、编译，并在本机实际运行。
 
 研究主线只有一条，即：
 
@@ -23,7 +23,7 @@
 当前脚本会先尝试统一主线：
 
 ```text
-03_llvm_prefetch.mlir
+02_llvm_prefetch.mlir
 -> mlir-translate --mlir-to-llvmir
 -> llc -mattr=+sme
 -> clang 链接 unified_harness.c
@@ -35,7 +35,7 @@
 这里的统一主线运行现在由两层组成：
 
 - [unified_wrapper.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/unified_wrapper.c)
-  - 直接调用原始 lowering 导出的 `_gemm_step4_compute`
+  - 直接调用原始 lowering 导出的 `_gemm_fp32_linalg`
   - 不再把它的原始返回 ABI 直接暴露给普通 C 调用者
   - 明确按“结果就是输出缓冲区 C”来重建稳定的 `memref` 返回描述符
 
@@ -53,7 +53,7 @@
 
 现在第五步已经可以把统一主线推进到“生成 LLVM IR、编译、链接，并实际运行”：
 
-- `03_llvm_prefetch.mlir` 可以成功翻译为 LLVM IR
+- `02_llvm_prefetch.mlir` 可以成功翻译为 LLVM IR
 - `llc -mattr=+sme` 可以成功生成目标文件
 - `clang` 可以成功链接统一主线最小 harness
 - `unified_demo` 可以在本机实际运行
@@ -89,7 +89,7 @@ C_from_descriptor =
 
 - [build_and_run.py](/Users/alpaca/Documents/SME/SME1/05_native_build_run/build_and_run.py)：第五步自动化脚本
 - [unified_wrapper.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/unified_wrapper.c)：统一主线的稳定 ABI wrapper
-- [unified_harness.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/unified_harness.c)：运行统一主线 `gemm_step4_compute` 的最小本机 C harness
+- [unified_harness.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/unified_harness.c)：运行统一主线 `gemm_fp32_linalg` 的最小本机 C harness
 - [output/summary.txt](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/summary.txt)：本次构建和运行摘要
 - [output/unified_demo.log](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/unified_demo.log)：统一主线本机运行输出
 

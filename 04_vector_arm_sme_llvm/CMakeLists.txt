@@ -32,10 +32,7 @@ add_llvm_library(SMEStep4LoweringPasses
 
   LINK_LIBS
   MLIRArithDialect
-  MLIRFuncDialect
   MLIRIR
-  MLIRMemRefDialect
   MLIRPass
   MLIRSupport
-  MLIRVectorDialect
 )

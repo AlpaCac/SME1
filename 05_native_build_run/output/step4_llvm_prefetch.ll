@@ -1,2389 +1,2442 @@
 ; ModuleID = 'LLVMDialectModule'
 source_filename = "LLVMDialectModule"
 
-define { ptr, ptr, i64, [2 x i64], [2 x i64] } @gemm_step4_compute(ptr %0, ptr %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, ptr %7, ptr %8, i64 %9, i64 %10, i64 %11, i64 %12, i64 %13, ptr %14, ptr %15, i64 %16, i64 %17, i64 %18, i64 %19, i64 %20) #0 {
-  %22 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } poison, ptr %14, 0
-  %23 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %22, ptr %15, 1
-  %24 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %23, i64 %16, 2
-  %25 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %24, i64 %17, 3, 0
-  %26 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %25, i64 %19, 4, 0
-  %27 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %26, i64 %18, 3, 1
-  %28 = insertvalue { ptr, ptr, i64, [2 x i64], [2 x i64] } %27, i64 %20, 4, 1
-  %29 = call i64 @llvm.vscale.i64()
-  %30 = mul i64 %29, 4
-  %31 = mul i64 %30, %30
-  %32 = alloca float, i64 %31, align 4
-  %33 = mul i64 %30, %30
-  %34 = alloca float, i64 %33, align 4
-  %35 = mul i64 %30, %30
-  %36 = alloca float, i64 %35, align 4
-  %37 = mul i64 %30, %30
-  %38 = alloca float, i64 %37, align 4
-  %39 = mul i64 %30, %30
-  %40 = alloca float, i64 %39, align 4
-  %41 = mul i64 %30, %30
-  %42 = alloca float, i64 %41, align 4
-  %43 = mul i64 %30, %30
-  %44 = alloca float, i64 %43, align 4
-  %45 = mul i64 %30, %30
-  %46 = alloca float, i64 %45, align 4
-  %47 = mul i64 %30, %30
-  %48 = alloca float, i64 %47, align 4
-  %49 = mul i64 %30, %30
-  %50 = alloca float, i64 %49, align 4
-  %51 = mul i64 %30, %30
-  %52 = alloca float, i64 %51, align 4
-  %53 = mul i64 %30, %30
-  %54 = alloca float, i64 %53, align 4
-  %55 = mul i64 %29, 16
-  br label %56
+define void @gemm_fp32_linalg(ptr %0, ptr %1, i64 %2, i64 %3, i64 %4, i64 %5, i64 %6, ptr %7, ptr %8, i64 %9, i64 %10, i64 %11, i64 %12, i64 %13, ptr %14, ptr %15, i64 %16, i64 %17, i64 %18, i64 %19, i64 %20) #0 {
+  %22 = call i64 @llvm.vscale.i64()
+  %23 = mul i64 %22, 4
+  %24 = mul i64 %23, %23
+  %25 = alloca float, i64 %24, align 4
+  %26 = mul i64 %23, %23
+  %27 = alloca float, i64 %26, align 4
+  %28 = mul i64 %23, %23
+  %29 = alloca float, i64 %28, align 4
+  %30 = mul i64 %23, %23
+  %31 = alloca float, i64 %30, align 4
+  %32 = mul i64 %23, %23
+  %33 = alloca float, i64 %32, align 4
+  %34 = mul i64 %23, %23
+  %35 = alloca float, i64 %34, align 4
+  %36 = mul i64 %23, %23
+  %37 = alloca float, i64 %36, align 4
+  %38 = mul i64 %23, %23
+  %39 = alloca float, i64 %38, align 4
+  %40 = mul i64 %23, %23
+  %41 = alloca float, i64 %40, align 4
+  %42 = mul i64 %23, %23
+  %43 = alloca float, i64 %42, align 4
+  %44 = mul i64 %23, %23
+  %45 = alloca float, i64 %44, align 4
+  %46 = mul i64 %23, %23
+  %47 = alloca float, i64 %46, align 4
+  %48 = mul i64 %22, 16
+  br label %49
 
-56:                                               ; preds = %1664, %21
-  %57 = phi i64 [ %1665, %1664 ], [ 0, %21 ]
-  %58 = icmp slt i64 %57, %3
-  br i1 %58, label %59, label %1666
+49:                                               ; preds = %1688, %21
+  %50 = phi i64 [ %1689, %1688 ], [ 0, %21 ]
+  %51 = icmp slt i64 %50, %3
+  br i1 %51, label %52, label %1690
 
-59:                                               ; preds = %56
-  %60 = sub i64 %3, %57
-  %61 = call i64 @llvm.smin.i64(i64 %55, i64 %60)
-  %62 = call <vscale x 16 x i32> @llvm.stepvector.nxv16i32()
-  %63 = call i64 @llvm.smin.i64(i64 %61, i64 2147483647)
-  %64 = trunc i64 %63 to i32
-  %65 = insertelement <vscale x 16 x i32> poison, i32 %64, i32 0
-  %66 = shufflevector <vscale x 16 x i32> %65, <vscale x 16 x i32> poison, <vscale x 16 x i32> zeroinitializer
-  %67 = icmp slt <vscale x 16 x i32> %62, %66
+52:                                               ; preds = %49
+  %53 = sub i64 %3, %50
+  %54 = call i64 @llvm.smin.i64(i64 %53, i64 128)
+  br label %55
+
+55:                                               ; preds = %1686, %52
+  %56 = phi i64 [ %1687, %1686 ], [ 0, %52 ]
+  %57 = icmp slt i64 %56, %11
+  br i1 %57, label %58, label %1688
+
+58:                                               ; preds = %55
+  %59 = sub i64 %11, %56
+  %60 = call i64 @llvm.smin.i64(i64 %59, i64 128)
+  br label %61
+
+61:                                               ; preds = %1684, %58
+  %62 = phi i64 [ %1685, %1684 ], [ 0, %58 ]
+  %63 = icmp slt i64 %62, %54
+  br i1 %63, label %64, label %1686
+
+64:                                               ; preds = %61
+  %65 = sub i64 %54, %62
+  %66 = call i64 @llvm.smin.i64(i64 %65, i64 16)
+  %67 = add i64 %50, %62
   br label %68
 
-68:                                               ; preds = %1662, %59
-  %69 = phi i64 [ %1663, %1662 ], [ 0, %59 ]
-  %70 = icmp slt i64 %69, %11
-  br i1 %70, label %71, label %1664
+68:                                               ; preds = %1682, %64
+  %69 = phi i64 [ %1683, %1682 ], [ 0, %64 ]
+  %70 = icmp slt i64 %69, %60
+  br i1 %70, label %71, label %1684
 
 71:                                               ; preds = %68
-  %72 = sub i64 %11, %69
-  %73 = call i64 @llvm.smin.i64(i64 %55, i64 %72)
-  %74 = mul nsw i64 %57, %19
-  %75 = add i64 %16, %74
-  %76 = mul nsw i64 %69, %20
-  %77 = add i64 %75, %76
-  %78 = call <vscale x 16 x i32> @llvm.stepvector.nxv16i32()
-  %79 = call i64 @llvm.smin.i64(i64 %73, i64 2147483647)
-  %80 = trunc i64 %79 to i32
-  %81 = insertelement <vscale x 16 x i32> poison, i32 %80, i32 0
-  %82 = shufflevector <vscale x 16 x i32> %81, <vscale x 16 x i32> poison, <vscale x 16 x i32> zeroinitializer
-  %83 = icmp slt <vscale x 16 x i32> %78, %82
-  br label %84
-
-84:                                               ; preds = %1660, %71
-  %85 = phi i64 [ %1661, %1660 ], [ 0, %71 ]
-  %86 = icmp slt i64 %85, %4
-  br i1 %86, label %87, label %1662
-
-87:                                               ; preds = %84
-  %88 = mul nsw i64 %57, %5
-  %89 = add i64 %2, %88
-  %90 = mul nsw i64 %85, %6
-  %91 = add i64 %89, %90
-  %92 = getelementptr float, ptr %1, i64 %91
-  %93 = mul i64 %5, 0
-  %94 = getelementptr float, ptr %92, i64 %93
-  call void @llvm.prefetch.p0(ptr %94, i32 0, i32 3, i32 1)
-  br label %95
-
-95:                                               ; preds = %107, %87
-  %96 = phi i64 [ %109, %107 ], [ 0, %87 ]
-  %97 = phi <vscale x 16 x float> [ %108, %107 ], [ poison, %87 ]
-  %98 = icmp slt i64 %96, %55
-  br i1 %98, label %99, label %110
-
-99:                                               ; preds = %95
-  %100 = extractelement <vscale x 16 x i1> %67, i64 %96
-  br i1 %100, label %101, label %107
-
-101:                                              ; preds = %99
-  %102 = getelementptr float, ptr %1, i64 %91
-  %103 = mul nsw i64 %96, %5
-  %104 = getelementptr inbounds float, ptr %102, i64 %103
-  %105 = load float, ptr %104, align 4
-  %106 = insertelement <vscale x 16 x float> %97, float %105, i64 %96
-  br label %107
-
-107:                                              ; preds = %101, %99
-  %108 = phi <vscale x 16 x float> [ %106, %101 ], [ %97, %99 ]
-  %109 = add i64 %96, 1
-  br label %95
-
-110:                                              ; preds = %95
-  %111 = mul nsw i64 %85, %12
-  %112 = add i64 %9, %111
-  %113 = mul nsw i64 %69, %13
-  %114 = add i64 %112, %113
-  %115 = getelementptr float, ptr %8, i64 %114
-  %116 = mul i64 %13, 0
-  %117 = getelementptr float, ptr %115, i64 %116
-  call void @llvm.prefetch.p0(ptr %117, i32 0, i32 3, i32 1)
-  br label %118
-
-118:                                              ; preds = %130, %110
-  %119 = phi i64 [ %132, %130 ], [ 0, %110 ]
-  %120 = phi <vscale x 16 x float> [ %131, %130 ], [ poison, %110 ]
-  %121 = icmp slt i64 %119, %55
-  br i1 %121, label %122, label %133
-
-122:                                              ; preds = %118
-  %123 = extractelement <vscale x 16 x i1> %83, i64 %119
-  br i1 %123, label %124, label %130
-
-124:                                              ; preds = %122
-  %125 = getelementptr float, ptr %8, i64 %114
-  %126 = mul nsw i64 %119, %13
-  %127 = getelementptr inbounds float, ptr %125, i64 %126
-  %128 = load float, ptr %127, align 4
-  %129 = insertelement <vscale x 16 x float> %120, float %128, i64 %119
-  br label %130
-
-130:                                              ; preds = %124, %122
-  %131 = phi <vscale x 16 x float> [ %129, %124 ], [ %120, %122 ]
-  %132 = add i64 %119, 1
-  br label %118
-
-133:                                              ; preds = %118
-  %134 = trunc i64 %73 to i32
-  br label %135
-
-135:                                              ; preds = %183, %133
-  %136 = phi i64 [ %184, %183 ], [ 0, %133 ]
-  %137 = icmp slt i64 %136, %30
-  br i1 %137, label %138, label %185
-
-138:                                              ; preds = %135
-  %139 = icmp slt i64 %136, %61
-  %140 = sext i1 %139 to i32
-  %141 = and i32 %140, %134
-  %142 = sext i32 %141 to i64
-  %143 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %144 = call i64 @llvm.smin.i64(i64 %142, i64 2147483647)
-  %145 = trunc i64 %144 to i32
-  %146 = insertelement <vscale x 4 x i32> poison, i32 %145, i32 0
-  %147 = shufflevector <vscale x 4 x i32> %146, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %148 = icmp slt <vscale x 4 x i32> %143, %147
-  %149 = getelementptr float, ptr %15, i64 %77
-  %150 = mul i64 %136, %19
-  %151 = mul i64 %20, 0
-  %152 = add i64 %150, %151
-  %153 = getelementptr float, ptr %149, i64 %152
-  %154 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %153, <vscale x 4 x i1> %148, <vscale x 4 x float> poison)
-  br label %155
-
-155:                                              ; preds = %158, %138
-  %156 = phi i64 [ %167, %158 ], [ 0, %138 ]
-  %157 = icmp slt i64 %156, %30
-  br i1 %157, label %158, label %168
-
-158:                                              ; preds = %155
-  %159 = trunc i64 %156 to i32
-  %160 = mul i64 %156, %30
-  %161 = add i64 %160, 0
-  %162 = getelementptr float, ptr %54, i64 %161
-  %163 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %159)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %162, i32 0, i32 %159)
-  %164 = mul i64 %156, %30
-  %165 = add i64 %164, 0
-  %166 = getelementptr float, ptr %54, i64 %165
-  store <vscale x 4 x float> %163, ptr %166, align 4
-  %167 = add i64 %156, 1
-  br label %155
-
-168:                                              ; preds = %155
-  %169 = trunc i64 %136 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %169, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %154)
-  br label %170
-
-170:                                              ; preds = %173, %168
-  %171 = phi i64 [ %182, %173 ], [ 0, %168 ]
-  %172 = icmp slt i64 %171, %30
-  br i1 %172, label %173, label %183
-
-173:                                              ; preds = %170
-  %174 = trunc i64 %171 to i32
-  %175 = mul i64 %171, %30
-  %176 = add i64 %175, 0
-  %177 = getelementptr float, ptr %54, i64 %176
-  %178 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %174)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %177, i32 0, i32 %174)
-  %179 = mul i64 %171, %30
-  %180 = add i64 %179, 0
-  %181 = getelementptr float, ptr %54, i64 %180
-  store <vscale x 4 x float> %178, ptr %181, align 4
-  %182 = add i64 %171, 1
-  br label %170
-
-183:                                              ; preds = %170
-  %184 = add i64 %136, 1
-  br label %135
-
-185:                                              ; preds = %135
-  %186 = mul i64 %29, -4
-  %187 = add i64 %73, %186
-  %188 = trunc i64 %187 to i32
-  br label %189
-
-189:                                              ; preds = %237, %185
-  %190 = phi i64 [ %238, %237 ], [ 0, %185 ]
-  %191 = icmp slt i64 %190, %30
-  br i1 %191, label %192, label %239
-
-192:                                              ; preds = %189
-  %193 = icmp slt i64 %190, %61
-  %194 = sext i1 %193 to i32
-  %195 = and i32 %194, %188
-  %196 = sext i32 %195 to i64
-  %197 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %198 = call i64 @llvm.smin.i64(i64 %196, i64 2147483647)
-  %199 = trunc i64 %198 to i32
-  %200 = insertelement <vscale x 4 x i32> poison, i32 %199, i32 0
-  %201 = shufflevector <vscale x 4 x i32> %200, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %202 = icmp slt <vscale x 4 x i32> %197, %201
-  %203 = getelementptr float, ptr %15, i64 %77
-  %204 = mul i64 %190, %19
-  %205 = mul i64 %30, %20
-  %206 = add i64 %204, %205
-  %207 = getelementptr float, ptr %203, i64 %206
-  %208 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %207, <vscale x 4 x i1> %202, <vscale x 4 x float> poison)
-  br label %209
-
-209:                                              ; preds = %212, %192
-  %210 = phi i64 [ %221, %212 ], [ 0, %192 ]
-  %211 = icmp slt i64 %210, %30
-  br i1 %211, label %212, label %222
-
-212:                                              ; preds = %209
-  %213 = trunc i64 %210 to i32
-  %214 = mul i64 %210, %30
-  %215 = add i64 %214, 0
-  %216 = getelementptr float, ptr %52, i64 %215
-  %217 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %213)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %216, i32 0, i32 %213)
-  %218 = mul i64 %210, %30
-  %219 = add i64 %218, 0
-  %220 = getelementptr float, ptr %52, i64 %219
-  store <vscale x 4 x float> %217, ptr %220, align 4
-  %221 = add i64 %210, 1
-  br label %209
-
-222:                                              ; preds = %209
-  %223 = trunc i64 %190 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %223, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %208)
-  br label %224
-
-224:                                              ; preds = %227, %222
-  %225 = phi i64 [ %236, %227 ], [ 0, %222 ]
-  %226 = icmp slt i64 %225, %30
-  br i1 %226, label %227, label %237
-
-227:                                              ; preds = %224
-  %228 = trunc i64 %225 to i32
-  %229 = mul i64 %225, %30
-  %230 = add i64 %229, 0
-  %231 = getelementptr float, ptr %52, i64 %230
-  %232 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %228)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %231, i32 0, i32 %228)
-  %233 = mul i64 %225, %30
-  %234 = add i64 %233, 0
-  %235 = getelementptr float, ptr %52, i64 %234
-  store <vscale x 4 x float> %232, ptr %235, align 4
-  %236 = add i64 %225, 1
-  br label %224
-
-237:                                              ; preds = %224
-  %238 = add i64 %190, 1
-  br label %189
-
-239:                                              ; preds = %189
-  %240 = mul i64 %29, -8
-  %241 = add i64 %73, %240
-  %242 = mul i64 %29, 8
-  %243 = trunc i64 %241 to i32
-  br label %244
-
-244:                                              ; preds = %292, %239
-  %245 = phi i64 [ %293, %292 ], [ 0, %239 ]
-  %246 = icmp slt i64 %245, %30
-  br i1 %246, label %247, label %294
-
-247:                                              ; preds = %244
-  %248 = icmp slt i64 %245, %61
-  %249 = sext i1 %248 to i32
-  %250 = and i32 %249, %243
-  %251 = sext i32 %250 to i64
-  %252 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %253 = call i64 @llvm.smin.i64(i64 %251, i64 2147483647)
-  %254 = trunc i64 %253 to i32
-  %255 = insertelement <vscale x 4 x i32> poison, i32 %254, i32 0
-  %256 = shufflevector <vscale x 4 x i32> %255, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %257 = icmp slt <vscale x 4 x i32> %252, %256
-  %258 = getelementptr float, ptr %15, i64 %77
-  %259 = mul i64 %245, %19
-  %260 = mul i64 %242, %20
-  %261 = add i64 %259, %260
-  %262 = getelementptr float, ptr %258, i64 %261
-  %263 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %262, <vscale x 4 x i1> %257, <vscale x 4 x float> poison)
-  br label %264
-
-264:                                              ; preds = %267, %247
-  %265 = phi i64 [ %276, %267 ], [ 0, %247 ]
-  %266 = icmp slt i64 %265, %30
-  br i1 %266, label %267, label %277
-
-267:                                              ; preds = %264
-  %268 = trunc i64 %265 to i32
-  %269 = mul i64 %265, %30
-  %270 = add i64 %269, 0
-  %271 = getelementptr float, ptr %50, i64 %270
-  %272 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %268)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %271, i32 0, i32 %268)
-  %273 = mul i64 %265, %30
-  %274 = add i64 %273, 0
-  %275 = getelementptr float, ptr %50, i64 %274
-  store <vscale x 4 x float> %272, ptr %275, align 4
-  %276 = add i64 %265, 1
-  br label %264
-
-277:                                              ; preds = %264
-  %278 = trunc i64 %245 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %278, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %263)
-  br label %279
-
-279:                                              ; preds = %282, %277
-  %280 = phi i64 [ %291, %282 ], [ 0, %277 ]
-  %281 = icmp slt i64 %280, %30
-  br i1 %281, label %282, label %292
-
-282:                                              ; preds = %279
-  %283 = trunc i64 %280 to i32
-  %284 = mul i64 %280, %30
-  %285 = add i64 %284, 0
-  %286 = getelementptr float, ptr %50, i64 %285
-  %287 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %283)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %286, i32 0, i32 %283)
-  %288 = mul i64 %280, %30
-  %289 = add i64 %288, 0
-  %290 = getelementptr float, ptr %50, i64 %289
-  store <vscale x 4 x float> %287, ptr %290, align 4
-  %291 = add i64 %280, 1
-  br label %279
-
-292:                                              ; preds = %279
-  %293 = add i64 %245, 1
-  br label %244
-
-294:                                              ; preds = %244
-  %295 = mul i64 %29, -12
-  %296 = add i64 %73, %295
-  %297 = mul i64 %29, 12
-  %298 = trunc i64 %296 to i32
-  br label %299
-
-299:                                              ; preds = %347, %294
-  %300 = phi i64 [ %348, %347 ], [ 0, %294 ]
-  %301 = icmp slt i64 %300, %30
-  br i1 %301, label %302, label %349
-
-302:                                              ; preds = %299
-  %303 = icmp slt i64 %300, %61
-  %304 = sext i1 %303 to i32
-  %305 = and i32 %304, %298
-  %306 = sext i32 %305 to i64
-  %307 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %308 = call i64 @llvm.smin.i64(i64 %306, i64 2147483647)
-  %309 = trunc i64 %308 to i32
-  %310 = insertelement <vscale x 4 x i32> poison, i32 %309, i32 0
-  %311 = shufflevector <vscale x 4 x i32> %310, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %312 = icmp slt <vscale x 4 x i32> %307, %311
-  %313 = getelementptr float, ptr %15, i64 %77
-  %314 = mul i64 %300, %19
-  %315 = mul i64 %297, %20
-  %316 = add i64 %314, %315
-  %317 = getelementptr float, ptr %313, i64 %316
-  %318 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %317, <vscale x 4 x i1> %312, <vscale x 4 x float> poison)
-  br label %319
-
-319:                                              ; preds = %322, %302
-  %320 = phi i64 [ %331, %322 ], [ 0, %302 ]
-  %321 = icmp slt i64 %320, %30
-  br i1 %321, label %322, label %332
-
-322:                                              ; preds = %319
-  %323 = trunc i64 %320 to i32
-  %324 = mul i64 %320, %30
-  %325 = add i64 %324, 0
-  %326 = getelementptr float, ptr %48, i64 %325
-  %327 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %323)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %326, i32 0, i32 %323)
-  %328 = mul i64 %320, %30
-  %329 = add i64 %328, 0
-  %330 = getelementptr float, ptr %48, i64 %329
-  store <vscale x 4 x float> %327, ptr %330, align 4
-  %331 = add i64 %320, 1
-  br label %319
-
-332:                                              ; preds = %319
-  %333 = trunc i64 %300 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %333, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %318)
-  br label %334
-
-334:                                              ; preds = %337, %332
-  %335 = phi i64 [ %346, %337 ], [ 0, %332 ]
-  %336 = icmp slt i64 %335, %30
-  br i1 %336, label %337, label %347
-
-337:                                              ; preds = %334
-  %338 = trunc i64 %335 to i32
-  %339 = mul i64 %335, %30
-  %340 = add i64 %339, 0
-  %341 = getelementptr float, ptr %48, i64 %340
-  %342 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %338)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %341, i32 0, i32 %338)
-  %343 = mul i64 %335, %30
-  %344 = add i64 %343, 0
-  %345 = getelementptr float, ptr %48, i64 %344
-  store <vscale x 4 x float> %342, ptr %345, align 4
-  %346 = add i64 %335, 1
-  br label %334
-
-347:                                              ; preds = %334
-  %348 = add i64 %300, 1
-  br label %299
-
-349:                                              ; preds = %299
-  %350 = add i64 %61, %186
-  br label %351
-
-351:                                              ; preds = %400, %349
-  %352 = phi i64 [ %401, %400 ], [ 0, %349 ]
-  %353 = icmp slt i64 %352, %30
-  br i1 %353, label %354, label %402
-
-354:                                              ; preds = %351
-  %355 = icmp slt i64 %352, %350
-  %356 = sext i1 %355 to i32
-  %357 = and i32 %356, %134
-  %358 = sext i32 %357 to i64
-  %359 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %360 = call i64 @llvm.smin.i64(i64 %358, i64 2147483647)
-  %361 = trunc i64 %360 to i32
-  %362 = insertelement <vscale x 4 x i32> poison, i32 %361, i32 0
-  %363 = shufflevector <vscale x 4 x i32> %362, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %364 = icmp slt <vscale x 4 x i32> %359, %363
-  %365 = add i64 %30, %352
-  %366 = getelementptr float, ptr %15, i64 %77
-  %367 = mul i64 %365, %19
-  %368 = mul i64 %20, 0
-  %369 = add i64 %367, %368
-  %370 = getelementptr float, ptr %366, i64 %369
-  %371 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %370, <vscale x 4 x i1> %364, <vscale x 4 x float> poison)
-  br label %372
-
-372:                                              ; preds = %375, %354
-  %373 = phi i64 [ %384, %375 ], [ 0, %354 ]
-  %374 = icmp slt i64 %373, %30
-  br i1 %374, label %375, label %385
-
-375:                                              ; preds = %372
-  %376 = trunc i64 %373 to i32
-  %377 = mul i64 %373, %30
-  %378 = add i64 %377, 0
-  %379 = getelementptr float, ptr %46, i64 %378
-  %380 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %376)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %379, i32 0, i32 %376)
-  %381 = mul i64 %373, %30
-  %382 = add i64 %381, 0
-  %383 = getelementptr float, ptr %46, i64 %382
-  store <vscale x 4 x float> %380, ptr %383, align 4
-  %384 = add i64 %373, 1
-  br label %372
-
-385:                                              ; preds = %372
-  %386 = trunc i64 %352 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %386, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %371)
-  br label %387
-
-387:                                              ; preds = %390, %385
-  %388 = phi i64 [ %399, %390 ], [ 0, %385 ]
-  %389 = icmp slt i64 %388, %30
-  br i1 %389, label %390, label %400
-
-390:                                              ; preds = %387
-  %391 = trunc i64 %388 to i32
-  %392 = mul i64 %388, %30
-  %393 = add i64 %392, 0
-  %394 = getelementptr float, ptr %46, i64 %393
-  %395 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %391)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %394, i32 0, i32 %391)
-  %396 = mul i64 %388, %30
-  %397 = add i64 %396, 0
-  %398 = getelementptr float, ptr %46, i64 %397
-  store <vscale x 4 x float> %395, ptr %398, align 4
-  %399 = add i64 %388, 1
-  br label %387
-
-400:                                              ; preds = %387
-  %401 = add i64 %352, 1
-  br label %351
-
-402:                                              ; preds = %451, %351
-  %403 = phi i64 [ %452, %451 ], [ 0, %351 ]
-  %404 = icmp slt i64 %403, %30
-  br i1 %404, label %405, label %453
-
-405:                                              ; preds = %402
-  %406 = icmp slt i64 %403, %350
-  %407 = sext i1 %406 to i32
-  %408 = and i32 %407, %188
-  %409 = sext i32 %408 to i64
-  %410 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %411 = call i64 @llvm.smin.i64(i64 %409, i64 2147483647)
-  %412 = trunc i64 %411 to i32
-  %413 = insertelement <vscale x 4 x i32> poison, i32 %412, i32 0
-  %414 = shufflevector <vscale x 4 x i32> %413, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %415 = icmp slt <vscale x 4 x i32> %410, %414
-  %416 = add i64 %30, %403
-  %417 = getelementptr float, ptr %15, i64 %77
-  %418 = mul i64 %416, %19
-  %419 = mul i64 %30, %20
-  %420 = add i64 %418, %419
-  %421 = getelementptr float, ptr %417, i64 %420
-  %422 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %421, <vscale x 4 x i1> %415, <vscale x 4 x float> poison)
-  br label %423
-
-423:                                              ; preds = %426, %405
-  %424 = phi i64 [ %435, %426 ], [ 0, %405 ]
-  %425 = icmp slt i64 %424, %30
-  br i1 %425, label %426, label %436
-
-426:                                              ; preds = %423
-  %427 = trunc i64 %424 to i32
-  %428 = mul i64 %424, %30
-  %429 = add i64 %428, 0
-  %430 = getelementptr float, ptr %44, i64 %429
-  %431 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %427)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %430, i32 0, i32 %427)
-  %432 = mul i64 %424, %30
-  %433 = add i64 %432, 0
-  %434 = getelementptr float, ptr %44, i64 %433
-  store <vscale x 4 x float> %431, ptr %434, align 4
-  %435 = add i64 %424, 1
-  br label %423
-
-436:                                              ; preds = %423
-  %437 = trunc i64 %403 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %437, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %422)
-  br label %438
-
-438:                                              ; preds = %441, %436
-  %439 = phi i64 [ %450, %441 ], [ 0, %436 ]
-  %440 = icmp slt i64 %439, %30
-  br i1 %440, label %441, label %451
-
-441:                                              ; preds = %438
-  %442 = trunc i64 %439 to i32
-  %443 = mul i64 %439, %30
-  %444 = add i64 %443, 0
-  %445 = getelementptr float, ptr %44, i64 %444
-  %446 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %442)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %445, i32 0, i32 %442)
-  %447 = mul i64 %439, %30
-  %448 = add i64 %447, 0
-  %449 = getelementptr float, ptr %44, i64 %448
-  store <vscale x 4 x float> %446, ptr %449, align 4
-  %450 = add i64 %439, 1
-  br label %438
-
-451:                                              ; preds = %438
-  %452 = add i64 %403, 1
-  br label %402
-
-453:                                              ; preds = %502, %402
-  %454 = phi i64 [ %503, %502 ], [ 0, %402 ]
-  %455 = icmp slt i64 %454, %30
-  br i1 %455, label %456, label %504
-
-456:                                              ; preds = %453
-  %457 = icmp slt i64 %454, %350
-  %458 = sext i1 %457 to i32
-  %459 = and i32 %458, %243
-  %460 = sext i32 %459 to i64
-  %461 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %462 = call i64 @llvm.smin.i64(i64 %460, i64 2147483647)
-  %463 = trunc i64 %462 to i32
-  %464 = insertelement <vscale x 4 x i32> poison, i32 %463, i32 0
-  %465 = shufflevector <vscale x 4 x i32> %464, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %466 = icmp slt <vscale x 4 x i32> %461, %465
-  %467 = add i64 %30, %454
-  %468 = getelementptr float, ptr %15, i64 %77
-  %469 = mul i64 %467, %19
-  %470 = mul i64 %242, %20
-  %471 = add i64 %469, %470
-  %472 = getelementptr float, ptr %468, i64 %471
-  %473 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %472, <vscale x 4 x i1> %466, <vscale x 4 x float> poison)
-  br label %474
-
-474:                                              ; preds = %477, %456
-  %475 = phi i64 [ %486, %477 ], [ 0, %456 ]
-  %476 = icmp slt i64 %475, %30
-  br i1 %476, label %477, label %487
-
-477:                                              ; preds = %474
-  %478 = trunc i64 %475 to i32
-  %479 = mul i64 %475, %30
-  %480 = add i64 %479, 0
-  %481 = getelementptr float, ptr %42, i64 %480
-  %482 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %478)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %481, i32 0, i32 %478)
-  %483 = mul i64 %475, %30
-  %484 = add i64 %483, 0
-  %485 = getelementptr float, ptr %42, i64 %484
-  store <vscale x 4 x float> %482, ptr %485, align 4
-  %486 = add i64 %475, 1
-  br label %474
-
-487:                                              ; preds = %474
-  %488 = trunc i64 %454 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %488, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %473)
-  br label %489
-
-489:                                              ; preds = %492, %487
-  %490 = phi i64 [ %501, %492 ], [ 0, %487 ]
-  %491 = icmp slt i64 %490, %30
-  br i1 %491, label %492, label %502
-
-492:                                              ; preds = %489
-  %493 = trunc i64 %490 to i32
-  %494 = mul i64 %490, %30
-  %495 = add i64 %494, 0
-  %496 = getelementptr float, ptr %42, i64 %495
-  %497 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %493)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %496, i32 0, i32 %493)
-  %498 = mul i64 %490, %30
-  %499 = add i64 %498, 0
-  %500 = getelementptr float, ptr %42, i64 %499
-  store <vscale x 4 x float> %497, ptr %500, align 4
-  %501 = add i64 %490, 1
-  br label %489
-
-502:                                              ; preds = %489
-  %503 = add i64 %454, 1
-  br label %453
-
-504:                                              ; preds = %553, %453
-  %505 = phi i64 [ %554, %553 ], [ 0, %453 ]
-  %506 = icmp slt i64 %505, %30
-  br i1 %506, label %507, label %555
-
-507:                                              ; preds = %504
-  %508 = icmp slt i64 %505, %350
-  %509 = sext i1 %508 to i32
-  %510 = and i32 %509, %298
-  %511 = sext i32 %510 to i64
-  %512 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %513 = call i64 @llvm.smin.i64(i64 %511, i64 2147483647)
-  %514 = trunc i64 %513 to i32
-  %515 = insertelement <vscale x 4 x i32> poison, i32 %514, i32 0
-  %516 = shufflevector <vscale x 4 x i32> %515, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %517 = icmp slt <vscale x 4 x i32> %512, %516
-  %518 = add i64 %30, %505
-  %519 = getelementptr float, ptr %15, i64 %77
-  %520 = mul i64 %518, %19
-  %521 = mul i64 %297, %20
-  %522 = add i64 %520, %521
-  %523 = getelementptr float, ptr %519, i64 %522
-  %524 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %523, <vscale x 4 x i1> %517, <vscale x 4 x float> poison)
-  br label %525
-
-525:                                              ; preds = %528, %507
-  %526 = phi i64 [ %537, %528 ], [ 0, %507 ]
-  %527 = icmp slt i64 %526, %30
-  br i1 %527, label %528, label %538
-
-528:                                              ; preds = %525
-  %529 = trunc i64 %526 to i32
-  %530 = mul i64 %526, %30
-  %531 = add i64 %530, 0
-  %532 = getelementptr float, ptr %40, i64 %531
-  %533 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %529)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %532, i32 0, i32 %529)
-  %534 = mul i64 %526, %30
-  %535 = add i64 %534, 0
-  %536 = getelementptr float, ptr %40, i64 %535
-  store <vscale x 4 x float> %533, ptr %536, align 4
-  %537 = add i64 %526, 1
-  br label %525
-
-538:                                              ; preds = %525
-  %539 = trunc i64 %505 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %539, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %524)
-  br label %540
-
-540:                                              ; preds = %543, %538
-  %541 = phi i64 [ %552, %543 ], [ 0, %538 ]
-  %542 = icmp slt i64 %541, %30
-  br i1 %542, label %543, label %553
-
-543:                                              ; preds = %540
-  %544 = trunc i64 %541 to i32
-  %545 = mul i64 %541, %30
-  %546 = add i64 %545, 0
-  %547 = getelementptr float, ptr %40, i64 %546
-  %548 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %544)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %547, i32 0, i32 %544)
-  %549 = mul i64 %541, %30
-  %550 = add i64 %549, 0
-  %551 = getelementptr float, ptr %40, i64 %550
-  store <vscale x 4 x float> %548, ptr %551, align 4
-  %552 = add i64 %541, 1
-  br label %540
-
-553:                                              ; preds = %540
-  %554 = add i64 %505, 1
-  br label %504
-
-555:                                              ; preds = %504
-  %556 = add i64 %61, %240
-  br label %557
-
-557:                                              ; preds = %606, %555
-  %558 = phi i64 [ %607, %606 ], [ 0, %555 ]
-  %559 = icmp slt i64 %558, %30
-  br i1 %559, label %560, label %608
-
-560:                                              ; preds = %557
-  %561 = icmp slt i64 %558, %556
-  %562 = sext i1 %561 to i32
-  %563 = and i32 %562, %134
-  %564 = sext i32 %563 to i64
-  %565 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %566 = call i64 @llvm.smin.i64(i64 %564, i64 2147483647)
-  %567 = trunc i64 %566 to i32
-  %568 = insertelement <vscale x 4 x i32> poison, i32 %567, i32 0
-  %569 = shufflevector <vscale x 4 x i32> %568, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %570 = icmp slt <vscale x 4 x i32> %565, %569
-  %571 = add i64 %242, %558
-  %572 = getelementptr float, ptr %15, i64 %77
-  %573 = mul i64 %571, %19
-  %574 = mul i64 %20, 0
-  %575 = add i64 %573, %574
-  %576 = getelementptr float, ptr %572, i64 %575
-  %577 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %576, <vscale x 4 x i1> %570, <vscale x 4 x float> poison)
-  br label %578
-
-578:                                              ; preds = %581, %560
-  %579 = phi i64 [ %590, %581 ], [ 0, %560 ]
-  %580 = icmp slt i64 %579, %30
-  br i1 %580, label %581, label %591
-
-581:                                              ; preds = %578
-  %582 = trunc i64 %579 to i32
-  %583 = mul i64 %579, %30
-  %584 = add i64 %583, 0
-  %585 = getelementptr float, ptr %38, i64 %584
-  %586 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %582)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %585, i32 0, i32 %582)
-  %587 = mul i64 %579, %30
-  %588 = add i64 %587, 0
-  %589 = getelementptr float, ptr %38, i64 %588
-  store <vscale x 4 x float> %586, ptr %589, align 4
-  %590 = add i64 %579, 1
-  br label %578
-
-591:                                              ; preds = %578
-  %592 = trunc i64 %558 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %592, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %577)
-  br label %593
-
-593:                                              ; preds = %596, %591
-  %594 = phi i64 [ %605, %596 ], [ 0, %591 ]
-  %595 = icmp slt i64 %594, %30
-  br i1 %595, label %596, label %606
-
-596:                                              ; preds = %593
-  %597 = trunc i64 %594 to i32
-  %598 = mul i64 %594, %30
-  %599 = add i64 %598, 0
-  %600 = getelementptr float, ptr %38, i64 %599
-  %601 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %597)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %600, i32 0, i32 %597)
-  %602 = mul i64 %594, %30
-  %603 = add i64 %602, 0
-  %604 = getelementptr float, ptr %38, i64 %603
-  store <vscale x 4 x float> %601, ptr %604, align 4
-  %605 = add i64 %594, 1
-  br label %593
-
-606:                                              ; preds = %593
-  %607 = add i64 %558, 1
-  br label %557
-
-608:                                              ; preds = %657, %557
-  %609 = phi i64 [ %658, %657 ], [ 0, %557 ]
-  %610 = icmp slt i64 %609, %30
-  br i1 %610, label %611, label %659
-
-611:                                              ; preds = %608
-  %612 = icmp slt i64 %609, %556
-  %613 = sext i1 %612 to i32
-  %614 = and i32 %613, %188
-  %615 = sext i32 %614 to i64
-  %616 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %617 = call i64 @llvm.smin.i64(i64 %615, i64 2147483647)
-  %618 = trunc i64 %617 to i32
-  %619 = insertelement <vscale x 4 x i32> poison, i32 %618, i32 0
-  %620 = shufflevector <vscale x 4 x i32> %619, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %621 = icmp slt <vscale x 4 x i32> %616, %620
-  %622 = add i64 %242, %609
-  %623 = getelementptr float, ptr %15, i64 %77
-  %624 = mul i64 %622, %19
-  %625 = mul i64 %30, %20
-  %626 = add i64 %624, %625
-  %627 = getelementptr float, ptr %623, i64 %626
-  %628 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %627, <vscale x 4 x i1> %621, <vscale x 4 x float> poison)
-  br label %629
-
-629:                                              ; preds = %632, %611
-  %630 = phi i64 [ %641, %632 ], [ 0, %611 ]
-  %631 = icmp slt i64 %630, %30
-  br i1 %631, label %632, label %642
-
-632:                                              ; preds = %629
-  %633 = trunc i64 %630 to i32
-  %634 = mul i64 %630, %30
-  %635 = add i64 %634, 0
-  %636 = getelementptr float, ptr %36, i64 %635
-  %637 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %633)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %636, i32 0, i32 %633)
-  %638 = mul i64 %630, %30
-  %639 = add i64 %638, 0
-  %640 = getelementptr float, ptr %36, i64 %639
-  store <vscale x 4 x float> %637, ptr %640, align 4
-  %641 = add i64 %630, 1
-  br label %629
-
-642:                                              ; preds = %629
-  %643 = trunc i64 %609 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %643, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %628)
-  br label %644
-
-644:                                              ; preds = %647, %642
-  %645 = phi i64 [ %656, %647 ], [ 0, %642 ]
-  %646 = icmp slt i64 %645, %30
-  br i1 %646, label %647, label %657
-
-647:                                              ; preds = %644
-  %648 = trunc i64 %645 to i32
-  %649 = mul i64 %645, %30
-  %650 = add i64 %649, 0
-  %651 = getelementptr float, ptr %36, i64 %650
-  %652 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %648)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %651, i32 0, i32 %648)
-  %653 = mul i64 %645, %30
-  %654 = add i64 %653, 0
-  %655 = getelementptr float, ptr %36, i64 %654
-  store <vscale x 4 x float> %652, ptr %655, align 4
-  %656 = add i64 %645, 1
-  br label %644
-
-657:                                              ; preds = %644
-  %658 = add i64 %609, 1
-  br label %608
-
-659:                                              ; preds = %708, %608
-  %660 = phi i64 [ %709, %708 ], [ 0, %608 ]
-  %661 = icmp slt i64 %660, %30
-  br i1 %661, label %662, label %710
-
-662:                                              ; preds = %659
-  %663 = icmp slt i64 %660, %556
-  %664 = sext i1 %663 to i32
-  %665 = and i32 %664, %243
-  %666 = sext i32 %665 to i64
-  %667 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %668 = call i64 @llvm.smin.i64(i64 %666, i64 2147483647)
-  %669 = trunc i64 %668 to i32
-  %670 = insertelement <vscale x 4 x i32> poison, i32 %669, i32 0
-  %671 = shufflevector <vscale x 4 x i32> %670, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %672 = icmp slt <vscale x 4 x i32> %667, %671
-  %673 = add i64 %242, %660
-  %674 = getelementptr float, ptr %15, i64 %77
-  %675 = mul i64 %673, %19
-  %676 = mul i64 %242, %20
-  %677 = add i64 %675, %676
-  %678 = getelementptr float, ptr %674, i64 %677
-  %679 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %678, <vscale x 4 x i1> %672, <vscale x 4 x float> poison)
-  br label %680
-
-680:                                              ; preds = %683, %662
-  %681 = phi i64 [ %692, %683 ], [ 0, %662 ]
-  %682 = icmp slt i64 %681, %30
-  br i1 %682, label %683, label %693
-
-683:                                              ; preds = %680
-  %684 = trunc i64 %681 to i32
-  %685 = mul i64 %681, %30
-  %686 = add i64 %685, 0
-  %687 = getelementptr float, ptr %34, i64 %686
-  %688 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %684)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %687, i32 0, i32 %684)
-  %689 = mul i64 %681, %30
-  %690 = add i64 %689, 0
-  %691 = getelementptr float, ptr %34, i64 %690
-  store <vscale x 4 x float> %688, ptr %691, align 4
-  %692 = add i64 %681, 1
-  br label %680
-
-693:                                              ; preds = %680
-  %694 = trunc i64 %660 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %694, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %679)
-  br label %695
-
-695:                                              ; preds = %698, %693
-  %696 = phi i64 [ %707, %698 ], [ 0, %693 ]
-  %697 = icmp slt i64 %696, %30
-  br i1 %697, label %698, label %708
-
-698:                                              ; preds = %695
-  %699 = trunc i64 %696 to i32
-  %700 = mul i64 %696, %30
-  %701 = add i64 %700, 0
-  %702 = getelementptr float, ptr %34, i64 %701
-  %703 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %699)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %702, i32 0, i32 %699)
-  %704 = mul i64 %696, %30
-  %705 = add i64 %704, 0
-  %706 = getelementptr float, ptr %34, i64 %705
-  store <vscale x 4 x float> %703, ptr %706, align 4
-  %707 = add i64 %696, 1
-  br label %695
-
-708:                                              ; preds = %695
-  %709 = add i64 %660, 1
-  br label %659
-
-710:                                              ; preds = %759, %659
-  %711 = phi i64 [ %760, %759 ], [ 0, %659 ]
-  %712 = icmp slt i64 %711, %30
-  br i1 %712, label %713, label %761
-
-713:                                              ; preds = %710
-  %714 = icmp slt i64 %711, %556
-  %715 = sext i1 %714 to i32
-  %716 = and i32 %715, %298
-  %717 = sext i32 %716 to i64
-  %718 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %719 = call i64 @llvm.smin.i64(i64 %717, i64 2147483647)
-  %720 = trunc i64 %719 to i32
-  %721 = insertelement <vscale x 4 x i32> poison, i32 %720, i32 0
-  %722 = shufflevector <vscale x 4 x i32> %721, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %723 = icmp slt <vscale x 4 x i32> %718, %722
-  %724 = add i64 %242, %711
-  %725 = getelementptr float, ptr %15, i64 %77
-  %726 = mul i64 %724, %19
-  %727 = mul i64 %297, %20
-  %728 = add i64 %726, %727
-  %729 = getelementptr float, ptr %725, i64 %728
-  %730 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %729, <vscale x 4 x i1> %723, <vscale x 4 x float> poison)
-  br label %731
-
-731:                                              ; preds = %734, %713
-  %732 = phi i64 [ %743, %734 ], [ 0, %713 ]
-  %733 = icmp slt i64 %732, %30
-  br i1 %733, label %734, label %744
-
-734:                                              ; preds = %731
-  %735 = trunc i64 %732 to i32
-  %736 = mul i64 %732, %30
-  %737 = add i64 %736, 0
-  %738 = getelementptr float, ptr %32, i64 %737
-  %739 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %735)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %738, i32 0, i32 %735)
-  %740 = mul i64 %732, %30
-  %741 = add i64 %740, 0
-  %742 = getelementptr float, ptr %32, i64 %741
-  store <vscale x 4 x float> %739, ptr %742, align 4
-  %743 = add i64 %732, 1
-  br label %731
-
-744:                                              ; preds = %731
-  %745 = trunc i64 %711 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %745, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %730)
-  br label %746
-
-746:                                              ; preds = %749, %744
-  %747 = phi i64 [ %758, %749 ], [ 0, %744 ]
-  %748 = icmp slt i64 %747, %30
-  br i1 %748, label %749, label %759
-
-749:                                              ; preds = %746
-  %750 = trunc i64 %747 to i32
-  %751 = mul i64 %747, %30
-  %752 = add i64 %751, 0
-  %753 = getelementptr float, ptr %32, i64 %752
-  %754 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %750)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %753, i32 0, i32 %750)
-  %755 = mul i64 %747, %30
-  %756 = add i64 %755, 0
-  %757 = getelementptr float, ptr %32, i64 %756
-  store <vscale x 4 x float> %754, ptr %757, align 4
-  %758 = add i64 %747, 1
-  br label %746
-
-759:                                              ; preds = %746
-  %760 = add i64 %711, 1
-  br label %710
-
-761:                                              ; preds = %710
-  %762 = add i64 %61, %295
-  br label %763
-
-763:                                              ; preds = %766, %761
-  %764 = phi i64 [ %785, %766 ], [ 0, %761 ]
-  %765 = icmp slt i64 %764, %30
-  br i1 %765, label %766, label %786
-
-766:                                              ; preds = %763
-  %767 = icmp slt i64 %764, %762
-  %768 = sext i1 %767 to i32
-  %769 = and i32 %768, %134
-  %770 = sext i32 %769 to i64
-  %771 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %772 = call i64 @llvm.smin.i64(i64 %770, i64 2147483647)
-  %773 = trunc i64 %772 to i32
-  %774 = insertelement <vscale x 4 x i32> poison, i32 %773, i32 0
-  %775 = shufflevector <vscale x 4 x i32> %774, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %776 = icmp slt <vscale x 4 x i32> %771, %775
-  %777 = add i64 %297, %764
-  %778 = getelementptr float, ptr %15, i64 %77
-  %779 = mul i64 %777, %19
-  %780 = mul i64 %20, 0
-  %781 = add i64 %779, %780
-  %782 = getelementptr float, ptr %778, i64 %781
-  %783 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %782, <vscale x 4 x i1> %776, <vscale x 4 x float> poison)
-  %784 = trunc i64 %764 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %784, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %783)
-  %785 = add i64 %764, 1
-  br label %763
-
-786:                                              ; preds = %789, %763
-  %787 = phi i64 [ %808, %789 ], [ 0, %763 ]
-  %788 = icmp slt i64 %787, %30
-  br i1 %788, label %789, label %809
-
-789:                                              ; preds = %786
-  %790 = icmp slt i64 %787, %762
-  %791 = sext i1 %790 to i32
-  %792 = and i32 %791, %188
-  %793 = sext i32 %792 to i64
-  %794 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %795 = call i64 @llvm.smin.i64(i64 %793, i64 2147483647)
-  %796 = trunc i64 %795 to i32
-  %797 = insertelement <vscale x 4 x i32> poison, i32 %796, i32 0
-  %798 = shufflevector <vscale x 4 x i32> %797, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %799 = icmp slt <vscale x 4 x i32> %794, %798
-  %800 = add i64 %297, %787
-  %801 = getelementptr float, ptr %15, i64 %77
-  %802 = mul i64 %800, %19
-  %803 = mul i64 %30, %20
-  %804 = add i64 %802, %803
-  %805 = getelementptr float, ptr %801, i64 %804
-  %806 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %805, <vscale x 4 x i1> %799, <vscale x 4 x float> poison)
-  %807 = trunc i64 %787 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 1, i32 %807, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %806)
-  %808 = add i64 %787, 1
-  br label %786
-
-809:                                              ; preds = %812, %786
-  %810 = phi i64 [ %831, %812 ], [ 0, %786 ]
-  %811 = icmp slt i64 %810, %30
-  br i1 %811, label %812, label %832
-
-812:                                              ; preds = %809
-  %813 = icmp slt i64 %810, %762
-  %814 = sext i1 %813 to i32
-  %815 = and i32 %814, %243
-  %816 = sext i32 %815 to i64
-  %817 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %818 = call i64 @llvm.smin.i64(i64 %816, i64 2147483647)
-  %819 = trunc i64 %818 to i32
-  %820 = insertelement <vscale x 4 x i32> poison, i32 %819, i32 0
-  %821 = shufflevector <vscale x 4 x i32> %820, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %822 = icmp slt <vscale x 4 x i32> %817, %821
-  %823 = add i64 %297, %810
-  %824 = getelementptr float, ptr %15, i64 %77
-  %825 = mul i64 %823, %19
-  %826 = mul i64 %242, %20
-  %827 = add i64 %825, %826
-  %828 = getelementptr float, ptr %824, i64 %827
-  %829 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %828, <vscale x 4 x i1> %822, <vscale x 4 x float> poison)
-  %830 = trunc i64 %810 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 2, i32 %830, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %829)
-  %831 = add i64 %810, 1
-  br label %809
-
-832:                                              ; preds = %835, %809
-  %833 = phi i64 [ %854, %835 ], [ 0, %809 ]
-  %834 = icmp slt i64 %833, %30
-  br i1 %834, label %835, label %855
-
-835:                                              ; preds = %832
-  %836 = icmp slt i64 %833, %762
-  %837 = sext i1 %836 to i32
-  %838 = and i32 %837, %298
-  %839 = sext i32 %838 to i64
-  %840 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %841 = call i64 @llvm.smin.i64(i64 %839, i64 2147483647)
-  %842 = trunc i64 %841 to i32
-  %843 = insertelement <vscale x 4 x i32> poison, i32 %842, i32 0
-  %844 = shufflevector <vscale x 4 x i32> %843, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %845 = icmp slt <vscale x 4 x i32> %840, %844
-  %846 = add i64 %297, %833
-  %847 = getelementptr float, ptr %15, i64 %77
-  %848 = mul i64 %846, %19
-  %849 = mul i64 %297, %20
-  %850 = add i64 %848, %849
-  %851 = getelementptr float, ptr %847, i64 %850
-  %852 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %851, <vscale x 4 x i1> %845, <vscale x 4 x float> poison)
-  %853 = trunc i64 %833 to i32
-  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 3, i32 %853, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %852)
-  %854 = add i64 %833, 1
-  br label %832
-
-855:                                              ; preds = %832
-  %856 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %97, i64 0)
-  %857 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %120, i64 0)
-  %858 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %859 = call i64 @llvm.smin.i64(i64 %61, i64 2147483647)
-  %860 = trunc i64 %859 to i32
-  %861 = insertelement <vscale x 4 x i32> poison, i32 %860, i32 0
-  %862 = shufflevector <vscale x 4 x i32> %861, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %863 = icmp slt <vscale x 4 x i32> %858, %862
-  %864 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %865 = call i64 @llvm.smin.i64(i64 %73, i64 2147483647)
-  %866 = trunc i64 %865 to i32
-  %867 = insertelement <vscale x 4 x i32> poison, i32 %866, i32 0
-  %868 = shufflevector <vscale x 4 x i32> %867, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %869 = icmp slt <vscale x 4 x i32> %864, %868
-  br label %870
-
-870:                                              ; preds = %873, %855
-  %871 = phi i64 [ %882, %873 ], [ 0, %855 ]
-  %872 = icmp slt i64 %871, %30
-  br i1 %872, label %873, label %883
-
-873:                                              ; preds = %870
-  %874 = trunc i64 %871 to i32
-  %875 = mul i64 %871, %30
-  %876 = add i64 %875, 0
-  %877 = getelementptr float, ptr %54, i64 %876
-  %878 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %874)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %877, i32 0, i32 %874)
-  %879 = mul i64 %871, %30
-  %880 = add i64 %879, 0
-  %881 = getelementptr float, ptr %54, i64 %880
-  store <vscale x 4 x float> %878, ptr %881, align 4
-  %882 = add i64 %871, 1
-  br label %870
-
-883:                                              ; preds = %870
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %863, <vscale x 4 x i1> %869, <vscale x 4 x float> %856, <vscale x 4 x float> %857)
-  br label %884
-
-884:                                              ; preds = %887, %883
-  %885 = phi i64 [ %896, %887 ], [ 0, %883 ]
-  %886 = icmp slt i64 %885, %30
-  br i1 %886, label %887, label %897
-
-887:                                              ; preds = %884
-  %888 = trunc i64 %885 to i32
-  %889 = mul i64 %885, %30
-  %890 = add i64 %889, 0
-  %891 = getelementptr float, ptr %54, i64 %890
-  %892 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %888)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %891, i32 0, i32 %888)
-  %893 = mul i64 %885, %30
+  %72 = sub i64 %60, %69
+  %73 = call i64 @llvm.smin.i64(i64 %72, i64 16)
+  %74 = add i64 %56, %69
+  %75 = mul nsw i64 %50, %19
+  %76 = add i64 %75, %56
+  %77 = mul nsw i64 %62, %19
+  %78 = add i64 %76, %77
+  %79 = add i64 %78, %69
+  br label %80
+
+80:                                               ; preds = %92, %71
+  %81 = phi i64 [ %93, %92 ], [ 0, %71 ]
+  %82 = icmp slt i64 %81, %66
+  br i1 %82, label %83, label %94
+
+83:                                               ; preds = %86, %80
+  %84 = phi i64 [ %91, %86 ], [ 0, %80 ]
+  %85 = icmp slt i64 %84, %73
+  br i1 %85, label %86, label %92
+
+86:                                               ; preds = %83
+  %87 = getelementptr float, ptr %15, i64 %79
+  %88 = mul nsw i64 %81, %19
+  %89 = add nsw i64 %88, %84
+  %90 = getelementptr inbounds float, ptr %87, i64 %89
+  store float 0.000000e+00, ptr %90, align 4
+  %91 = add i64 %84, 1
+  br label %83
+
+92:                                               ; preds = %83
+  %93 = add i64 %81, 1
+  br label %80
+
+94:                                               ; preds = %1680, %80
+  %95 = phi i64 [ %1681, %1680 ], [ 0, %80 ]
+  %96 = icmp slt i64 %95, %4
+  br i1 %96, label %97, label %1682
+
+97:                                               ; preds = %94
+  %98 = sub i64 %4, %95
+  %99 = call i64 @llvm.smin.i64(i64 %98, i64 128)
+  br label %100
+
+100:                                              ; preds = %1678, %97
+  %101 = phi i64 [ %1679, %1678 ], [ 0, %97 ]
+  %102 = icmp slt i64 %101, %66
+  br i1 %102, label %103, label %1680
+
+103:                                              ; preds = %100
+  %104 = sub i64 %66, %101
+  %105 = call i64 @llvm.smin.i64(i64 %48, i64 %104)
+  %106 = call <vscale x 16 x i32> @llvm.stepvector.nxv16i32()
+  %107 = call i64 @llvm.smin.i64(i64 %105, i64 2147483647)
+  %108 = trunc i64 %107 to i32
+  %109 = insertelement <vscale x 16 x i32> poison, i32 %108, i32 0
+  %110 = shufflevector <vscale x 16 x i32> %109, <vscale x 16 x i32> poison, <vscale x 16 x i32> zeroinitializer
+  %111 = icmp slt <vscale x 16 x i32> %106, %110
+  br label %112
+
+112:                                              ; preds = %1676, %103
+  %113 = phi i64 [ %1677, %1676 ], [ 0, %103 ]
+  %114 = icmp slt i64 %113, %73
+  br i1 %114, label %115, label %1678
+
+115:                                              ; preds = %112
+  %116 = sub i64 %73, %113
+  %117 = call i64 @llvm.smin.i64(i64 %48, i64 %116)
+  %118 = mul nsw i64 %50, %19
+  %119 = add i64 %118, %56
+  %120 = mul nsw i64 %62, %19
+  %121 = add i64 %119, %120
+  %122 = add i64 %121, %69
+  %123 = mul nsw i64 %101, %19
+  %124 = add i64 %122, %123
+  %125 = add i64 %124, %113
+  %126 = call <vscale x 16 x i32> @llvm.stepvector.nxv16i32()
+  %127 = call i64 @llvm.smin.i64(i64 %117, i64 2147483647)
+  %128 = trunc i64 %127 to i32
+  %129 = insertelement <vscale x 16 x i32> poison, i32 %128, i32 0
+  %130 = shufflevector <vscale x 16 x i32> %129, <vscale x 16 x i32> poison, <vscale x 16 x i32> zeroinitializer
+  %131 = icmp slt <vscale x 16 x i32> %126, %130
+  br label %132
+
+132:                                              ; preds = %1674, %115
+  %133 = phi i64 [ %1675, %1674 ], [ 0, %115 ]
+  %134 = icmp slt i64 %133, %99
+  br i1 %134, label %135, label %1676
+
+135:                                              ; preds = %132
+  %136 = mul nsw i64 %67, %5
+  %137 = add i64 %136, %95
+  %138 = mul nsw i64 %101, %5
+  %139 = add i64 %137, %138
+  %140 = add i64 %139, %133
+  %141 = getelementptr float, ptr %1, i64 %140
+  %142 = mul i64 %5, 0
+  %143 = getelementptr float, ptr %141, i64 %142
+  call void @llvm.prefetch.p0(ptr %143, i32 0, i32 3, i32 1)
+  br label %144
+
+144:                                              ; preds = %156, %135
+  %145 = phi i64 [ %158, %156 ], [ 0, %135 ]
+  %146 = phi <vscale x 16 x float> [ %157, %156 ], [ poison, %135 ]
+  %147 = icmp slt i64 %145, %48
+  br i1 %147, label %148, label %159
+
+148:                                              ; preds = %144
+  %149 = extractelement <vscale x 16 x i1> %111, i64 %145
+  br i1 %149, label %150, label %156
+
+150:                                              ; preds = %148
+  %151 = getelementptr float, ptr %1, i64 %140
+  %152 = mul nsw i64 %145, %5
+  %153 = getelementptr inbounds float, ptr %151, i64 %152
+  %154 = load float, ptr %153, align 4
+  %155 = insertelement <vscale x 16 x float> %146, float %154, i64 %145
+  br label %156
+
+156:                                              ; preds = %150, %148
+  %157 = phi <vscale x 16 x float> [ %155, %150 ], [ %146, %148 ]
+  %158 = add i64 %145, 1
+  br label %144
+
+159:                                              ; preds = %144
+  %160 = mul nsw i64 %95, %12
+  %161 = add i64 %160, %74
+  %162 = mul nsw i64 %133, %12
+  %163 = add i64 %161, %162
+  %164 = add i64 %163, %113
+  %165 = getelementptr float, ptr %8, i64 %164
+  call void @llvm.prefetch.p0(ptr %165, i32 0, i32 3, i32 1)
+  %166 = getelementptr float, ptr %8, i64 %164
+  %167 = call <vscale x 16 x float> @llvm.masked.load.nxv16f32.p0(ptr align 4 %166, <vscale x 16 x i1> %131, <vscale x 16 x float> poison)
+  %168 = trunc i64 %117 to i32
+  br label %169
+
+169:                                              ; preds = %216, %159
+  %170 = phi i64 [ %217, %216 ], [ 0, %159 ]
+  %171 = icmp slt i64 %170, %23
+  br i1 %171, label %172, label %218
+
+172:                                              ; preds = %169
+  %173 = icmp slt i64 %170, %105
+  %174 = sext i1 %173 to i32
+  %175 = and i32 %174, %168
+  %176 = sext i32 %175 to i64
+  %177 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %178 = call i64 @llvm.smin.i64(i64 %176, i64 2147483647)
+  %179 = trunc i64 %178 to i32
+  %180 = insertelement <vscale x 4 x i32> poison, i32 %179, i32 0
+  %181 = shufflevector <vscale x 4 x i32> %180, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %182 = icmp slt <vscale x 4 x i32> %177, %181
+  %183 = getelementptr float, ptr %15, i64 %125
+  %184 = mul i64 %170, %19
+  %185 = add i64 %184, 0
+  %186 = getelementptr float, ptr %183, i64 %185
+  %187 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %186, <vscale x 4 x i1> %182, <vscale x 4 x float> poison)
+  br label %188
+
+188:                                              ; preds = %191, %172
+  %189 = phi i64 [ %200, %191 ], [ 0, %172 ]
+  %190 = icmp slt i64 %189, %23
+  br i1 %190, label %191, label %201
+
+191:                                              ; preds = %188
+  %192 = trunc i64 %189 to i32
+  %193 = mul i64 %189, %23
+  %194 = add i64 %193, 0
+  %195 = getelementptr float, ptr %47, i64 %194
+  %196 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %192)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %195, i32 0, i32 %192)
+  %197 = mul i64 %189, %23
+  %198 = add i64 %197, 0
+  %199 = getelementptr float, ptr %47, i64 %198
+  store <vscale x 4 x float> %196, ptr %199, align 4
+  %200 = add i64 %189, 1
+  br label %188
+
+201:                                              ; preds = %188
+  %202 = trunc i64 %170 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %202, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %187)
+  br label %203
+
+203:                                              ; preds = %206, %201
+  %204 = phi i64 [ %215, %206 ], [ 0, %201 ]
+  %205 = icmp slt i64 %204, %23
+  br i1 %205, label %206, label %216
+
+206:                                              ; preds = %203
+  %207 = trunc i64 %204 to i32
+  %208 = mul i64 %204, %23
+  %209 = add i64 %208, 0
+  %210 = getelementptr float, ptr %47, i64 %209
+  %211 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %207)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %210, i32 0, i32 %207)
+  %212 = mul i64 %204, %23
+  %213 = add i64 %212, 0
+  %214 = getelementptr float, ptr %47, i64 %213
+  store <vscale x 4 x float> %211, ptr %214, align 4
+  %215 = add i64 %204, 1
+  br label %203
+
+216:                                              ; preds = %203
+  %217 = add i64 %170, 1
+  br label %169
+
+218:                                              ; preds = %169
+  %219 = mul i64 %22, -4
+  %220 = add i64 %117, %219
+  %221 = trunc i64 %220 to i32
+  br label %222
+
+222:                                              ; preds = %269, %218
+  %223 = phi i64 [ %270, %269 ], [ 0, %218 ]
+  %224 = icmp slt i64 %223, %23
+  br i1 %224, label %225, label %271
+
+225:                                              ; preds = %222
+  %226 = icmp slt i64 %223, %105
+  %227 = sext i1 %226 to i32
+  %228 = and i32 %227, %221
+  %229 = sext i32 %228 to i64
+  %230 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %231 = call i64 @llvm.smin.i64(i64 %229, i64 2147483647)
+  %232 = trunc i64 %231 to i32
+  %233 = insertelement <vscale x 4 x i32> poison, i32 %232, i32 0
+  %234 = shufflevector <vscale x 4 x i32> %233, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %235 = icmp slt <vscale x 4 x i32> %230, %234
+  %236 = getelementptr float, ptr %15, i64 %125
+  %237 = mul i64 %223, %19
+  %238 = add i64 %237, %23
+  %239 = getelementptr float, ptr %236, i64 %238
+  %240 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %239, <vscale x 4 x i1> %235, <vscale x 4 x float> poison)
+  br label %241
+
+241:                                              ; preds = %244, %225
+  %242 = phi i64 [ %253, %244 ], [ 0, %225 ]
+  %243 = icmp slt i64 %242, %23
+  br i1 %243, label %244, label %254
+
+244:                                              ; preds = %241
+  %245 = trunc i64 %242 to i32
+  %246 = mul i64 %242, %23
+  %247 = add i64 %246, 0
+  %248 = getelementptr float, ptr %45, i64 %247
+  %249 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %245)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %248, i32 0, i32 %245)
+  %250 = mul i64 %242, %23
+  %251 = add i64 %250, 0
+  %252 = getelementptr float, ptr %45, i64 %251
+  store <vscale x 4 x float> %249, ptr %252, align 4
+  %253 = add i64 %242, 1
+  br label %241
+
+254:                                              ; preds = %241
+  %255 = trunc i64 %223 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %255, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %240)
+  br label %256
+
+256:                                              ; preds = %259, %254
+  %257 = phi i64 [ %268, %259 ], [ 0, %254 ]
+  %258 = icmp slt i64 %257, %23
+  br i1 %258, label %259, label %269
+
+259:                                              ; preds = %256
+  %260 = trunc i64 %257 to i32
+  %261 = mul i64 %257, %23
+  %262 = add i64 %261, 0
+  %263 = getelementptr float, ptr %45, i64 %262
+  %264 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %260)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %263, i32 0, i32 %260)
+  %265 = mul i64 %257, %23
+  %266 = add i64 %265, 0
+  %267 = getelementptr float, ptr %45, i64 %266
+  store <vscale x 4 x float> %264, ptr %267, align 4
+  %268 = add i64 %257, 1
+  br label %256
+
+269:                                              ; preds = %256
+  %270 = add i64 %223, 1
+  br label %222
+
+271:                                              ; preds = %222
+  %272 = mul i64 %22, -8
+  %273 = add i64 %117, %272
+  %274 = mul i64 %22, 8
+  %275 = trunc i64 %273 to i32
+  br label %276
+
+276:                                              ; preds = %323, %271
+  %277 = phi i64 [ %324, %323 ], [ 0, %271 ]
+  %278 = icmp slt i64 %277, %23
+  br i1 %278, label %279, label %325
+
+279:                                              ; preds = %276
+  %280 = icmp slt i64 %277, %105
+  %281 = sext i1 %280 to i32
+  %282 = and i32 %281, %275
+  %283 = sext i32 %282 to i64
+  %284 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %285 = call i64 @llvm.smin.i64(i64 %283, i64 2147483647)
+  %286 = trunc i64 %285 to i32
+  %287 = insertelement <vscale x 4 x i32> poison, i32 %286, i32 0
+  %288 = shufflevector <vscale x 4 x i32> %287, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %289 = icmp slt <vscale x 4 x i32> %284, %288
+  %290 = getelementptr float, ptr %15, i64 %125
+  %291 = mul i64 %277, %19
+  %292 = add i64 %291, %274
+  %293 = getelementptr float, ptr %290, i64 %292
+  %294 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %293, <vscale x 4 x i1> %289, <vscale x 4 x float> poison)
+  br label %295
+
+295:                                              ; preds = %298, %279
+  %296 = phi i64 [ %307, %298 ], [ 0, %279 ]
+  %297 = icmp slt i64 %296, %23
+  br i1 %297, label %298, label %308
+
+298:                                              ; preds = %295
+  %299 = trunc i64 %296 to i32
+  %300 = mul i64 %296, %23
+  %301 = add i64 %300, 0
+  %302 = getelementptr float, ptr %43, i64 %301
+  %303 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %299)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %302, i32 0, i32 %299)
+  %304 = mul i64 %296, %23
+  %305 = add i64 %304, 0
+  %306 = getelementptr float, ptr %43, i64 %305
+  store <vscale x 4 x float> %303, ptr %306, align 4
+  %307 = add i64 %296, 1
+  br label %295
+
+308:                                              ; preds = %295
+  %309 = trunc i64 %277 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %309, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %294)
+  br label %310
+
+310:                                              ; preds = %313, %308
+  %311 = phi i64 [ %322, %313 ], [ 0, %308 ]
+  %312 = icmp slt i64 %311, %23
+  br i1 %312, label %313, label %323
+
+313:                                              ; preds = %310
+  %314 = trunc i64 %311 to i32
+  %315 = mul i64 %311, %23
+  %316 = add i64 %315, 0
+  %317 = getelementptr float, ptr %43, i64 %316
+  %318 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %314)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %317, i32 0, i32 %314)
+  %319 = mul i64 %311, %23
+  %320 = add i64 %319, 0
+  %321 = getelementptr float, ptr %43, i64 %320
+  store <vscale x 4 x float> %318, ptr %321, align 4
+  %322 = add i64 %311, 1
+  br label %310
+
+323:                                              ; preds = %310
+  %324 = add i64 %277, 1
+  br label %276
+
+325:                                              ; preds = %276
+  %326 = mul i64 %22, -12
+  %327 = add i64 %117, %326
+  %328 = mul i64 %22, 12
+  %329 = trunc i64 %327 to i32
+  br label %330
+
+330:                                              ; preds = %377, %325
+  %331 = phi i64 [ %378, %377 ], [ 0, %325 ]
+  %332 = icmp slt i64 %331, %23
+  br i1 %332, label %333, label %379
+
+333:                                              ; preds = %330
+  %334 = icmp slt i64 %331, %105
+  %335 = sext i1 %334 to i32
+  %336 = and i32 %335, %329
+  %337 = sext i32 %336 to i64
+  %338 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %339 = call i64 @llvm.smin.i64(i64 %337, i64 2147483647)
+  %340 = trunc i64 %339 to i32
+  %341 = insertelement <vscale x 4 x i32> poison, i32 %340, i32 0
+  %342 = shufflevector <vscale x 4 x i32> %341, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %343 = icmp slt <vscale x 4 x i32> %338, %342
+  %344 = getelementptr float, ptr %15, i64 %125
+  %345 = mul i64 %331, %19
+  %346 = add i64 %345, %328
+  %347 = getelementptr float, ptr %344, i64 %346
+  %348 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %347, <vscale x 4 x i1> %343, <vscale x 4 x float> poison)
+  br label %349
+
+349:                                              ; preds = %352, %333
+  %350 = phi i64 [ %361, %352 ], [ 0, %333 ]
+  %351 = icmp slt i64 %350, %23
+  br i1 %351, label %352, label %362
+
+352:                                              ; preds = %349
+  %353 = trunc i64 %350 to i32
+  %354 = mul i64 %350, %23
+  %355 = add i64 %354, 0
+  %356 = getelementptr float, ptr %41, i64 %355
+  %357 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %353)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %356, i32 0, i32 %353)
+  %358 = mul i64 %350, %23
+  %359 = add i64 %358, 0
+  %360 = getelementptr float, ptr %41, i64 %359
+  store <vscale x 4 x float> %357, ptr %360, align 4
+  %361 = add i64 %350, 1
+  br label %349
+
+362:                                              ; preds = %349
+  %363 = trunc i64 %331 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %363, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %348)
+  br label %364
+
+364:                                              ; preds = %367, %362
+  %365 = phi i64 [ %376, %367 ], [ 0, %362 ]
+  %366 = icmp slt i64 %365, %23
+  br i1 %366, label %367, label %377
+
+367:                                              ; preds = %364
+  %368 = trunc i64 %365 to i32
+  %369 = mul i64 %365, %23
+  %370 = add i64 %369, 0
+  %371 = getelementptr float, ptr %41, i64 %370
+  %372 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %368)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %371, i32 0, i32 %368)
+  %373 = mul i64 %365, %23
+  %374 = add i64 %373, 0
+  %375 = getelementptr float, ptr %41, i64 %374
+  store <vscale x 4 x float> %372, ptr %375, align 4
+  %376 = add i64 %365, 1
+  br label %364
+
+377:                                              ; preds = %364
+  %378 = add i64 %331, 1
+  br label %330
+
+379:                                              ; preds = %330
+  %380 = add i64 %105, %219
+  br label %381
+
+381:                                              ; preds = %429, %379
+  %382 = phi i64 [ %430, %429 ], [ 0, %379 ]
+  %383 = icmp slt i64 %382, %23
+  br i1 %383, label %384, label %431
+
+384:                                              ; preds = %381
+  %385 = icmp slt i64 %382, %380
+  %386 = sext i1 %385 to i32
+  %387 = and i32 %386, %168
+  %388 = sext i32 %387 to i64
+  %389 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %390 = call i64 @llvm.smin.i64(i64 %388, i64 2147483647)
+  %391 = trunc i64 %390 to i32
+  %392 = insertelement <vscale x 4 x i32> poison, i32 %391, i32 0
+  %393 = shufflevector <vscale x 4 x i32> %392, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %394 = icmp slt <vscale x 4 x i32> %389, %393
+  %395 = add i64 %23, %382
+  %396 = getelementptr float, ptr %15, i64 %125
+  %397 = mul i64 %395, %19
+  %398 = add i64 %397, 0
+  %399 = getelementptr float, ptr %396, i64 %398
+  %400 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %399, <vscale x 4 x i1> %394, <vscale x 4 x float> poison)
+  br label %401
+
+401:                                              ; preds = %404, %384
+  %402 = phi i64 [ %413, %404 ], [ 0, %384 ]
+  %403 = icmp slt i64 %402, %23
+  br i1 %403, label %404, label %414
+
+404:                                              ; preds = %401
+  %405 = trunc i64 %402 to i32
+  %406 = mul i64 %402, %23
+  %407 = add i64 %406, 0
+  %408 = getelementptr float, ptr %39, i64 %407
+  %409 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %405)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %408, i32 0, i32 %405)
+  %410 = mul i64 %402, %23
+  %411 = add i64 %410, 0
+  %412 = getelementptr float, ptr %39, i64 %411
+  store <vscale x 4 x float> %409, ptr %412, align 4
+  %413 = add i64 %402, 1
+  br label %401
+
+414:                                              ; preds = %401
+  %415 = trunc i64 %382 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %415, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %400)
+  br label %416
+
+416:                                              ; preds = %419, %414
+  %417 = phi i64 [ %428, %419 ], [ 0, %414 ]
+  %418 = icmp slt i64 %417, %23
+  br i1 %418, label %419, label %429
+
+419:                                              ; preds = %416
+  %420 = trunc i64 %417 to i32
+  %421 = mul i64 %417, %23
+  %422 = add i64 %421, 0
+  %423 = getelementptr float, ptr %39, i64 %422
+  %424 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %420)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %423, i32 0, i32 %420)
+  %425 = mul i64 %417, %23
+  %426 = add i64 %425, 0
+  %427 = getelementptr float, ptr %39, i64 %426
+  store <vscale x 4 x float> %424, ptr %427, align 4
+  %428 = add i64 %417, 1
+  br label %416
+
+429:                                              ; preds = %416
+  %430 = add i64 %382, 1
+  br label %381
+
+431:                                              ; preds = %479, %381
+  %432 = phi i64 [ %480, %479 ], [ 0, %381 ]
+  %433 = icmp slt i64 %432, %23
+  br i1 %433, label %434, label %481
+
+434:                                              ; preds = %431
+  %435 = icmp slt i64 %432, %380
+  %436 = sext i1 %435 to i32
+  %437 = and i32 %436, %221
+  %438 = sext i32 %437 to i64
+  %439 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %440 = call i64 @llvm.smin.i64(i64 %438, i64 2147483647)
+  %441 = trunc i64 %440 to i32
+  %442 = insertelement <vscale x 4 x i32> poison, i32 %441, i32 0
+  %443 = shufflevector <vscale x 4 x i32> %442, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %444 = icmp slt <vscale x 4 x i32> %439, %443
+  %445 = add i64 %23, %432
+  %446 = getelementptr float, ptr %15, i64 %125
+  %447 = mul i64 %445, %19
+  %448 = add i64 %447, %23
+  %449 = getelementptr float, ptr %446, i64 %448
+  %450 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %449, <vscale x 4 x i1> %444, <vscale x 4 x float> poison)
+  br label %451
+
+451:                                              ; preds = %454, %434
+  %452 = phi i64 [ %463, %454 ], [ 0, %434 ]
+  %453 = icmp slt i64 %452, %23
+  br i1 %453, label %454, label %464
+
+454:                                              ; preds = %451
+  %455 = trunc i64 %452 to i32
+  %456 = mul i64 %452, %23
+  %457 = add i64 %456, 0
+  %458 = getelementptr float, ptr %37, i64 %457
+  %459 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %455)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %458, i32 0, i32 %455)
+  %460 = mul i64 %452, %23
+  %461 = add i64 %460, 0
+  %462 = getelementptr float, ptr %37, i64 %461
+  store <vscale x 4 x float> %459, ptr %462, align 4
+  %463 = add i64 %452, 1
+  br label %451
+
+464:                                              ; preds = %451
+  %465 = trunc i64 %432 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %465, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %450)
+  br label %466
+
+466:                                              ; preds = %469, %464
+  %467 = phi i64 [ %478, %469 ], [ 0, %464 ]
+  %468 = icmp slt i64 %467, %23
+  br i1 %468, label %469, label %479
+
+469:                                              ; preds = %466
+  %470 = trunc i64 %467 to i32
+  %471 = mul i64 %467, %23
+  %472 = add i64 %471, 0
+  %473 = getelementptr float, ptr %37, i64 %472
+  %474 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %470)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %473, i32 0, i32 %470)
+  %475 = mul i64 %467, %23
+  %476 = add i64 %475, 0
+  %477 = getelementptr float, ptr %37, i64 %476
+  store <vscale x 4 x float> %474, ptr %477, align 4
+  %478 = add i64 %467, 1
+  br label %466
+
+479:                                              ; preds = %466
+  %480 = add i64 %432, 1
+  br label %431
+
+481:                                              ; preds = %529, %431
+  %482 = phi i64 [ %530, %529 ], [ 0, %431 ]
+  %483 = icmp slt i64 %482, %23
+  br i1 %483, label %484, label %531
+
+484:                                              ; preds = %481
+  %485 = icmp slt i64 %482, %380
+  %486 = sext i1 %485 to i32
+  %487 = and i32 %486, %275
+  %488 = sext i32 %487 to i64
+  %489 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %490 = call i64 @llvm.smin.i64(i64 %488, i64 2147483647)
+  %491 = trunc i64 %490 to i32
+  %492 = insertelement <vscale x 4 x i32> poison, i32 %491, i32 0
+  %493 = shufflevector <vscale x 4 x i32> %492, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %494 = icmp slt <vscale x 4 x i32> %489, %493
+  %495 = add i64 %23, %482
+  %496 = getelementptr float, ptr %15, i64 %125
+  %497 = mul i64 %495, %19
+  %498 = add i64 %497, %274
+  %499 = getelementptr float, ptr %496, i64 %498
+  %500 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %499, <vscale x 4 x i1> %494, <vscale x 4 x float> poison)
+  br label %501
+
+501:                                              ; preds = %504, %484
+  %502 = phi i64 [ %513, %504 ], [ 0, %484 ]
+  %503 = icmp slt i64 %502, %23
+  br i1 %503, label %504, label %514
+
+504:                                              ; preds = %501
+  %505 = trunc i64 %502 to i32
+  %506 = mul i64 %502, %23
+  %507 = add i64 %506, 0
+  %508 = getelementptr float, ptr %35, i64 %507
+  %509 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %505)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %508, i32 0, i32 %505)
+  %510 = mul i64 %502, %23
+  %511 = add i64 %510, 0
+  %512 = getelementptr float, ptr %35, i64 %511
+  store <vscale x 4 x float> %509, ptr %512, align 4
+  %513 = add i64 %502, 1
+  br label %501
+
+514:                                              ; preds = %501
+  %515 = trunc i64 %482 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %515, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %500)
+  br label %516
+
+516:                                              ; preds = %519, %514
+  %517 = phi i64 [ %528, %519 ], [ 0, %514 ]
+  %518 = icmp slt i64 %517, %23
+  br i1 %518, label %519, label %529
+
+519:                                              ; preds = %516
+  %520 = trunc i64 %517 to i32
+  %521 = mul i64 %517, %23
+  %522 = add i64 %521, 0
+  %523 = getelementptr float, ptr %35, i64 %522
+  %524 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %520)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %523, i32 0, i32 %520)
+  %525 = mul i64 %517, %23
+  %526 = add i64 %525, 0
+  %527 = getelementptr float, ptr %35, i64 %526
+  store <vscale x 4 x float> %524, ptr %527, align 4
+  %528 = add i64 %517, 1
+  br label %516
+
+529:                                              ; preds = %516
+  %530 = add i64 %482, 1
+  br label %481
+
+531:                                              ; preds = %579, %481
+  %532 = phi i64 [ %580, %579 ], [ 0, %481 ]
+  %533 = icmp slt i64 %532, %23
+  br i1 %533, label %534, label %581
+
+534:                                              ; preds = %531
+  %535 = icmp slt i64 %532, %380
+  %536 = sext i1 %535 to i32
+  %537 = and i32 %536, %329
+  %538 = sext i32 %537 to i64
+  %539 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %540 = call i64 @llvm.smin.i64(i64 %538, i64 2147483647)
+  %541 = trunc i64 %540 to i32
+  %542 = insertelement <vscale x 4 x i32> poison, i32 %541, i32 0
+  %543 = shufflevector <vscale x 4 x i32> %542, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %544 = icmp slt <vscale x 4 x i32> %539, %543
+  %545 = add i64 %23, %532
+  %546 = getelementptr float, ptr %15, i64 %125
+  %547 = mul i64 %545, %19
+  %548 = add i64 %547, %328
+  %549 = getelementptr float, ptr %546, i64 %548
+  %550 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %549, <vscale x 4 x i1> %544, <vscale x 4 x float> poison)
+  br label %551
+
+551:                                              ; preds = %554, %534
+  %552 = phi i64 [ %563, %554 ], [ 0, %534 ]
+  %553 = icmp slt i64 %552, %23
+  br i1 %553, label %554, label %564
+
+554:                                              ; preds = %551
+  %555 = trunc i64 %552 to i32
+  %556 = mul i64 %552, %23
+  %557 = add i64 %556, 0
+  %558 = getelementptr float, ptr %33, i64 %557
+  %559 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %555)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %558, i32 0, i32 %555)
+  %560 = mul i64 %552, %23
+  %561 = add i64 %560, 0
+  %562 = getelementptr float, ptr %33, i64 %561
+  store <vscale x 4 x float> %559, ptr %562, align 4
+  %563 = add i64 %552, 1
+  br label %551
+
+564:                                              ; preds = %551
+  %565 = trunc i64 %532 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %565, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %550)
+  br label %566
+
+566:                                              ; preds = %569, %564
+  %567 = phi i64 [ %578, %569 ], [ 0, %564 ]
+  %568 = icmp slt i64 %567, %23
+  br i1 %568, label %569, label %579
+
+569:                                              ; preds = %566
+  %570 = trunc i64 %567 to i32
+  %571 = mul i64 %567, %23
+  %572 = add i64 %571, 0
+  %573 = getelementptr float, ptr %33, i64 %572
+  %574 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %570)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %573, i32 0, i32 %570)
+  %575 = mul i64 %567, %23
+  %576 = add i64 %575, 0
+  %577 = getelementptr float, ptr %33, i64 %576
+  store <vscale x 4 x float> %574, ptr %577, align 4
+  %578 = add i64 %567, 1
+  br label %566
+
+579:                                              ; preds = %566
+  %580 = add i64 %532, 1
+  br label %531
+
+581:                                              ; preds = %531
+  %582 = add i64 %105, %272
+  br label %583
+
+583:                                              ; preds = %631, %581
+  %584 = phi i64 [ %632, %631 ], [ 0, %581 ]
+  %585 = icmp slt i64 %584, %23
+  br i1 %585, label %586, label %633
+
+586:                                              ; preds = %583
+  %587 = icmp slt i64 %584, %582
+  %588 = sext i1 %587 to i32
+  %589 = and i32 %588, %168
+  %590 = sext i32 %589 to i64
+  %591 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %592 = call i64 @llvm.smin.i64(i64 %590, i64 2147483647)
+  %593 = trunc i64 %592 to i32
+  %594 = insertelement <vscale x 4 x i32> poison, i32 %593, i32 0
+  %595 = shufflevector <vscale x 4 x i32> %594, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %596 = icmp slt <vscale x 4 x i32> %591, %595
+  %597 = add i64 %274, %584
+  %598 = getelementptr float, ptr %15, i64 %125
+  %599 = mul i64 %597, %19
+  %600 = add i64 %599, 0
+  %601 = getelementptr float, ptr %598, i64 %600
+  %602 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %601, <vscale x 4 x i1> %596, <vscale x 4 x float> poison)
+  br label %603
+
+603:                                              ; preds = %606, %586
+  %604 = phi i64 [ %615, %606 ], [ 0, %586 ]
+  %605 = icmp slt i64 %604, %23
+  br i1 %605, label %606, label %616
+
+606:                                              ; preds = %603
+  %607 = trunc i64 %604 to i32
+  %608 = mul i64 %604, %23
+  %609 = add i64 %608, 0
+  %610 = getelementptr float, ptr %31, i64 %609
+  %611 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %607)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %610, i32 0, i32 %607)
+  %612 = mul i64 %604, %23
+  %613 = add i64 %612, 0
+  %614 = getelementptr float, ptr %31, i64 %613
+  store <vscale x 4 x float> %611, ptr %614, align 4
+  %615 = add i64 %604, 1
+  br label %603
+
+616:                                              ; preds = %603
+  %617 = trunc i64 %584 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %617, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %602)
+  br label %618
+
+618:                                              ; preds = %621, %616
+  %619 = phi i64 [ %630, %621 ], [ 0, %616 ]
+  %620 = icmp slt i64 %619, %23
+  br i1 %620, label %621, label %631
+
+621:                                              ; preds = %618
+  %622 = trunc i64 %619 to i32
+  %623 = mul i64 %619, %23
+  %624 = add i64 %623, 0
+  %625 = getelementptr float, ptr %31, i64 %624
+  %626 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %622)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %625, i32 0, i32 %622)
+  %627 = mul i64 %619, %23
+  %628 = add i64 %627, 0
+  %629 = getelementptr float, ptr %31, i64 %628
+  store <vscale x 4 x float> %626, ptr %629, align 4
+  %630 = add i64 %619, 1
+  br label %618
+
+631:                                              ; preds = %618
+  %632 = add i64 %584, 1
+  br label %583
+
+633:                                              ; preds = %681, %583
+  %634 = phi i64 [ %682, %681 ], [ 0, %583 ]
+  %635 = icmp slt i64 %634, %23
+  br i1 %635, label %636, label %683
+
+636:                                              ; preds = %633
+  %637 = icmp slt i64 %634, %582
+  %638 = sext i1 %637 to i32
+  %639 = and i32 %638, %221
+  %640 = sext i32 %639 to i64
+  %641 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %642 = call i64 @llvm.smin.i64(i64 %640, i64 2147483647)
+  %643 = trunc i64 %642 to i32
+  %644 = insertelement <vscale x 4 x i32> poison, i32 %643, i32 0
+  %645 = shufflevector <vscale x 4 x i32> %644, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %646 = icmp slt <vscale x 4 x i32> %641, %645
+  %647 = add i64 %274, %634
+  %648 = getelementptr float, ptr %15, i64 %125
+  %649 = mul i64 %647, %19
+  %650 = add i64 %649, %23
+  %651 = getelementptr float, ptr %648, i64 %650
+  %652 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %651, <vscale x 4 x i1> %646, <vscale x 4 x float> poison)
+  br label %653
+
+653:                                              ; preds = %656, %636
+  %654 = phi i64 [ %665, %656 ], [ 0, %636 ]
+  %655 = icmp slt i64 %654, %23
+  br i1 %655, label %656, label %666
+
+656:                                              ; preds = %653
+  %657 = trunc i64 %654 to i32
+  %658 = mul i64 %654, %23
+  %659 = add i64 %658, 0
+  %660 = getelementptr float, ptr %29, i64 %659
+  %661 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %657)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %660, i32 0, i32 %657)
+  %662 = mul i64 %654, %23
+  %663 = add i64 %662, 0
+  %664 = getelementptr float, ptr %29, i64 %663
+  store <vscale x 4 x float> %661, ptr %664, align 4
+  %665 = add i64 %654, 1
+  br label %653
+
+666:                                              ; preds = %653
+  %667 = trunc i64 %634 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %667, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %652)
+  br label %668
+
+668:                                              ; preds = %671, %666
+  %669 = phi i64 [ %680, %671 ], [ 0, %666 ]
+  %670 = icmp slt i64 %669, %23
+  br i1 %670, label %671, label %681
+
+671:                                              ; preds = %668
+  %672 = trunc i64 %669 to i32
+  %673 = mul i64 %669, %23
+  %674 = add i64 %673, 0
+  %675 = getelementptr float, ptr %29, i64 %674
+  %676 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %672)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %675, i32 0, i32 %672)
+  %677 = mul i64 %669, %23
+  %678 = add i64 %677, 0
+  %679 = getelementptr float, ptr %29, i64 %678
+  store <vscale x 4 x float> %676, ptr %679, align 4
+  %680 = add i64 %669, 1
+  br label %668
+
+681:                                              ; preds = %668
+  %682 = add i64 %634, 1
+  br label %633
+
+683:                                              ; preds = %731, %633
+  %684 = phi i64 [ %732, %731 ], [ 0, %633 ]
+  %685 = icmp slt i64 %684, %23
+  br i1 %685, label %686, label %733
+
+686:                                              ; preds = %683
+  %687 = icmp slt i64 %684, %582
+  %688 = sext i1 %687 to i32
+  %689 = and i32 %688, %275
+  %690 = sext i32 %689 to i64
+  %691 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %692 = call i64 @llvm.smin.i64(i64 %690, i64 2147483647)
+  %693 = trunc i64 %692 to i32
+  %694 = insertelement <vscale x 4 x i32> poison, i32 %693, i32 0
+  %695 = shufflevector <vscale x 4 x i32> %694, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %696 = icmp slt <vscale x 4 x i32> %691, %695
+  %697 = add i64 %274, %684
+  %698 = getelementptr float, ptr %15, i64 %125
+  %699 = mul i64 %697, %19
+  %700 = add i64 %699, %274
+  %701 = getelementptr float, ptr %698, i64 %700
+  %702 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %701, <vscale x 4 x i1> %696, <vscale x 4 x float> poison)
+  br label %703
+
+703:                                              ; preds = %706, %686
+  %704 = phi i64 [ %715, %706 ], [ 0, %686 ]
+  %705 = icmp slt i64 %704, %23
+  br i1 %705, label %706, label %716
+
+706:                                              ; preds = %703
+  %707 = trunc i64 %704 to i32
+  %708 = mul i64 %704, %23
+  %709 = add i64 %708, 0
+  %710 = getelementptr float, ptr %27, i64 %709
+  %711 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %707)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %710, i32 0, i32 %707)
+  %712 = mul i64 %704, %23
+  %713 = add i64 %712, 0
+  %714 = getelementptr float, ptr %27, i64 %713
+  store <vscale x 4 x float> %711, ptr %714, align 4
+  %715 = add i64 %704, 1
+  br label %703
+
+716:                                              ; preds = %703
+  %717 = trunc i64 %684 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %717, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %702)
+  br label %718
+
+718:                                              ; preds = %721, %716
+  %719 = phi i64 [ %730, %721 ], [ 0, %716 ]
+  %720 = icmp slt i64 %719, %23
+  br i1 %720, label %721, label %731
+
+721:                                              ; preds = %718
+  %722 = trunc i64 %719 to i32
+  %723 = mul i64 %719, %23
+  %724 = add i64 %723, 0
+  %725 = getelementptr float, ptr %27, i64 %724
+  %726 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %722)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %725, i32 0, i32 %722)
+  %727 = mul i64 %719, %23
+  %728 = add i64 %727, 0
+  %729 = getelementptr float, ptr %27, i64 %728
+  store <vscale x 4 x float> %726, ptr %729, align 4
+  %730 = add i64 %719, 1
+  br label %718
+
+731:                                              ; preds = %718
+  %732 = add i64 %684, 1
+  br label %683
+
+733:                                              ; preds = %781, %683
+  %734 = phi i64 [ %782, %781 ], [ 0, %683 ]
+  %735 = icmp slt i64 %734, %23
+  br i1 %735, label %736, label %783
+
+736:                                              ; preds = %733
+  %737 = icmp slt i64 %734, %582
+  %738 = sext i1 %737 to i32
+  %739 = and i32 %738, %329
+  %740 = sext i32 %739 to i64
+  %741 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %742 = call i64 @llvm.smin.i64(i64 %740, i64 2147483647)
+  %743 = trunc i64 %742 to i32
+  %744 = insertelement <vscale x 4 x i32> poison, i32 %743, i32 0
+  %745 = shufflevector <vscale x 4 x i32> %744, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %746 = icmp slt <vscale x 4 x i32> %741, %745
+  %747 = add i64 %274, %734
+  %748 = getelementptr float, ptr %15, i64 %125
+  %749 = mul i64 %747, %19
+  %750 = add i64 %749, %328
+  %751 = getelementptr float, ptr %748, i64 %750
+  %752 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %751, <vscale x 4 x i1> %746, <vscale x 4 x float> poison)
+  br label %753
+
+753:                                              ; preds = %756, %736
+  %754 = phi i64 [ %765, %756 ], [ 0, %736 ]
+  %755 = icmp slt i64 %754, %23
+  br i1 %755, label %756, label %766
+
+756:                                              ; preds = %753
+  %757 = trunc i64 %754 to i32
+  %758 = mul i64 %754, %23
+  %759 = add i64 %758, 0
+  %760 = getelementptr float, ptr %25, i64 %759
+  %761 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %757)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %760, i32 0, i32 %757)
+  %762 = mul i64 %754, %23
+  %763 = add i64 %762, 0
+  %764 = getelementptr float, ptr %25, i64 %763
+  store <vscale x 4 x float> %761, ptr %764, align 4
+  %765 = add i64 %754, 1
+  br label %753
+
+766:                                              ; preds = %753
+  %767 = trunc i64 %734 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %767, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %752)
+  br label %768
+
+768:                                              ; preds = %771, %766
+  %769 = phi i64 [ %780, %771 ], [ 0, %766 ]
+  %770 = icmp slt i64 %769, %23
+  br i1 %770, label %771, label %781
+
+771:                                              ; preds = %768
+  %772 = trunc i64 %769 to i32
+  %773 = mul i64 %769, %23
+  %774 = add i64 %773, 0
+  %775 = getelementptr float, ptr %25, i64 %774
+  %776 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %772)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %775, i32 0, i32 %772)
+  %777 = mul i64 %769, %23
+  %778 = add i64 %777, 0
+  %779 = getelementptr float, ptr %25, i64 %778
+  store <vscale x 4 x float> %776, ptr %779, align 4
+  %780 = add i64 %769, 1
+  br label %768
+
+781:                                              ; preds = %768
+  %782 = add i64 %734, 1
+  br label %733
+
+783:                                              ; preds = %733
+  %784 = add i64 %105, %326
+  br label %785
+
+785:                                              ; preds = %788, %783
+  %786 = phi i64 [ %806, %788 ], [ 0, %783 ]
+  %787 = icmp slt i64 %786, %23
+  br i1 %787, label %788, label %807
+
+788:                                              ; preds = %785
+  %789 = icmp slt i64 %786, %784
+  %790 = sext i1 %789 to i32
+  %791 = and i32 %790, %168
+  %792 = sext i32 %791 to i64
+  %793 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %794 = call i64 @llvm.smin.i64(i64 %792, i64 2147483647)
+  %795 = trunc i64 %794 to i32
+  %796 = insertelement <vscale x 4 x i32> poison, i32 %795, i32 0
+  %797 = shufflevector <vscale x 4 x i32> %796, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %798 = icmp slt <vscale x 4 x i32> %793, %797
+  %799 = add i64 %328, %786
+  %800 = getelementptr float, ptr %15, i64 %125
+  %801 = mul i64 %799, %19
+  %802 = add i64 %801, 0
+  %803 = getelementptr float, ptr %800, i64 %802
+  %804 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %803, <vscale x 4 x i1> %798, <vscale x 4 x float> poison)
+  %805 = trunc i64 %786 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 0, i32 %805, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %804)
+  %806 = add i64 %786, 1
+  br label %785
+
+807:                                              ; preds = %810, %785
+  %808 = phi i64 [ %828, %810 ], [ 0, %785 ]
+  %809 = icmp slt i64 %808, %23
+  br i1 %809, label %810, label %829
+
+810:                                              ; preds = %807
+  %811 = icmp slt i64 %808, %784
+  %812 = sext i1 %811 to i32
+  %813 = and i32 %812, %221
+  %814 = sext i32 %813 to i64
+  %815 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %816 = call i64 @llvm.smin.i64(i64 %814, i64 2147483647)
+  %817 = trunc i64 %816 to i32
+  %818 = insertelement <vscale x 4 x i32> poison, i32 %817, i32 0
+  %819 = shufflevector <vscale x 4 x i32> %818, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %820 = icmp slt <vscale x 4 x i32> %815, %819
+  %821 = add i64 %328, %808
+  %822 = getelementptr float, ptr %15, i64 %125
+  %823 = mul i64 %821, %19
+  %824 = add i64 %823, %23
+  %825 = getelementptr float, ptr %822, i64 %824
+  %826 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %825, <vscale x 4 x i1> %820, <vscale x 4 x float> poison)
+  %827 = trunc i64 %808 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 1, i32 %827, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %826)
+  %828 = add i64 %808, 1
+  br label %807
+
+829:                                              ; preds = %832, %807
+  %830 = phi i64 [ %850, %832 ], [ 0, %807 ]
+  %831 = icmp slt i64 %830, %23
+  br i1 %831, label %832, label %851
+
+832:                                              ; preds = %829
+  %833 = icmp slt i64 %830, %784
+  %834 = sext i1 %833 to i32
+  %835 = and i32 %834, %275
+  %836 = sext i32 %835 to i64
+  %837 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %838 = call i64 @llvm.smin.i64(i64 %836, i64 2147483647)
+  %839 = trunc i64 %838 to i32
+  %840 = insertelement <vscale x 4 x i32> poison, i32 %839, i32 0
+  %841 = shufflevector <vscale x 4 x i32> %840, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %842 = icmp slt <vscale x 4 x i32> %837, %841
+  %843 = add i64 %328, %830
+  %844 = getelementptr float, ptr %15, i64 %125
+  %845 = mul i64 %843, %19
+  %846 = add i64 %845, %274
+  %847 = getelementptr float, ptr %844, i64 %846
+  %848 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %847, <vscale x 4 x i1> %842, <vscale x 4 x float> poison)
+  %849 = trunc i64 %830 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 2, i32 %849, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %848)
+  %850 = add i64 %830, 1
+  br label %829
+
+851:                                              ; preds = %854, %829
+  %852 = phi i64 [ %872, %854 ], [ 0, %829 ]
+  %853 = icmp slt i64 %852, %23
+  br i1 %853, label %854, label %873
+
+854:                                              ; preds = %851
+  %855 = icmp slt i64 %852, %784
+  %856 = sext i1 %855 to i32
+  %857 = and i32 %856, %329
+  %858 = sext i32 %857 to i64
+  %859 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %860 = call i64 @llvm.smin.i64(i64 %858, i64 2147483647)
+  %861 = trunc i64 %860 to i32
+  %862 = insertelement <vscale x 4 x i32> poison, i32 %861, i32 0
+  %863 = shufflevector <vscale x 4 x i32> %862, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %864 = icmp slt <vscale x 4 x i32> %859, %863
+  %865 = add i64 %328, %852
+  %866 = getelementptr float, ptr %15, i64 %125
+  %867 = mul i64 %865, %19
+  %868 = add i64 %867, %328
+  %869 = getelementptr float, ptr %866, i64 %868
+  %870 = call <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr align 4 %869, <vscale x 4 x i1> %864, <vscale x 4 x float> poison)
+  %871 = trunc i64 %852 to i32
+  call void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 3, i32 %871, <vscale x 4 x i1> splat (i1 true), <vscale x 4 x float> %870)
+  %872 = add i64 %852, 1
+  br label %851
+
+873:                                              ; preds = %851
+  %874 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %146, i64 0)
+  %875 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %167, i64 0)
+  %876 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %877 = call i64 @llvm.smin.i64(i64 %105, i64 2147483647)
+  %878 = trunc i64 %877 to i32
+  %879 = insertelement <vscale x 4 x i32> poison, i32 %878, i32 0
+  %880 = shufflevector <vscale x 4 x i32> %879, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %881 = icmp slt <vscale x 4 x i32> %876, %880
+  %882 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %883 = call i64 @llvm.smin.i64(i64 %117, i64 2147483647)
+  %884 = trunc i64 %883 to i32
+  %885 = insertelement <vscale x 4 x i32> poison, i32 %884, i32 0
+  %886 = shufflevector <vscale x 4 x i32> %885, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %887 = icmp slt <vscale x 4 x i32> %882, %886
+  br label %888
+
+888:                                              ; preds = %891, %873
+  %889 = phi i64 [ %900, %891 ], [ 0, %873 ]
+  %890 = icmp slt i64 %889, %23
+  br i1 %890, label %891, label %901
+
+891:                                              ; preds = %888
+  %892 = trunc i64 %889 to i32
+  %893 = mul i64 %889, %23
   %894 = add i64 %893, 0
-  %895 = getelementptr float, ptr %54, i64 %894
-  store <vscale x 4 x float> %892, ptr %895, align 4
-  %896 = add i64 %885, 1
-  br label %884
+  %895 = getelementptr float, ptr %47, i64 %894
+  %896 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %892)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %895, i32 0, i32 %892)
+  %897 = mul i64 %889, %23
+  %898 = add i64 %897, 0
+  %899 = getelementptr float, ptr %47, i64 %898
+  store <vscale x 4 x float> %896, ptr %899, align 4
+  %900 = add i64 %889, 1
+  br label %888
 
-897:                                              ; preds = %884
-  %898 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %120, i64 4)
-  %899 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %900 = call i64 @llvm.smin.i64(i64 %187, i64 2147483647)
-  %901 = trunc i64 %900 to i32
-  %902 = insertelement <vscale x 4 x i32> poison, i32 %901, i32 0
-  %903 = shufflevector <vscale x 4 x i32> %902, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %904 = icmp slt <vscale x 4 x i32> %899, %903
-  br label %905
+901:                                              ; preds = %888
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %881, <vscale x 4 x i1> %887, <vscale x 4 x float> %874, <vscale x 4 x float> %875)
+  br label %902
 
-905:                                              ; preds = %908, %897
-  %906 = phi i64 [ %917, %908 ], [ 0, %897 ]
-  %907 = icmp slt i64 %906, %30
-  br i1 %907, label %908, label %918
+902:                                              ; preds = %905, %901
+  %903 = phi i64 [ %914, %905 ], [ 0, %901 ]
+  %904 = icmp slt i64 %903, %23
+  br i1 %904, label %905, label %915
 
-908:                                              ; preds = %905
-  %909 = trunc i64 %906 to i32
-  %910 = mul i64 %906, %30
-  %911 = add i64 %910, 0
-  %912 = getelementptr float, ptr %52, i64 %911
-  %913 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %909)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %912, i32 0, i32 %909)
-  %914 = mul i64 %906, %30
-  %915 = add i64 %914, 0
-  %916 = getelementptr float, ptr %52, i64 %915
-  store <vscale x 4 x float> %913, ptr %916, align 4
-  %917 = add i64 %906, 1
-  br label %905
+905:                                              ; preds = %902
+  %906 = trunc i64 %903 to i32
+  %907 = mul i64 %903, %23
+  %908 = add i64 %907, 0
+  %909 = getelementptr float, ptr %47, i64 %908
+  %910 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %906)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %909, i32 0, i32 %906)
+  %911 = mul i64 %903, %23
+  %912 = add i64 %911, 0
+  %913 = getelementptr float, ptr %47, i64 %912
+  store <vscale x 4 x float> %910, ptr %913, align 4
+  %914 = add i64 %903, 1
+  br label %902
 
-918:                                              ; preds = %905
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %863, <vscale x 4 x i1> %904, <vscale x 4 x float> %856, <vscale x 4 x float> %898)
-  br label %919
+915:                                              ; preds = %902
+  %916 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %167, i64 4)
+  %917 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %918 = call i64 @llvm.smin.i64(i64 %220, i64 2147483647)
+  %919 = trunc i64 %918 to i32
+  %920 = insertelement <vscale x 4 x i32> poison, i32 %919, i32 0
+  %921 = shufflevector <vscale x 4 x i32> %920, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %922 = icmp slt <vscale x 4 x i32> %917, %921
+  br label %923
 
-919:                                              ; preds = %922, %918
-  %920 = phi i64 [ %931, %922 ], [ 0, %918 ]
-  %921 = icmp slt i64 %920, %30
-  br i1 %921, label %922, label %932
+923:                                              ; preds = %926, %915
+  %924 = phi i64 [ %935, %926 ], [ 0, %915 ]
+  %925 = icmp slt i64 %924, %23
+  br i1 %925, label %926, label %936
 
-922:                                              ; preds = %919
-  %923 = trunc i64 %920 to i32
-  %924 = mul i64 %920, %30
-  %925 = add i64 %924, 0
-  %926 = getelementptr float, ptr %52, i64 %925
-  %927 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %923)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %926, i32 0, i32 %923)
-  %928 = mul i64 %920, %30
+926:                                              ; preds = %923
+  %927 = trunc i64 %924 to i32
+  %928 = mul i64 %924, %23
   %929 = add i64 %928, 0
-  %930 = getelementptr float, ptr %52, i64 %929
-  store <vscale x 4 x float> %927, ptr %930, align 4
-  %931 = add i64 %920, 1
-  br label %919
+  %930 = getelementptr float, ptr %45, i64 %929
+  %931 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %927)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %930, i32 0, i32 %927)
+  %932 = mul i64 %924, %23
+  %933 = add i64 %932, 0
+  %934 = getelementptr float, ptr %45, i64 %933
+  store <vscale x 4 x float> %931, ptr %934, align 4
+  %935 = add i64 %924, 1
+  br label %923
 
-932:                                              ; preds = %919
-  %933 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %120, i64 8)
-  %934 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %935 = call i64 @llvm.smin.i64(i64 %241, i64 2147483647)
-  %936 = trunc i64 %935 to i32
-  %937 = insertelement <vscale x 4 x i32> poison, i32 %936, i32 0
-  %938 = shufflevector <vscale x 4 x i32> %937, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %939 = icmp slt <vscale x 4 x i32> %934, %938
-  br label %940
+936:                                              ; preds = %923
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %881, <vscale x 4 x i1> %922, <vscale x 4 x float> %874, <vscale x 4 x float> %916)
+  br label %937
 
-940:                                              ; preds = %943, %932
-  %941 = phi i64 [ %952, %943 ], [ 0, %932 ]
-  %942 = icmp slt i64 %941, %30
-  br i1 %942, label %943, label %953
+937:                                              ; preds = %940, %936
+  %938 = phi i64 [ %949, %940 ], [ 0, %936 ]
+  %939 = icmp slt i64 %938, %23
+  br i1 %939, label %940, label %950
 
-943:                                              ; preds = %940
-  %944 = trunc i64 %941 to i32
-  %945 = mul i64 %941, %30
-  %946 = add i64 %945, 0
-  %947 = getelementptr float, ptr %50, i64 %946
-  %948 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %944)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %947, i32 0, i32 %944)
-  %949 = mul i64 %941, %30
-  %950 = add i64 %949, 0
-  %951 = getelementptr float, ptr %50, i64 %950
-  store <vscale x 4 x float> %948, ptr %951, align 4
-  %952 = add i64 %941, 1
-  br label %940
+940:                                              ; preds = %937
+  %941 = trunc i64 %938 to i32
+  %942 = mul i64 %938, %23
+  %943 = add i64 %942, 0
+  %944 = getelementptr float, ptr %45, i64 %943
+  %945 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %941)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %944, i32 0, i32 %941)
+  %946 = mul i64 %938, %23
+  %947 = add i64 %946, 0
+  %948 = getelementptr float, ptr %45, i64 %947
+  store <vscale x 4 x float> %945, ptr %948, align 4
+  %949 = add i64 %938, 1
+  br label %937
 
-953:                                              ; preds = %940
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %863, <vscale x 4 x i1> %939, <vscale x 4 x float> %856, <vscale x 4 x float> %933)
-  br label %954
+950:                                              ; preds = %937
+  %951 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %167, i64 8)
+  %952 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %953 = call i64 @llvm.smin.i64(i64 %273, i64 2147483647)
+  %954 = trunc i64 %953 to i32
+  %955 = insertelement <vscale x 4 x i32> poison, i32 %954, i32 0
+  %956 = shufflevector <vscale x 4 x i32> %955, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %957 = icmp slt <vscale x 4 x i32> %952, %956
+  br label %958
 
-954:                                              ; preds = %957, %953
-  %955 = phi i64 [ %966, %957 ], [ 0, %953 ]
-  %956 = icmp slt i64 %955, %30
-  br i1 %956, label %957, label %967
+958:                                              ; preds = %961, %950
+  %959 = phi i64 [ %970, %961 ], [ 0, %950 ]
+  %960 = icmp slt i64 %959, %23
+  br i1 %960, label %961, label %971
 
-957:                                              ; preds = %954
-  %958 = trunc i64 %955 to i32
-  %959 = mul i64 %955, %30
-  %960 = add i64 %959, 0
-  %961 = getelementptr float, ptr %50, i64 %960
-  %962 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %958)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %961, i32 0, i32 %958)
-  %963 = mul i64 %955, %30
+961:                                              ; preds = %958
+  %962 = trunc i64 %959 to i32
+  %963 = mul i64 %959, %23
   %964 = add i64 %963, 0
-  %965 = getelementptr float, ptr %50, i64 %964
-  store <vscale x 4 x float> %962, ptr %965, align 4
-  %966 = add i64 %955, 1
-  br label %954
+  %965 = getelementptr float, ptr %43, i64 %964
+  %966 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %962)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %965, i32 0, i32 %962)
+  %967 = mul i64 %959, %23
+  %968 = add i64 %967, 0
+  %969 = getelementptr float, ptr %43, i64 %968
+  store <vscale x 4 x float> %966, ptr %969, align 4
+  %970 = add i64 %959, 1
+  br label %958
 
-967:                                              ; preds = %954
-  %968 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %120, i64 12)
-  %969 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %970 = call i64 @llvm.smin.i64(i64 %296, i64 2147483647)
-  %971 = trunc i64 %970 to i32
-  %972 = insertelement <vscale x 4 x i32> poison, i32 %971, i32 0
-  %973 = shufflevector <vscale x 4 x i32> %972, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %974 = icmp slt <vscale x 4 x i32> %969, %973
-  br label %975
+971:                                              ; preds = %958
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %881, <vscale x 4 x i1> %957, <vscale x 4 x float> %874, <vscale x 4 x float> %951)
+  br label %972
 
-975:                                              ; preds = %978, %967
-  %976 = phi i64 [ %987, %978 ], [ 0, %967 ]
-  %977 = icmp slt i64 %976, %30
-  br i1 %977, label %978, label %988
+972:                                              ; preds = %975, %971
+  %973 = phi i64 [ %984, %975 ], [ 0, %971 ]
+  %974 = icmp slt i64 %973, %23
+  br i1 %974, label %975, label %985
 
-978:                                              ; preds = %975
-  %979 = trunc i64 %976 to i32
-  %980 = mul i64 %976, %30
-  %981 = add i64 %980, 0
-  %982 = getelementptr float, ptr %48, i64 %981
-  %983 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %979)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %982, i32 0, i32 %979)
-  %984 = mul i64 %976, %30
-  %985 = add i64 %984, 0
-  %986 = getelementptr float, ptr %48, i64 %985
-  store <vscale x 4 x float> %983, ptr %986, align 4
-  %987 = add i64 %976, 1
-  br label %975
+975:                                              ; preds = %972
+  %976 = trunc i64 %973 to i32
+  %977 = mul i64 %973, %23
+  %978 = add i64 %977, 0
+  %979 = getelementptr float, ptr %43, i64 %978
+  %980 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %976)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %979, i32 0, i32 %976)
+  %981 = mul i64 %973, %23
+  %982 = add i64 %981, 0
+  %983 = getelementptr float, ptr %43, i64 %982
+  store <vscale x 4 x float> %980, ptr %983, align 4
+  %984 = add i64 %973, 1
+  br label %972
 
-988:                                              ; preds = %975
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %863, <vscale x 4 x i1> %974, <vscale x 4 x float> %856, <vscale x 4 x float> %968)
-  br label %989
+985:                                              ; preds = %972
+  %986 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %167, i64 12)
+  %987 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %988 = call i64 @llvm.smin.i64(i64 %327, i64 2147483647)
+  %989 = trunc i64 %988 to i32
+  %990 = insertelement <vscale x 4 x i32> poison, i32 %989, i32 0
+  %991 = shufflevector <vscale x 4 x i32> %990, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %992 = icmp slt <vscale x 4 x i32> %987, %991
+  br label %993
 
-989:                                              ; preds = %992, %988
-  %990 = phi i64 [ %1001, %992 ], [ 0, %988 ]
-  %991 = icmp slt i64 %990, %30
-  br i1 %991, label %992, label %1002
+993:                                              ; preds = %996, %985
+  %994 = phi i64 [ %1005, %996 ], [ 0, %985 ]
+  %995 = icmp slt i64 %994, %23
+  br i1 %995, label %996, label %1006
 
-992:                                              ; preds = %989
-  %993 = trunc i64 %990 to i32
-  %994 = mul i64 %990, %30
-  %995 = add i64 %994, 0
-  %996 = getelementptr float, ptr %48, i64 %995
-  %997 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %993)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %996, i32 0, i32 %993)
-  %998 = mul i64 %990, %30
+996:                                              ; preds = %993
+  %997 = trunc i64 %994 to i32
+  %998 = mul i64 %994, %23
   %999 = add i64 %998, 0
-  %1000 = getelementptr float, ptr %48, i64 %999
-  store <vscale x 4 x float> %997, ptr %1000, align 4
-  %1001 = add i64 %990, 1
-  br label %989
+  %1000 = getelementptr float, ptr %41, i64 %999
+  %1001 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %997)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1000, i32 0, i32 %997)
+  %1002 = mul i64 %994, %23
+  %1003 = add i64 %1002, 0
+  %1004 = getelementptr float, ptr %41, i64 %1003
+  store <vscale x 4 x float> %1001, ptr %1004, align 4
+  %1005 = add i64 %994, 1
+  br label %993
 
-1002:                                             ; preds = %989
-  %1003 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %97, i64 4)
-  %1004 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %1005 = call i64 @llvm.smin.i64(i64 %350, i64 2147483647)
-  %1006 = trunc i64 %1005 to i32
-  %1007 = insertelement <vscale x 4 x i32> poison, i32 %1006, i32 0
-  %1008 = shufflevector <vscale x 4 x i32> %1007, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %1009 = icmp slt <vscale x 4 x i32> %1004, %1008
-  br label %1010
+1006:                                             ; preds = %993
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %881, <vscale x 4 x i1> %992, <vscale x 4 x float> %874, <vscale x 4 x float> %986)
+  br label %1007
 
-1010:                                             ; preds = %1013, %1002
-  %1011 = phi i64 [ %1022, %1013 ], [ 0, %1002 ]
-  %1012 = icmp slt i64 %1011, %30
-  br i1 %1012, label %1013, label %1023
+1007:                                             ; preds = %1010, %1006
+  %1008 = phi i64 [ %1019, %1010 ], [ 0, %1006 ]
+  %1009 = icmp slt i64 %1008, %23
+  br i1 %1009, label %1010, label %1020
 
-1013:                                             ; preds = %1010
-  %1014 = trunc i64 %1011 to i32
-  %1015 = mul i64 %1011, %30
-  %1016 = add i64 %1015, 0
-  %1017 = getelementptr float, ptr %46, i64 %1016
-  %1018 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1014)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1017, i32 0, i32 %1014)
-  %1019 = mul i64 %1011, %30
-  %1020 = add i64 %1019, 0
-  %1021 = getelementptr float, ptr %46, i64 %1020
-  store <vscale x 4 x float> %1018, ptr %1021, align 4
-  %1022 = add i64 %1011, 1
-  br label %1010
+1010:                                             ; preds = %1007
+  %1011 = trunc i64 %1008 to i32
+  %1012 = mul i64 %1008, %23
+  %1013 = add i64 %1012, 0
+  %1014 = getelementptr float, ptr %41, i64 %1013
+  %1015 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1011)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1014, i32 0, i32 %1011)
+  %1016 = mul i64 %1008, %23
+  %1017 = add i64 %1016, 0
+  %1018 = getelementptr float, ptr %41, i64 %1017
+  store <vscale x 4 x float> %1015, ptr %1018, align 4
+  %1019 = add i64 %1008, 1
+  br label %1007
 
-1023:                                             ; preds = %1010
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1009, <vscale x 4 x i1> %869, <vscale x 4 x float> %1003, <vscale x 4 x float> %857)
-  br label %1024
+1020:                                             ; preds = %1007
+  %1021 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %146, i64 4)
+  %1022 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %1023 = call i64 @llvm.smin.i64(i64 %380, i64 2147483647)
+  %1024 = trunc i64 %1023 to i32
+  %1025 = insertelement <vscale x 4 x i32> poison, i32 %1024, i32 0
+  %1026 = shufflevector <vscale x 4 x i32> %1025, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %1027 = icmp slt <vscale x 4 x i32> %1022, %1026
+  br label %1028
 
-1024:                                             ; preds = %1027, %1023
-  %1025 = phi i64 [ %1036, %1027 ], [ 0, %1023 ]
-  %1026 = icmp slt i64 %1025, %30
-  br i1 %1026, label %1027, label %1037
+1028:                                             ; preds = %1031, %1020
+  %1029 = phi i64 [ %1040, %1031 ], [ 0, %1020 ]
+  %1030 = icmp slt i64 %1029, %23
+  br i1 %1030, label %1031, label %1041
 
-1027:                                             ; preds = %1024
-  %1028 = trunc i64 %1025 to i32
-  %1029 = mul i64 %1025, %30
-  %1030 = add i64 %1029, 0
-  %1031 = getelementptr float, ptr %46, i64 %1030
-  %1032 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1028)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1031, i32 0, i32 %1028)
-  %1033 = mul i64 %1025, %30
+1031:                                             ; preds = %1028
+  %1032 = trunc i64 %1029 to i32
+  %1033 = mul i64 %1029, %23
   %1034 = add i64 %1033, 0
-  %1035 = getelementptr float, ptr %46, i64 %1034
-  store <vscale x 4 x float> %1032, ptr %1035, align 4
-  %1036 = add i64 %1025, 1
-  br label %1024
+  %1035 = getelementptr float, ptr %39, i64 %1034
+  %1036 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1032)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1035, i32 0, i32 %1032)
+  %1037 = mul i64 %1029, %23
+  %1038 = add i64 %1037, 0
+  %1039 = getelementptr float, ptr %39, i64 %1038
+  store <vscale x 4 x float> %1036, ptr %1039, align 4
+  %1040 = add i64 %1029, 1
+  br label %1028
 
-1037:                                             ; preds = %1040, %1024
-  %1038 = phi i64 [ %1049, %1040 ], [ 0, %1024 ]
-  %1039 = icmp slt i64 %1038, %30
-  br i1 %1039, label %1040, label %1050
+1041:                                             ; preds = %1028
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1027, <vscale x 4 x i1> %887, <vscale x 4 x float> %1021, <vscale x 4 x float> %875)
+  br label %1042
 
-1040:                                             ; preds = %1037
-  %1041 = trunc i64 %1038 to i32
-  %1042 = mul i64 %1038, %30
-  %1043 = add i64 %1042, 0
-  %1044 = getelementptr float, ptr %44, i64 %1043
-  %1045 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1041)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1044, i32 0, i32 %1041)
-  %1046 = mul i64 %1038, %30
-  %1047 = add i64 %1046, 0
-  %1048 = getelementptr float, ptr %44, i64 %1047
-  store <vscale x 4 x float> %1045, ptr %1048, align 4
-  %1049 = add i64 %1038, 1
-  br label %1037
+1042:                                             ; preds = %1045, %1041
+  %1043 = phi i64 [ %1054, %1045 ], [ 0, %1041 ]
+  %1044 = icmp slt i64 %1043, %23
+  br i1 %1044, label %1045, label %1055
 
-1050:                                             ; preds = %1037
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1009, <vscale x 4 x i1> %904, <vscale x 4 x float> %1003, <vscale x 4 x float> %898)
-  br label %1051
+1045:                                             ; preds = %1042
+  %1046 = trunc i64 %1043 to i32
+  %1047 = mul i64 %1043, %23
+  %1048 = add i64 %1047, 0
+  %1049 = getelementptr float, ptr %39, i64 %1048
+  %1050 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1046)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1049, i32 0, i32 %1046)
+  %1051 = mul i64 %1043, %23
+  %1052 = add i64 %1051, 0
+  %1053 = getelementptr float, ptr %39, i64 %1052
+  store <vscale x 4 x float> %1050, ptr %1053, align 4
+  %1054 = add i64 %1043, 1
+  br label %1042
 
-1051:                                             ; preds = %1054, %1050
-  %1052 = phi i64 [ %1063, %1054 ], [ 0, %1050 ]
-  %1053 = icmp slt i64 %1052, %30
-  br i1 %1053, label %1054, label %1064
+1055:                                             ; preds = %1058, %1042
+  %1056 = phi i64 [ %1067, %1058 ], [ 0, %1042 ]
+  %1057 = icmp slt i64 %1056, %23
+  br i1 %1057, label %1058, label %1068
 
-1054:                                             ; preds = %1051
-  %1055 = trunc i64 %1052 to i32
-  %1056 = mul i64 %1052, %30
-  %1057 = add i64 %1056, 0
-  %1058 = getelementptr float, ptr %44, i64 %1057
-  %1059 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1055)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1058, i32 0, i32 %1055)
-  %1060 = mul i64 %1052, %30
+1058:                                             ; preds = %1055
+  %1059 = trunc i64 %1056 to i32
+  %1060 = mul i64 %1056, %23
   %1061 = add i64 %1060, 0
-  %1062 = getelementptr float, ptr %44, i64 %1061
-  store <vscale x 4 x float> %1059, ptr %1062, align 4
-  %1063 = add i64 %1052, 1
-  br label %1051
+  %1062 = getelementptr float, ptr %37, i64 %1061
+  %1063 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1059)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1062, i32 0, i32 %1059)
+  %1064 = mul i64 %1056, %23
+  %1065 = add i64 %1064, 0
+  %1066 = getelementptr float, ptr %37, i64 %1065
+  store <vscale x 4 x float> %1063, ptr %1066, align 4
+  %1067 = add i64 %1056, 1
+  br label %1055
 
-1064:                                             ; preds = %1067, %1051
-  %1065 = phi i64 [ %1076, %1067 ], [ 0, %1051 ]
-  %1066 = icmp slt i64 %1065, %30
-  br i1 %1066, label %1067, label %1077
+1068:                                             ; preds = %1055
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1027, <vscale x 4 x i1> %922, <vscale x 4 x float> %1021, <vscale x 4 x float> %916)
+  br label %1069
 
-1067:                                             ; preds = %1064
-  %1068 = trunc i64 %1065 to i32
-  %1069 = mul i64 %1065, %30
-  %1070 = add i64 %1069, 0
-  %1071 = getelementptr float, ptr %42, i64 %1070
-  %1072 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1068)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1071, i32 0, i32 %1068)
-  %1073 = mul i64 %1065, %30
-  %1074 = add i64 %1073, 0
-  %1075 = getelementptr float, ptr %42, i64 %1074
-  store <vscale x 4 x float> %1072, ptr %1075, align 4
-  %1076 = add i64 %1065, 1
-  br label %1064
+1069:                                             ; preds = %1072, %1068
+  %1070 = phi i64 [ %1081, %1072 ], [ 0, %1068 ]
+  %1071 = icmp slt i64 %1070, %23
+  br i1 %1071, label %1072, label %1082
 
-1077:                                             ; preds = %1064
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1009, <vscale x 4 x i1> %939, <vscale x 4 x float> %1003, <vscale x 4 x float> %933)
-  br label %1078
+1072:                                             ; preds = %1069
+  %1073 = trunc i64 %1070 to i32
+  %1074 = mul i64 %1070, %23
+  %1075 = add i64 %1074, 0
+  %1076 = getelementptr float, ptr %37, i64 %1075
+  %1077 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1073)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1076, i32 0, i32 %1073)
+  %1078 = mul i64 %1070, %23
+  %1079 = add i64 %1078, 0
+  %1080 = getelementptr float, ptr %37, i64 %1079
+  store <vscale x 4 x float> %1077, ptr %1080, align 4
+  %1081 = add i64 %1070, 1
+  br label %1069
 
-1078:                                             ; preds = %1081, %1077
-  %1079 = phi i64 [ %1090, %1081 ], [ 0, %1077 ]
-  %1080 = icmp slt i64 %1079, %30
-  br i1 %1080, label %1081, label %1091
+1082:                                             ; preds = %1085, %1069
+  %1083 = phi i64 [ %1094, %1085 ], [ 0, %1069 ]
+  %1084 = icmp slt i64 %1083, %23
+  br i1 %1084, label %1085, label %1095
 
-1081:                                             ; preds = %1078
-  %1082 = trunc i64 %1079 to i32
-  %1083 = mul i64 %1079, %30
-  %1084 = add i64 %1083, 0
-  %1085 = getelementptr float, ptr %42, i64 %1084
-  %1086 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1082)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1085, i32 0, i32 %1082)
-  %1087 = mul i64 %1079, %30
+1085:                                             ; preds = %1082
+  %1086 = trunc i64 %1083 to i32
+  %1087 = mul i64 %1083, %23
   %1088 = add i64 %1087, 0
-  %1089 = getelementptr float, ptr %42, i64 %1088
-  store <vscale x 4 x float> %1086, ptr %1089, align 4
-  %1090 = add i64 %1079, 1
-  br label %1078
+  %1089 = getelementptr float, ptr %35, i64 %1088
+  %1090 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1086)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1089, i32 0, i32 %1086)
+  %1091 = mul i64 %1083, %23
+  %1092 = add i64 %1091, 0
+  %1093 = getelementptr float, ptr %35, i64 %1092
+  store <vscale x 4 x float> %1090, ptr %1093, align 4
+  %1094 = add i64 %1083, 1
+  br label %1082
 
-1091:                                             ; preds = %1094, %1078
-  %1092 = phi i64 [ %1103, %1094 ], [ 0, %1078 ]
-  %1093 = icmp slt i64 %1092, %30
-  br i1 %1093, label %1094, label %1104
+1095:                                             ; preds = %1082
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1027, <vscale x 4 x i1> %957, <vscale x 4 x float> %1021, <vscale x 4 x float> %951)
+  br label %1096
 
-1094:                                             ; preds = %1091
-  %1095 = trunc i64 %1092 to i32
-  %1096 = mul i64 %1092, %30
-  %1097 = add i64 %1096, 0
-  %1098 = getelementptr float, ptr %40, i64 %1097
-  %1099 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1095)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1098, i32 0, i32 %1095)
-  %1100 = mul i64 %1092, %30
-  %1101 = add i64 %1100, 0
-  %1102 = getelementptr float, ptr %40, i64 %1101
-  store <vscale x 4 x float> %1099, ptr %1102, align 4
-  %1103 = add i64 %1092, 1
-  br label %1091
+1096:                                             ; preds = %1099, %1095
+  %1097 = phi i64 [ %1108, %1099 ], [ 0, %1095 ]
+  %1098 = icmp slt i64 %1097, %23
+  br i1 %1098, label %1099, label %1109
 
-1104:                                             ; preds = %1091
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1009, <vscale x 4 x i1> %974, <vscale x 4 x float> %1003, <vscale x 4 x float> %968)
-  br label %1105
+1099:                                             ; preds = %1096
+  %1100 = trunc i64 %1097 to i32
+  %1101 = mul i64 %1097, %23
+  %1102 = add i64 %1101, 0
+  %1103 = getelementptr float, ptr %35, i64 %1102
+  %1104 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1100)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1103, i32 0, i32 %1100)
+  %1105 = mul i64 %1097, %23
+  %1106 = add i64 %1105, 0
+  %1107 = getelementptr float, ptr %35, i64 %1106
+  store <vscale x 4 x float> %1104, ptr %1107, align 4
+  %1108 = add i64 %1097, 1
+  br label %1096
 
-1105:                                             ; preds = %1108, %1104
-  %1106 = phi i64 [ %1117, %1108 ], [ 0, %1104 ]
-  %1107 = icmp slt i64 %1106, %30
-  br i1 %1107, label %1108, label %1118
+1109:                                             ; preds = %1112, %1096
+  %1110 = phi i64 [ %1121, %1112 ], [ 0, %1096 ]
+  %1111 = icmp slt i64 %1110, %23
+  br i1 %1111, label %1112, label %1122
 
-1108:                                             ; preds = %1105
-  %1109 = trunc i64 %1106 to i32
-  %1110 = mul i64 %1106, %30
-  %1111 = add i64 %1110, 0
-  %1112 = getelementptr float, ptr %40, i64 %1111
-  %1113 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1109)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1112, i32 0, i32 %1109)
-  %1114 = mul i64 %1106, %30
+1112:                                             ; preds = %1109
+  %1113 = trunc i64 %1110 to i32
+  %1114 = mul i64 %1110, %23
   %1115 = add i64 %1114, 0
-  %1116 = getelementptr float, ptr %40, i64 %1115
-  store <vscale x 4 x float> %1113, ptr %1116, align 4
-  %1117 = add i64 %1106, 1
-  br label %1105
+  %1116 = getelementptr float, ptr %33, i64 %1115
+  %1117 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1113)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1116, i32 0, i32 %1113)
+  %1118 = mul i64 %1110, %23
+  %1119 = add i64 %1118, 0
+  %1120 = getelementptr float, ptr %33, i64 %1119
+  store <vscale x 4 x float> %1117, ptr %1120, align 4
+  %1121 = add i64 %1110, 1
+  br label %1109
 
-1118:                                             ; preds = %1105
-  %1119 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %97, i64 8)
-  %1120 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %1121 = call i64 @llvm.smin.i64(i64 %556, i64 2147483647)
-  %1122 = trunc i64 %1121 to i32
-  %1123 = insertelement <vscale x 4 x i32> poison, i32 %1122, i32 0
-  %1124 = shufflevector <vscale x 4 x i32> %1123, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %1125 = icmp slt <vscale x 4 x i32> %1120, %1124
-  br label %1126
+1122:                                             ; preds = %1109
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1027, <vscale x 4 x i1> %992, <vscale x 4 x float> %1021, <vscale x 4 x float> %986)
+  br label %1123
 
-1126:                                             ; preds = %1129, %1118
-  %1127 = phi i64 [ %1138, %1129 ], [ 0, %1118 ]
-  %1128 = icmp slt i64 %1127, %30
-  br i1 %1128, label %1129, label %1139
+1123:                                             ; preds = %1126, %1122
+  %1124 = phi i64 [ %1135, %1126 ], [ 0, %1122 ]
+  %1125 = icmp slt i64 %1124, %23
+  br i1 %1125, label %1126, label %1136
 
-1129:                                             ; preds = %1126
-  %1130 = trunc i64 %1127 to i32
-  %1131 = mul i64 %1127, %30
-  %1132 = add i64 %1131, 0
-  %1133 = getelementptr float, ptr %38, i64 %1132
-  %1134 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1130)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1133, i32 0, i32 %1130)
-  %1135 = mul i64 %1127, %30
-  %1136 = add i64 %1135, 0
-  %1137 = getelementptr float, ptr %38, i64 %1136
-  store <vscale x 4 x float> %1134, ptr %1137, align 4
-  %1138 = add i64 %1127, 1
-  br label %1126
+1126:                                             ; preds = %1123
+  %1127 = trunc i64 %1124 to i32
+  %1128 = mul i64 %1124, %23
+  %1129 = add i64 %1128, 0
+  %1130 = getelementptr float, ptr %33, i64 %1129
+  %1131 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1127)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1130, i32 0, i32 %1127)
+  %1132 = mul i64 %1124, %23
+  %1133 = add i64 %1132, 0
+  %1134 = getelementptr float, ptr %33, i64 %1133
+  store <vscale x 4 x float> %1131, ptr %1134, align 4
+  %1135 = add i64 %1124, 1
+  br label %1123
 
-1139:                                             ; preds = %1126
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1125, <vscale x 4 x i1> %869, <vscale x 4 x float> %1119, <vscale x 4 x float> %857)
-  br label %1140
+1136:                                             ; preds = %1123
+  %1137 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %146, i64 8)
+  %1138 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %1139 = call i64 @llvm.smin.i64(i64 %582, i64 2147483647)
+  %1140 = trunc i64 %1139 to i32
+  %1141 = insertelement <vscale x 4 x i32> poison, i32 %1140, i32 0
+  %1142 = shufflevector <vscale x 4 x i32> %1141, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %1143 = icmp slt <vscale x 4 x i32> %1138, %1142
+  br label %1144
 
-1140:                                             ; preds = %1143, %1139
-  %1141 = phi i64 [ %1152, %1143 ], [ 0, %1139 ]
-  %1142 = icmp slt i64 %1141, %30
-  br i1 %1142, label %1143, label %1153
+1144:                                             ; preds = %1147, %1136
+  %1145 = phi i64 [ %1156, %1147 ], [ 0, %1136 ]
+  %1146 = icmp slt i64 %1145, %23
+  br i1 %1146, label %1147, label %1157
 
-1143:                                             ; preds = %1140
-  %1144 = trunc i64 %1141 to i32
-  %1145 = mul i64 %1141, %30
-  %1146 = add i64 %1145, 0
-  %1147 = getelementptr float, ptr %38, i64 %1146
-  %1148 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1144)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1147, i32 0, i32 %1144)
-  %1149 = mul i64 %1141, %30
+1147:                                             ; preds = %1144
+  %1148 = trunc i64 %1145 to i32
+  %1149 = mul i64 %1145, %23
   %1150 = add i64 %1149, 0
-  %1151 = getelementptr float, ptr %38, i64 %1150
-  store <vscale x 4 x float> %1148, ptr %1151, align 4
-  %1152 = add i64 %1141, 1
-  br label %1140
+  %1151 = getelementptr float, ptr %31, i64 %1150
+  %1152 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1148)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1151, i32 0, i32 %1148)
+  %1153 = mul i64 %1145, %23
+  %1154 = add i64 %1153, 0
+  %1155 = getelementptr float, ptr %31, i64 %1154
+  store <vscale x 4 x float> %1152, ptr %1155, align 4
+  %1156 = add i64 %1145, 1
+  br label %1144
 
-1153:                                             ; preds = %1156, %1140
-  %1154 = phi i64 [ %1165, %1156 ], [ 0, %1140 ]
-  %1155 = icmp slt i64 %1154, %30
-  br i1 %1155, label %1156, label %1166
+1157:                                             ; preds = %1144
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1143, <vscale x 4 x i1> %887, <vscale x 4 x float> %1137, <vscale x 4 x float> %875)
+  br label %1158
 
-1156:                                             ; preds = %1153
-  %1157 = trunc i64 %1154 to i32
-  %1158 = mul i64 %1154, %30
-  %1159 = add i64 %1158, 0
-  %1160 = getelementptr float, ptr %36, i64 %1159
-  %1161 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1157)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1160, i32 0, i32 %1157)
-  %1162 = mul i64 %1154, %30
-  %1163 = add i64 %1162, 0
-  %1164 = getelementptr float, ptr %36, i64 %1163
-  store <vscale x 4 x float> %1161, ptr %1164, align 4
-  %1165 = add i64 %1154, 1
-  br label %1153
+1158:                                             ; preds = %1161, %1157
+  %1159 = phi i64 [ %1170, %1161 ], [ 0, %1157 ]
+  %1160 = icmp slt i64 %1159, %23
+  br i1 %1160, label %1161, label %1171
 
-1166:                                             ; preds = %1153
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1125, <vscale x 4 x i1> %904, <vscale x 4 x float> %1119, <vscale x 4 x float> %898)
-  br label %1167
+1161:                                             ; preds = %1158
+  %1162 = trunc i64 %1159 to i32
+  %1163 = mul i64 %1159, %23
+  %1164 = add i64 %1163, 0
+  %1165 = getelementptr float, ptr %31, i64 %1164
+  %1166 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1162)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1165, i32 0, i32 %1162)
+  %1167 = mul i64 %1159, %23
+  %1168 = add i64 %1167, 0
+  %1169 = getelementptr float, ptr %31, i64 %1168
+  store <vscale x 4 x float> %1166, ptr %1169, align 4
+  %1170 = add i64 %1159, 1
+  br label %1158
 
-1167:                                             ; preds = %1170, %1166
-  %1168 = phi i64 [ %1179, %1170 ], [ 0, %1166 ]
-  %1169 = icmp slt i64 %1168, %30
-  br i1 %1169, label %1170, label %1180
+1171:                                             ; preds = %1174, %1158
+  %1172 = phi i64 [ %1183, %1174 ], [ 0, %1158 ]
+  %1173 = icmp slt i64 %1172, %23
+  br i1 %1173, label %1174, label %1184
 
-1170:                                             ; preds = %1167
-  %1171 = trunc i64 %1168 to i32
-  %1172 = mul i64 %1168, %30
-  %1173 = add i64 %1172, 0
-  %1174 = getelementptr float, ptr %36, i64 %1173
-  %1175 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1171)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1174, i32 0, i32 %1171)
-  %1176 = mul i64 %1168, %30
+1174:                                             ; preds = %1171
+  %1175 = trunc i64 %1172 to i32
+  %1176 = mul i64 %1172, %23
   %1177 = add i64 %1176, 0
-  %1178 = getelementptr float, ptr %36, i64 %1177
-  store <vscale x 4 x float> %1175, ptr %1178, align 4
-  %1179 = add i64 %1168, 1
-  br label %1167
+  %1178 = getelementptr float, ptr %29, i64 %1177
+  %1179 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1175)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1178, i32 0, i32 %1175)
+  %1180 = mul i64 %1172, %23
+  %1181 = add i64 %1180, 0
+  %1182 = getelementptr float, ptr %29, i64 %1181
+  store <vscale x 4 x float> %1179, ptr %1182, align 4
+  %1183 = add i64 %1172, 1
+  br label %1171
 
-1180:                                             ; preds = %1183, %1167
-  %1181 = phi i64 [ %1192, %1183 ], [ 0, %1167 ]
-  %1182 = icmp slt i64 %1181, %30
-  br i1 %1182, label %1183, label %1193
+1184:                                             ; preds = %1171
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1143, <vscale x 4 x i1> %922, <vscale x 4 x float> %1137, <vscale x 4 x float> %916)
+  br label %1185
 
-1183:                                             ; preds = %1180
-  %1184 = trunc i64 %1181 to i32
-  %1185 = mul i64 %1181, %30
-  %1186 = add i64 %1185, 0
-  %1187 = getelementptr float, ptr %34, i64 %1186
-  %1188 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1184)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1187, i32 0, i32 %1184)
-  %1189 = mul i64 %1181, %30
-  %1190 = add i64 %1189, 0
-  %1191 = getelementptr float, ptr %34, i64 %1190
-  store <vscale x 4 x float> %1188, ptr %1191, align 4
-  %1192 = add i64 %1181, 1
-  br label %1180
+1185:                                             ; preds = %1188, %1184
+  %1186 = phi i64 [ %1197, %1188 ], [ 0, %1184 ]
+  %1187 = icmp slt i64 %1186, %23
+  br i1 %1187, label %1188, label %1198
 
-1193:                                             ; preds = %1180
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1125, <vscale x 4 x i1> %939, <vscale x 4 x float> %1119, <vscale x 4 x float> %933)
-  br label %1194
+1188:                                             ; preds = %1185
+  %1189 = trunc i64 %1186 to i32
+  %1190 = mul i64 %1186, %23
+  %1191 = add i64 %1190, 0
+  %1192 = getelementptr float, ptr %29, i64 %1191
+  %1193 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1189)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1192, i32 0, i32 %1189)
+  %1194 = mul i64 %1186, %23
+  %1195 = add i64 %1194, 0
+  %1196 = getelementptr float, ptr %29, i64 %1195
+  store <vscale x 4 x float> %1193, ptr %1196, align 4
+  %1197 = add i64 %1186, 1
+  br label %1185
 
-1194:                                             ; preds = %1197, %1193
-  %1195 = phi i64 [ %1206, %1197 ], [ 0, %1193 ]
-  %1196 = icmp slt i64 %1195, %30
-  br i1 %1196, label %1197, label %1207
+1198:                                             ; preds = %1201, %1185
+  %1199 = phi i64 [ %1210, %1201 ], [ 0, %1185 ]
+  %1200 = icmp slt i64 %1199, %23
+  br i1 %1200, label %1201, label %1211
 
-1197:                                             ; preds = %1194
-  %1198 = trunc i64 %1195 to i32
-  %1199 = mul i64 %1195, %30
-  %1200 = add i64 %1199, 0
-  %1201 = getelementptr float, ptr %34, i64 %1200
-  %1202 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1198)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1201, i32 0, i32 %1198)
-  %1203 = mul i64 %1195, %30
+1201:                                             ; preds = %1198
+  %1202 = trunc i64 %1199 to i32
+  %1203 = mul i64 %1199, %23
   %1204 = add i64 %1203, 0
-  %1205 = getelementptr float, ptr %34, i64 %1204
-  store <vscale x 4 x float> %1202, ptr %1205, align 4
-  %1206 = add i64 %1195, 1
-  br label %1194
+  %1205 = getelementptr float, ptr %27, i64 %1204
+  %1206 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1202)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1205, i32 0, i32 %1202)
+  %1207 = mul i64 %1199, %23
+  %1208 = add i64 %1207, 0
+  %1209 = getelementptr float, ptr %27, i64 %1208
+  store <vscale x 4 x float> %1206, ptr %1209, align 4
+  %1210 = add i64 %1199, 1
+  br label %1198
 
-1207:                                             ; preds = %1210, %1194
-  %1208 = phi i64 [ %1219, %1210 ], [ 0, %1194 ]
-  %1209 = icmp slt i64 %1208, %30
-  br i1 %1209, label %1210, label %1220
+1211:                                             ; preds = %1198
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1143, <vscale x 4 x i1> %957, <vscale x 4 x float> %1137, <vscale x 4 x float> %951)
+  br label %1212
 
-1210:                                             ; preds = %1207
-  %1211 = trunc i64 %1208 to i32
-  %1212 = mul i64 %1208, %30
-  %1213 = add i64 %1212, 0
-  %1214 = getelementptr float, ptr %32, i64 %1213
-  %1215 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1211)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1214, i32 0, i32 %1211)
-  %1216 = mul i64 %1208, %30
-  %1217 = add i64 %1216, 0
-  %1218 = getelementptr float, ptr %32, i64 %1217
-  store <vscale x 4 x float> %1215, ptr %1218, align 4
-  %1219 = add i64 %1208, 1
-  br label %1207
+1212:                                             ; preds = %1215, %1211
+  %1213 = phi i64 [ %1224, %1215 ], [ 0, %1211 ]
+  %1214 = icmp slt i64 %1213, %23
+  br i1 %1214, label %1215, label %1225
 
-1220:                                             ; preds = %1207
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1125, <vscale x 4 x i1> %974, <vscale x 4 x float> %1119, <vscale x 4 x float> %968)
-  br label %1221
+1215:                                             ; preds = %1212
+  %1216 = trunc i64 %1213 to i32
+  %1217 = mul i64 %1213, %23
+  %1218 = add i64 %1217, 0
+  %1219 = getelementptr float, ptr %27, i64 %1218
+  %1220 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1216)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1219, i32 0, i32 %1216)
+  %1221 = mul i64 %1213, %23
+  %1222 = add i64 %1221, 0
+  %1223 = getelementptr float, ptr %27, i64 %1222
+  store <vscale x 4 x float> %1220, ptr %1223, align 4
+  %1224 = add i64 %1213, 1
+  br label %1212
 
-1221:                                             ; preds = %1224, %1220
-  %1222 = phi i64 [ %1233, %1224 ], [ 0, %1220 ]
-  %1223 = icmp slt i64 %1222, %30
-  br i1 %1223, label %1224, label %1234
+1225:                                             ; preds = %1228, %1212
+  %1226 = phi i64 [ %1237, %1228 ], [ 0, %1212 ]
+  %1227 = icmp slt i64 %1226, %23
+  br i1 %1227, label %1228, label %1238
 
-1224:                                             ; preds = %1221
-  %1225 = trunc i64 %1222 to i32
-  %1226 = mul i64 %1222, %30
-  %1227 = add i64 %1226, 0
-  %1228 = getelementptr float, ptr %32, i64 %1227
-  %1229 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1225)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1228, i32 0, i32 %1225)
-  %1230 = mul i64 %1222, %30
+1228:                                             ; preds = %1225
+  %1229 = trunc i64 %1226 to i32
+  %1230 = mul i64 %1226, %23
   %1231 = add i64 %1230, 0
-  %1232 = getelementptr float, ptr %32, i64 %1231
-  store <vscale x 4 x float> %1229, ptr %1232, align 4
-  %1233 = add i64 %1222, 1
-  br label %1221
+  %1232 = getelementptr float, ptr %25, i64 %1231
+  %1233 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1229)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1232, i32 0, i32 %1229)
+  %1234 = mul i64 %1226, %23
+  %1235 = add i64 %1234, 0
+  %1236 = getelementptr float, ptr %25, i64 %1235
+  store <vscale x 4 x float> %1233, ptr %1236, align 4
+  %1237 = add i64 %1226, 1
+  br label %1225
 
-1234:                                             ; preds = %1221
-  %1235 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %97, i64 12)
-  %1236 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
-  %1237 = call i64 @llvm.smin.i64(i64 %762, i64 2147483647)
-  %1238 = trunc i64 %1237 to i32
-  %1239 = insertelement <vscale x 4 x i32> poison, i32 %1238, i32 0
-  %1240 = shufflevector <vscale x 4 x i32> %1239, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
-  %1241 = icmp slt <vscale x 4 x i32> %1236, %1240
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1241, <vscale x 4 x i1> %869, <vscale x 4 x float> %1235, <vscale x 4 x float> %857)
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 1, <vscale x 4 x i1> %1241, <vscale x 4 x i1> %904, <vscale x 4 x float> %1235, <vscale x 4 x float> %898)
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 2, <vscale x 4 x i1> %1241, <vscale x 4 x i1> %939, <vscale x 4 x float> %1235, <vscale x 4 x float> %933)
-  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 3, <vscale x 4 x i1> %1241, <vscale x 4 x i1> %974, <vscale x 4 x float> %1235, <vscale x 4 x float> %968)
-  br label %1242
+1238:                                             ; preds = %1225
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1143, <vscale x 4 x i1> %992, <vscale x 4 x float> %1137, <vscale x 4 x float> %986)
+  br label %1239
 
-1242:                                             ; preds = %1640, %1234
-  %1243 = phi i64 [ %1659, %1640 ], [ 0, %1234 ]
-  %1244 = icmp slt i64 %1243, %30
-  br i1 %1244, label %1245, label %1660
+1239:                                             ; preds = %1242, %1238
+  %1240 = phi i64 [ %1251, %1242 ], [ 0, %1238 ]
+  %1241 = icmp slt i64 %1240, %23
+  br i1 %1241, label %1242, label %1252
 
-1245:                                             ; preds = %1242
-  %1246 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.to.svbool.nxv16i1(<vscale x 16 x i1> %83)
-  %1247 = trunc i64 %1243 to i32
-  %1248 = call <vscale x 16 x i1> @llvm.aarch64.sve.psel.nxv16i1(<vscale x 16 x i1> %1246, <vscale x 16 x i1> %67, i32 %1247)
-  %1249 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv16i1(<vscale x 16 x i1> %1248)
-  %1250 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1249, i64 0)
-  br label %1251
+1242:                                             ; preds = %1239
+  %1243 = trunc i64 %1240 to i32
+  %1244 = mul i64 %1240, %23
+  %1245 = add i64 %1244, 0
+  %1246 = getelementptr float, ptr %25, i64 %1245
+  %1247 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1243)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1246, i32 0, i32 %1243)
+  %1248 = mul i64 %1240, %23
+  %1249 = add i64 %1248, 0
+  %1250 = getelementptr float, ptr %25, i64 %1249
+  store <vscale x 4 x float> %1247, ptr %1250, align 4
+  %1251 = add i64 %1240, 1
+  br label %1239
 
-1251:                                             ; preds = %1254, %1245
-  %1252 = phi i64 [ %1263, %1254 ], [ 0, %1245 ]
-  %1253 = icmp slt i64 %1252, %30
-  br i1 %1253, label %1254, label %1264
+1252:                                             ; preds = %1239
+  %1253 = call <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float> %146, i64 12)
+  %1254 = call <vscale x 4 x i32> @llvm.stepvector.nxv4i32()
+  %1255 = call i64 @llvm.smin.i64(i64 %784, i64 2147483647)
+  %1256 = trunc i64 %1255 to i32
+  %1257 = insertelement <vscale x 4 x i32> poison, i32 %1256, i32 0
+  %1258 = shufflevector <vscale x 4 x i32> %1257, <vscale x 4 x i32> poison, <vscale x 4 x i32> zeroinitializer
+  %1259 = icmp slt <vscale x 4 x i32> %1254, %1258
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 0, <vscale x 4 x i1> %1259, <vscale x 4 x i1> %887, <vscale x 4 x float> %1253, <vscale x 4 x float> %875)
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 1, <vscale x 4 x i1> %1259, <vscale x 4 x i1> %922, <vscale x 4 x float> %1253, <vscale x 4 x float> %916)
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 2, <vscale x 4 x i1> %1259, <vscale x 4 x i1> %957, <vscale x 4 x float> %1253, <vscale x 4 x float> %951)
+  call void @llvm.aarch64.sme.mopa.nxv4f32(i32 3, <vscale x 4 x i1> %1259, <vscale x 4 x i1> %992, <vscale x 4 x float> %1253, <vscale x 4 x float> %986)
+  br label %1260
 
-1254:                                             ; preds = %1251
-  %1255 = trunc i64 %1252 to i32
-  %1256 = mul i64 %1252, %30
-  %1257 = add i64 %1256, 0
-  %1258 = getelementptr float, ptr %54, i64 %1257
-  %1259 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1255)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1258, i32 0, i32 %1255)
-  %1260 = mul i64 %1252, %30
-  %1261 = add i64 %1260, 0
-  %1262 = getelementptr float, ptr %54, i64 %1261
-  store <vscale x 4 x float> %1259, ptr %1262, align 4
-  %1263 = add i64 %1252, 1
-  br label %1251
+1260:                                             ; preds = %1654, %1252
+  %1261 = phi i64 [ %1673, %1654 ], [ 0, %1252 ]
+  %1262 = icmp slt i64 %1261, %23
+  br i1 %1262, label %1263, label %1674
 
-1264:                                             ; preds = %1251
-  %1265 = getelementptr float, ptr %15, i64 %77
-  %1266 = mul i64 %1243, %19
-  %1267 = mul i64 %20, 0
-  %1268 = add i64 %1266, %1267
-  %1269 = getelementptr float, ptr %1265, i64 %1268
-  %1270 = trunc i64 %1243 to i32
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1250, ptr %1269, i32 0, i32 %1270)
-  br label %1271
+1263:                                             ; preds = %1260
+  %1264 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.to.svbool.nxv16i1(<vscale x 16 x i1> %131)
+  %1265 = trunc i64 %1261 to i32
+  %1266 = call <vscale x 16 x i1> @llvm.aarch64.sve.psel.nxv16i1(<vscale x 16 x i1> %1264, <vscale x 16 x i1> %111, i32 %1265)
+  %1267 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv16i1(<vscale x 16 x i1> %1266)
+  %1268 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1267, i64 0)
+  br label %1269
 
-1271:                                             ; preds = %1274, %1264
-  %1272 = phi i64 [ %1283, %1274 ], [ 0, %1264 ]
-  %1273 = icmp slt i64 %1272, %30
-  br i1 %1273, label %1274, label %1284
+1269:                                             ; preds = %1272, %1263
+  %1270 = phi i64 [ %1281, %1272 ], [ 0, %1263 ]
+  %1271 = icmp slt i64 %1270, %23
+  br i1 %1271, label %1272, label %1282
 
-1274:                                             ; preds = %1271
-  %1275 = trunc i64 %1272 to i32
-  %1276 = mul i64 %1272, %30
-  %1277 = add i64 %1276, 0
-  %1278 = getelementptr float, ptr %54, i64 %1277
-  %1279 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1275)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1278, i32 0, i32 %1275)
-  %1280 = mul i64 %1272, %30
-  %1281 = add i64 %1280, 0
-  %1282 = getelementptr float, ptr %54, i64 %1281
-  store <vscale x 4 x float> %1279, ptr %1282, align 4
-  %1283 = add i64 %1272, 1
-  br label %1271
+1272:                                             ; preds = %1269
+  %1273 = trunc i64 %1270 to i32
+  %1274 = mul i64 %1270, %23
+  %1275 = add i64 %1274, 0
+  %1276 = getelementptr float, ptr %47, i64 %1275
+  %1277 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1273)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1276, i32 0, i32 %1273)
+  %1278 = mul i64 %1270, %23
+  %1279 = add i64 %1278, 0
+  %1280 = getelementptr float, ptr %47, i64 %1279
+  store <vscale x 4 x float> %1277, ptr %1280, align 4
+  %1281 = add i64 %1270, 1
+  br label %1269
 
-1284:                                             ; preds = %1271
-  %1285 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1249, i64 4)
-  br label %1286
+1282:                                             ; preds = %1269
+  %1283 = getelementptr float, ptr %15, i64 %125
+  %1284 = mul i64 %1261, %19
+  %1285 = add i64 %1284, 0
+  %1286 = getelementptr float, ptr %1283, i64 %1285
+  %1287 = trunc i64 %1261 to i32
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1268, ptr %1286, i32 0, i32 %1287)
+  br label %1288
 
-1286:                                             ; preds = %1289, %1284
-  %1287 = phi i64 [ %1298, %1289 ], [ 0, %1284 ]
-  %1288 = icmp slt i64 %1287, %30
-  br i1 %1288, label %1289, label %1299
+1288:                                             ; preds = %1291, %1282
+  %1289 = phi i64 [ %1300, %1291 ], [ 0, %1282 ]
+  %1290 = icmp slt i64 %1289, %23
+  br i1 %1290, label %1291, label %1301
 
-1289:                                             ; preds = %1286
-  %1290 = trunc i64 %1287 to i32
-  %1291 = mul i64 %1287, %30
-  %1292 = add i64 %1291, 0
-  %1293 = getelementptr float, ptr %52, i64 %1292
-  %1294 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1290)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1293, i32 0, i32 %1290)
-  %1295 = mul i64 %1287, %30
-  %1296 = add i64 %1295, 0
-  %1297 = getelementptr float, ptr %52, i64 %1296
-  store <vscale x 4 x float> %1294, ptr %1297, align 4
-  %1298 = add i64 %1287, 1
-  br label %1286
+1291:                                             ; preds = %1288
+  %1292 = trunc i64 %1289 to i32
+  %1293 = mul i64 %1289, %23
+  %1294 = add i64 %1293, 0
+  %1295 = getelementptr float, ptr %47, i64 %1294
+  %1296 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1292)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1295, i32 0, i32 %1292)
+  %1297 = mul i64 %1289, %23
+  %1298 = add i64 %1297, 0
+  %1299 = getelementptr float, ptr %47, i64 %1298
+  store <vscale x 4 x float> %1296, ptr %1299, align 4
+  %1300 = add i64 %1289, 1
+  br label %1288
 
-1299:                                             ; preds = %1286
-  %1300 = mul i64 %30, %20
-  %1301 = add i64 %1266, %1300
-  %1302 = getelementptr float, ptr %1265, i64 %1301
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1285, ptr %1302, i32 0, i32 %1270)
+1301:                                             ; preds = %1288
+  %1302 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1267, i64 4)
   br label %1303
 
-1303:                                             ; preds = %1306, %1299
-  %1304 = phi i64 [ %1315, %1306 ], [ 0, %1299 ]
-  %1305 = icmp slt i64 %1304, %30
+1303:                                             ; preds = %1306, %1301
+  %1304 = phi i64 [ %1315, %1306 ], [ 0, %1301 ]
+  %1305 = icmp slt i64 %1304, %23
   br i1 %1305, label %1306, label %1316
 
 1306:                                             ; preds = %1303
   %1307 = trunc i64 %1304 to i32
-  %1308 = mul i64 %1304, %30
+  %1308 = mul i64 %1304, %23
   %1309 = add i64 %1308, 0
-  %1310 = getelementptr float, ptr %52, i64 %1309
+  %1310 = getelementptr float, ptr %45, i64 %1309
   %1311 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1307)
   call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1310, i32 0, i32 %1307)
-  %1312 = mul i64 %1304, %30
+  %1312 = mul i64 %1304, %23
   %1313 = add i64 %1312, 0
-  %1314 = getelementptr float, ptr %52, i64 %1313
+  %1314 = getelementptr float, ptr %45, i64 %1313
   store <vscale x 4 x float> %1311, ptr %1314, align 4
   %1315 = add i64 %1304, 1
   br label %1303
 
 1316:                                             ; preds = %1303
-  %1317 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1249, i64 8)
-  br label %1318
+  %1317 = add i64 %1284, %23
+  %1318 = getelementptr float, ptr %1283, i64 %1317
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1302, ptr %1318, i32 0, i32 %1287)
+  br label %1319
 
-1318:                                             ; preds = %1321, %1316
-  %1319 = phi i64 [ %1330, %1321 ], [ 0, %1316 ]
-  %1320 = icmp slt i64 %1319, %30
-  br i1 %1320, label %1321, label %1331
+1319:                                             ; preds = %1322, %1316
+  %1320 = phi i64 [ %1331, %1322 ], [ 0, %1316 ]
+  %1321 = icmp slt i64 %1320, %23
+  br i1 %1321, label %1322, label %1332
 
-1321:                                             ; preds = %1318
-  %1322 = trunc i64 %1319 to i32
-  %1323 = mul i64 %1319, %30
-  %1324 = add i64 %1323, 0
-  %1325 = getelementptr float, ptr %50, i64 %1324
-  %1326 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1322)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1325, i32 0, i32 %1322)
-  %1327 = mul i64 %1319, %30
-  %1328 = add i64 %1327, 0
-  %1329 = getelementptr float, ptr %50, i64 %1328
-  store <vscale x 4 x float> %1326, ptr %1329, align 4
-  %1330 = add i64 %1319, 1
-  br label %1318
+1322:                                             ; preds = %1319
+  %1323 = trunc i64 %1320 to i32
+  %1324 = mul i64 %1320, %23
+  %1325 = add i64 %1324, 0
+  %1326 = getelementptr float, ptr %45, i64 %1325
+  %1327 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1323)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1326, i32 0, i32 %1323)
+  %1328 = mul i64 %1320, %23
+  %1329 = add i64 %1328, 0
+  %1330 = getelementptr float, ptr %45, i64 %1329
+  store <vscale x 4 x float> %1327, ptr %1330, align 4
+  %1331 = add i64 %1320, 1
+  br label %1319
 
-1331:                                             ; preds = %1318
-  %1332 = mul i64 %242, %20
-  %1333 = add i64 %1266, %1332
-  %1334 = getelementptr float, ptr %1265, i64 %1333
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1317, ptr %1334, i32 0, i32 %1270)
-  br label %1335
+1332:                                             ; preds = %1319
+  %1333 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1267, i64 8)
+  br label %1334
 
-1335:                                             ; preds = %1338, %1331
-  %1336 = phi i64 [ %1347, %1338 ], [ 0, %1331 ]
-  %1337 = icmp slt i64 %1336, %30
-  br i1 %1337, label %1338, label %1348
+1334:                                             ; preds = %1337, %1332
+  %1335 = phi i64 [ %1346, %1337 ], [ 0, %1332 ]
+  %1336 = icmp slt i64 %1335, %23
+  br i1 %1336, label %1337, label %1347
 
-1338:                                             ; preds = %1335
-  %1339 = trunc i64 %1336 to i32
-  %1340 = mul i64 %1336, %30
-  %1341 = add i64 %1340, 0
-  %1342 = getelementptr float, ptr %50, i64 %1341
-  %1343 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1339)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1342, i32 0, i32 %1339)
-  %1344 = mul i64 %1336, %30
-  %1345 = add i64 %1344, 0
-  %1346 = getelementptr float, ptr %50, i64 %1345
-  store <vscale x 4 x float> %1343, ptr %1346, align 4
-  %1347 = add i64 %1336, 1
-  br label %1335
+1337:                                             ; preds = %1334
+  %1338 = trunc i64 %1335 to i32
+  %1339 = mul i64 %1335, %23
+  %1340 = add i64 %1339, 0
+  %1341 = getelementptr float, ptr %43, i64 %1340
+  %1342 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1338)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1341, i32 0, i32 %1338)
+  %1343 = mul i64 %1335, %23
+  %1344 = add i64 %1343, 0
+  %1345 = getelementptr float, ptr %43, i64 %1344
+  store <vscale x 4 x float> %1342, ptr %1345, align 4
+  %1346 = add i64 %1335, 1
+  br label %1334
 
-1348:                                             ; preds = %1335
-  %1349 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1249, i64 12)
+1347:                                             ; preds = %1334
+  %1348 = add i64 %1284, %274
+  %1349 = getelementptr float, ptr %1283, i64 %1348
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1333, ptr %1349, i32 0, i32 %1287)
   br label %1350
 
-1350:                                             ; preds = %1353, %1348
-  %1351 = phi i64 [ %1362, %1353 ], [ 0, %1348 ]
-  %1352 = icmp slt i64 %1351, %30
+1350:                                             ; preds = %1353, %1347
+  %1351 = phi i64 [ %1362, %1353 ], [ 0, %1347 ]
+  %1352 = icmp slt i64 %1351, %23
   br i1 %1352, label %1353, label %1363
 
 1353:                                             ; preds = %1350
   %1354 = trunc i64 %1351 to i32
-  %1355 = mul i64 %1351, %30
+  %1355 = mul i64 %1351, %23
   %1356 = add i64 %1355, 0
-  %1357 = getelementptr float, ptr %48, i64 %1356
+  %1357 = getelementptr float, ptr %43, i64 %1356
   %1358 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1354)
   call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1357, i32 0, i32 %1354)
-  %1359 = mul i64 %1351, %30
+  %1359 = mul i64 %1351, %23
   %1360 = add i64 %1359, 0
-  %1361 = getelementptr float, ptr %48, i64 %1360
+  %1361 = getelementptr float, ptr %43, i64 %1360
   store <vscale x 4 x float> %1358, ptr %1361, align 4
   %1362 = add i64 %1351, 1
   br label %1350
 
 1363:                                             ; preds = %1350
-  %1364 = mul i64 %297, %20
-  %1365 = add i64 %1266, %1364
-  %1366 = getelementptr float, ptr %1265, i64 %1365
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1349, ptr %1366, i32 0, i32 %1270)
-  br label %1367
+  %1364 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1267, i64 12)
+  br label %1365
 
-1367:                                             ; preds = %1370, %1363
-  %1368 = phi i64 [ %1379, %1370 ], [ 0, %1363 ]
-  %1369 = icmp slt i64 %1368, %30
-  br i1 %1369, label %1370, label %1380
+1365:                                             ; preds = %1368, %1363
+  %1366 = phi i64 [ %1377, %1368 ], [ 0, %1363 ]
+  %1367 = icmp slt i64 %1366, %23
+  br i1 %1367, label %1368, label %1378
 
-1370:                                             ; preds = %1367
-  %1371 = trunc i64 %1368 to i32
-  %1372 = mul i64 %1368, %30
-  %1373 = add i64 %1372, 0
-  %1374 = getelementptr float, ptr %48, i64 %1373
-  %1375 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1371)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1374, i32 0, i32 %1371)
-  %1376 = mul i64 %1368, %30
-  %1377 = add i64 %1376, 0
-  %1378 = getelementptr float, ptr %48, i64 %1377
-  store <vscale x 4 x float> %1375, ptr %1378, align 4
-  %1379 = add i64 %1368, 1
-  br label %1367
+1368:                                             ; preds = %1365
+  %1369 = trunc i64 %1366 to i32
+  %1370 = mul i64 %1366, %23
+  %1371 = add i64 %1370, 0
+  %1372 = getelementptr float, ptr %41, i64 %1371
+  %1373 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1369)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1372, i32 0, i32 %1369)
+  %1374 = mul i64 %1366, %23
+  %1375 = add i64 %1374, 0
+  %1376 = getelementptr float, ptr %41, i64 %1375
+  store <vscale x 4 x float> %1373, ptr %1376, align 4
+  %1377 = add i64 %1366, 1
+  br label %1365
 
-1380:                                             ; preds = %1367
-  %1381 = add i64 %30, %1243
-  %1382 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.to.svbool.nxv16i1(<vscale x 16 x i1> %83)
-  %1383 = trunc i64 %1381 to i32
-  %1384 = call <vscale x 16 x i1> @llvm.aarch64.sve.psel.nxv16i1(<vscale x 16 x i1> %1382, <vscale x 16 x i1> %67, i32 %1383)
-  %1385 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv16i1(<vscale x 16 x i1> %1384)
-  %1386 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1385, i64 0)
-  br label %1387
+1378:                                             ; preds = %1365
+  %1379 = add i64 %1284, %328
+  %1380 = getelementptr float, ptr %1283, i64 %1379
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1364, ptr %1380, i32 0, i32 %1287)
+  br label %1381
 
-1387:                                             ; preds = %1390, %1380
-  %1388 = phi i64 [ %1399, %1390 ], [ 0, %1380 ]
-  %1389 = icmp slt i64 %1388, %30
-  br i1 %1389, label %1390, label %1400
+1381:                                             ; preds = %1384, %1378
+  %1382 = phi i64 [ %1393, %1384 ], [ 0, %1378 ]
+  %1383 = icmp slt i64 %1382, %23
+  br i1 %1383, label %1384, label %1394
 
-1390:                                             ; preds = %1387
-  %1391 = trunc i64 %1388 to i32
-  %1392 = mul i64 %1388, %30
-  %1393 = add i64 %1392, 0
-  %1394 = getelementptr float, ptr %46, i64 %1393
-  %1395 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1391)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1394, i32 0, i32 %1391)
-  %1396 = mul i64 %1388, %30
-  %1397 = add i64 %1396, 0
-  %1398 = getelementptr float, ptr %46, i64 %1397
-  store <vscale x 4 x float> %1395, ptr %1398, align 4
-  %1399 = add i64 %1388, 1
-  br label %1387
+1384:                                             ; preds = %1381
+  %1385 = trunc i64 %1382 to i32
+  %1386 = mul i64 %1382, %23
+  %1387 = add i64 %1386, 0
+  %1388 = getelementptr float, ptr %41, i64 %1387
+  %1389 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1385)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1388, i32 0, i32 %1385)
+  %1390 = mul i64 %1382, %23
+  %1391 = add i64 %1390, 0
+  %1392 = getelementptr float, ptr %41, i64 %1391
+  store <vscale x 4 x float> %1389, ptr %1392, align 4
+  %1393 = add i64 %1382, 1
+  br label %1381
 
-1400:                                             ; preds = %1387
-  %1401 = mul i64 %1381, %19
-  %1402 = add i64 %1401, %1267
-  %1403 = getelementptr float, ptr %1265, i64 %1402
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1386, ptr %1403, i32 0, i32 %1270)
-  br label %1404
+1394:                                             ; preds = %1381
+  %1395 = add i64 %23, %1261
+  %1396 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.to.svbool.nxv16i1(<vscale x 16 x i1> %131)
+  %1397 = trunc i64 %1395 to i32
+  %1398 = call <vscale x 16 x i1> @llvm.aarch64.sve.psel.nxv16i1(<vscale x 16 x i1> %1396, <vscale x 16 x i1> %111, i32 %1397)
+  %1399 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv16i1(<vscale x 16 x i1> %1398)
+  %1400 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1399, i64 0)
+  br label %1401
 
-1404:                                             ; preds = %1407, %1400
-  %1405 = phi i64 [ %1416, %1407 ], [ 0, %1400 ]
-  %1406 = icmp slt i64 %1405, %30
-  br i1 %1406, label %1407, label %1417
+1401:                                             ; preds = %1404, %1394
+  %1402 = phi i64 [ %1413, %1404 ], [ 0, %1394 ]
+  %1403 = icmp slt i64 %1402, %23
+  br i1 %1403, label %1404, label %1414
 
-1407:                                             ; preds = %1404
-  %1408 = trunc i64 %1405 to i32
-  %1409 = mul i64 %1405, %30
-  %1410 = add i64 %1409, 0
-  %1411 = getelementptr float, ptr %46, i64 %1410
-  %1412 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1408)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1411, i32 0, i32 %1408)
-  %1413 = mul i64 %1405, %30
-  %1414 = add i64 %1413, 0
-  %1415 = getelementptr float, ptr %46, i64 %1414
-  store <vscale x 4 x float> %1412, ptr %1415, align 4
-  %1416 = add i64 %1405, 1
-  br label %1404
+1404:                                             ; preds = %1401
+  %1405 = trunc i64 %1402 to i32
+  %1406 = mul i64 %1402, %23
+  %1407 = add i64 %1406, 0
+  %1408 = getelementptr float, ptr %39, i64 %1407
+  %1409 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1405)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1408, i32 0, i32 %1405)
+  %1410 = mul i64 %1402, %23
+  %1411 = add i64 %1410, 0
+  %1412 = getelementptr float, ptr %39, i64 %1411
+  store <vscale x 4 x float> %1409, ptr %1412, align 4
+  %1413 = add i64 %1402, 1
+  br label %1401
 
-1417:                                             ; preds = %1404
-  %1418 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1385, i64 4)
-  br label %1419
+1414:                                             ; preds = %1401
+  %1415 = mul i64 %1395, %19
+  %1416 = add i64 %1415, 0
+  %1417 = getelementptr float, ptr %1283, i64 %1416
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1400, ptr %1417, i32 0, i32 %1287)
+  br label %1418
 
-1419:                                             ; preds = %1422, %1417
-  %1420 = phi i64 [ %1431, %1422 ], [ 0, %1417 ]
-  %1421 = icmp slt i64 %1420, %30
-  br i1 %1421, label %1422, label %1432
+1418:                                             ; preds = %1421, %1414
+  %1419 = phi i64 [ %1430, %1421 ], [ 0, %1414 ]
+  %1420 = icmp slt i64 %1419, %23
+  br i1 %1420, label %1421, label %1431
 
-1422:                                             ; preds = %1419
-  %1423 = trunc i64 %1420 to i32
-  %1424 = mul i64 %1420, %30
-  %1425 = add i64 %1424, 0
-  %1426 = getelementptr float, ptr %44, i64 %1425
-  %1427 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1423)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1426, i32 0, i32 %1423)
-  %1428 = mul i64 %1420, %30
-  %1429 = add i64 %1428, 0
-  %1430 = getelementptr float, ptr %44, i64 %1429
-  store <vscale x 4 x float> %1427, ptr %1430, align 4
-  %1431 = add i64 %1420, 1
-  br label %1419
+1421:                                             ; preds = %1418
+  %1422 = trunc i64 %1419 to i32
+  %1423 = mul i64 %1419, %23
+  %1424 = add i64 %1423, 0
+  %1425 = getelementptr float, ptr %39, i64 %1424
+  %1426 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1422)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1425, i32 0, i32 %1422)
+  %1427 = mul i64 %1419, %23
+  %1428 = add i64 %1427, 0
+  %1429 = getelementptr float, ptr %39, i64 %1428
+  store <vscale x 4 x float> %1426, ptr %1429, align 4
+  %1430 = add i64 %1419, 1
+  br label %1418
 
-1432:                                             ; preds = %1419
-  %1433 = add i64 %1401, %1300
-  %1434 = getelementptr float, ptr %1265, i64 %1433
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1418, ptr %1434, i32 0, i32 %1270)
-  br label %1435
+1431:                                             ; preds = %1418
+  %1432 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1399, i64 4)
+  br label %1433
 
-1435:                                             ; preds = %1438, %1432
-  %1436 = phi i64 [ %1447, %1438 ], [ 0, %1432 ]
-  %1437 = icmp slt i64 %1436, %30
-  br i1 %1437, label %1438, label %1448
+1433:                                             ; preds = %1436, %1431
+  %1434 = phi i64 [ %1445, %1436 ], [ 0, %1431 ]
+  %1435 = icmp slt i64 %1434, %23
+  br i1 %1435, label %1436, label %1446
 
-1438:                                             ; preds = %1435
-  %1439 = trunc i64 %1436 to i32
-  %1440 = mul i64 %1436, %30
-  %1441 = add i64 %1440, 0
-  %1442 = getelementptr float, ptr %44, i64 %1441
-  %1443 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1439)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1442, i32 0, i32 %1439)
-  %1444 = mul i64 %1436, %30
-  %1445 = add i64 %1444, 0
-  %1446 = getelementptr float, ptr %44, i64 %1445
-  store <vscale x 4 x float> %1443, ptr %1446, align 4
-  %1447 = add i64 %1436, 1
-  br label %1435
+1436:                                             ; preds = %1433
+  %1437 = trunc i64 %1434 to i32
+  %1438 = mul i64 %1434, %23
+  %1439 = add i64 %1438, 0
+  %1440 = getelementptr float, ptr %37, i64 %1439
+  %1441 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1437)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1440, i32 0, i32 %1437)
+  %1442 = mul i64 %1434, %23
+  %1443 = add i64 %1442, 0
+  %1444 = getelementptr float, ptr %37, i64 %1443
+  store <vscale x 4 x float> %1441, ptr %1444, align 4
+  %1445 = add i64 %1434, 1
+  br label %1433
 
-1448:                                             ; preds = %1435
-  %1449 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1385, i64 8)
-  br label %1450
+1446:                                             ; preds = %1433
+  %1447 = add i64 %1415, %23
+  %1448 = getelementptr float, ptr %1283, i64 %1447
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1432, ptr %1448, i32 0, i32 %1287)
+  br label %1449
 
-1450:                                             ; preds = %1453, %1448
-  %1451 = phi i64 [ %1462, %1453 ], [ 0, %1448 ]
-  %1452 = icmp slt i64 %1451, %30
-  br i1 %1452, label %1453, label %1463
+1449:                                             ; preds = %1452, %1446
+  %1450 = phi i64 [ %1461, %1452 ], [ 0, %1446 ]
+  %1451 = icmp slt i64 %1450, %23
+  br i1 %1451, label %1452, label %1462
 
-1453:                                             ; preds = %1450
-  %1454 = trunc i64 %1451 to i32
-  %1455 = mul i64 %1451, %30
-  %1456 = add i64 %1455, 0
-  %1457 = getelementptr float, ptr %42, i64 %1456
-  %1458 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1454)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1457, i32 0, i32 %1454)
-  %1459 = mul i64 %1451, %30
-  %1460 = add i64 %1459, 0
-  %1461 = getelementptr float, ptr %42, i64 %1460
-  store <vscale x 4 x float> %1458, ptr %1461, align 4
-  %1462 = add i64 %1451, 1
-  br label %1450
+1452:                                             ; preds = %1449
+  %1453 = trunc i64 %1450 to i32
+  %1454 = mul i64 %1450, %23
+  %1455 = add i64 %1454, 0
+  %1456 = getelementptr float, ptr %37, i64 %1455
+  %1457 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1453)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1456, i32 0, i32 %1453)
+  %1458 = mul i64 %1450, %23
+  %1459 = add i64 %1458, 0
+  %1460 = getelementptr float, ptr %37, i64 %1459
+  store <vscale x 4 x float> %1457, ptr %1460, align 4
+  %1461 = add i64 %1450, 1
+  br label %1449
 
-1463:                                             ; preds = %1450
-  %1464 = add i64 %1401, %1332
-  %1465 = getelementptr float, ptr %1265, i64 %1464
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1449, ptr %1465, i32 0, i32 %1270)
-  br label %1466
+1462:                                             ; preds = %1449
+  %1463 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1399, i64 8)
+  br label %1464
 
-1466:                                             ; preds = %1469, %1463
-  %1467 = phi i64 [ %1478, %1469 ], [ 0, %1463 ]
-  %1468 = icmp slt i64 %1467, %30
-  br i1 %1468, label %1469, label %1479
+1464:                                             ; preds = %1467, %1462
+  %1465 = phi i64 [ %1476, %1467 ], [ 0, %1462 ]
+  %1466 = icmp slt i64 %1465, %23
+  br i1 %1466, label %1467, label %1477
 
-1469:                                             ; preds = %1466
-  %1470 = trunc i64 %1467 to i32
-  %1471 = mul i64 %1467, %30
-  %1472 = add i64 %1471, 0
-  %1473 = getelementptr float, ptr %42, i64 %1472
-  %1474 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1470)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1473, i32 0, i32 %1470)
-  %1475 = mul i64 %1467, %30
-  %1476 = add i64 %1475, 0
-  %1477 = getelementptr float, ptr %42, i64 %1476
-  store <vscale x 4 x float> %1474, ptr %1477, align 4
-  %1478 = add i64 %1467, 1
-  br label %1466
+1467:                                             ; preds = %1464
+  %1468 = trunc i64 %1465 to i32
+  %1469 = mul i64 %1465, %23
+  %1470 = add i64 %1469, 0
+  %1471 = getelementptr float, ptr %35, i64 %1470
+  %1472 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1468)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1471, i32 0, i32 %1468)
+  %1473 = mul i64 %1465, %23
+  %1474 = add i64 %1473, 0
+  %1475 = getelementptr float, ptr %35, i64 %1474
+  store <vscale x 4 x float> %1472, ptr %1475, align 4
+  %1476 = add i64 %1465, 1
+  br label %1464
 
-1479:                                             ; preds = %1466
-  %1480 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1385, i64 12)
-  br label %1481
+1477:                                             ; preds = %1464
+  %1478 = add i64 %1415, %274
+  %1479 = getelementptr float, ptr %1283, i64 %1478
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1463, ptr %1479, i32 0, i32 %1287)
+  br label %1480
 
-1481:                                             ; preds = %1484, %1479
-  %1482 = phi i64 [ %1493, %1484 ], [ 0, %1479 ]
-  %1483 = icmp slt i64 %1482, %30
-  br i1 %1483, label %1484, label %1494
+1480:                                             ; preds = %1483, %1477
+  %1481 = phi i64 [ %1492, %1483 ], [ 0, %1477 ]
+  %1482 = icmp slt i64 %1481, %23
+  br i1 %1482, label %1483, label %1493
 
-1484:                                             ; preds = %1481
-  %1485 = trunc i64 %1482 to i32
-  %1486 = mul i64 %1482, %30
-  %1487 = add i64 %1486, 0
-  %1488 = getelementptr float, ptr %40, i64 %1487
-  %1489 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1485)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1488, i32 0, i32 %1485)
-  %1490 = mul i64 %1482, %30
-  %1491 = add i64 %1490, 0
-  %1492 = getelementptr float, ptr %40, i64 %1491
-  store <vscale x 4 x float> %1489, ptr %1492, align 4
-  %1493 = add i64 %1482, 1
-  br label %1481
+1483:                                             ; preds = %1480
+  %1484 = trunc i64 %1481 to i32
+  %1485 = mul i64 %1481, %23
+  %1486 = add i64 %1485, 0
+  %1487 = getelementptr float, ptr %35, i64 %1486
+  %1488 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1484)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1487, i32 0, i32 %1484)
+  %1489 = mul i64 %1481, %23
+  %1490 = add i64 %1489, 0
+  %1491 = getelementptr float, ptr %35, i64 %1490
+  store <vscale x 4 x float> %1488, ptr %1491, align 4
+  %1492 = add i64 %1481, 1
+  br label %1480
 
-1494:                                             ; preds = %1481
-  %1495 = add i64 %1401, %1364
-  %1496 = getelementptr float, ptr %1265, i64 %1495
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1480, ptr %1496, i32 0, i32 %1270)
-  br label %1497
+1493:                                             ; preds = %1480
+  %1494 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1399, i64 12)
+  br label %1495
 
-1497:                                             ; preds = %1500, %1494
-  %1498 = phi i64 [ %1509, %1500 ], [ 0, %1494 ]
-  %1499 = icmp slt i64 %1498, %30
-  br i1 %1499, label %1500, label %1510
+1495:                                             ; preds = %1498, %1493
+  %1496 = phi i64 [ %1507, %1498 ], [ 0, %1493 ]
+  %1497 = icmp slt i64 %1496, %23
+  br i1 %1497, label %1498, label %1508
 
-1500:                                             ; preds = %1497
-  %1501 = trunc i64 %1498 to i32
-  %1502 = mul i64 %1498, %30
-  %1503 = add i64 %1502, 0
-  %1504 = getelementptr float, ptr %40, i64 %1503
-  %1505 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1501)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1504, i32 0, i32 %1501)
-  %1506 = mul i64 %1498, %30
-  %1507 = add i64 %1506, 0
-  %1508 = getelementptr float, ptr %40, i64 %1507
-  store <vscale x 4 x float> %1505, ptr %1508, align 4
-  %1509 = add i64 %1498, 1
-  br label %1497
+1498:                                             ; preds = %1495
+  %1499 = trunc i64 %1496 to i32
+  %1500 = mul i64 %1496, %23
+  %1501 = add i64 %1500, 0
+  %1502 = getelementptr float, ptr %33, i64 %1501
+  %1503 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1499)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1502, i32 0, i32 %1499)
+  %1504 = mul i64 %1496, %23
+  %1505 = add i64 %1504, 0
+  %1506 = getelementptr float, ptr %33, i64 %1505
+  store <vscale x 4 x float> %1503, ptr %1506, align 4
+  %1507 = add i64 %1496, 1
+  br label %1495
 
-1510:                                             ; preds = %1497
-  %1511 = add i64 %242, %1243
-  %1512 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.to.svbool.nxv16i1(<vscale x 16 x i1> %83)
-  %1513 = trunc i64 %1511 to i32
-  %1514 = call <vscale x 16 x i1> @llvm.aarch64.sve.psel.nxv16i1(<vscale x 16 x i1> %1512, <vscale x 16 x i1> %67, i32 %1513)
-  %1515 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv16i1(<vscale x 16 x i1> %1514)
-  %1516 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1515, i64 0)
-  br label %1517
+1508:                                             ; preds = %1495
+  %1509 = add i64 %1415, %328
+  %1510 = getelementptr float, ptr %1283, i64 %1509
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1494, ptr %1510, i32 0, i32 %1287)
+  br label %1511
 
-1517:                                             ; preds = %1520, %1510
-  %1518 = phi i64 [ %1529, %1520 ], [ 0, %1510 ]
-  %1519 = icmp slt i64 %1518, %30
-  br i1 %1519, label %1520, label %1530
+1511:                                             ; preds = %1514, %1508
+  %1512 = phi i64 [ %1523, %1514 ], [ 0, %1508 ]
+  %1513 = icmp slt i64 %1512, %23
+  br i1 %1513, label %1514, label %1524
 
-1520:                                             ; preds = %1517
-  %1521 = trunc i64 %1518 to i32
-  %1522 = mul i64 %1518, %30
-  %1523 = add i64 %1522, 0
-  %1524 = getelementptr float, ptr %38, i64 %1523
-  %1525 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1521)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1524, i32 0, i32 %1521)
-  %1526 = mul i64 %1518, %30
-  %1527 = add i64 %1526, 0
-  %1528 = getelementptr float, ptr %38, i64 %1527
-  store <vscale x 4 x float> %1525, ptr %1528, align 4
-  %1529 = add i64 %1518, 1
-  br label %1517
+1514:                                             ; preds = %1511
+  %1515 = trunc i64 %1512 to i32
+  %1516 = mul i64 %1512, %23
+  %1517 = add i64 %1516, 0
+  %1518 = getelementptr float, ptr %33, i64 %1517
+  %1519 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1515)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1518, i32 0, i32 %1515)
+  %1520 = mul i64 %1512, %23
+  %1521 = add i64 %1520, 0
+  %1522 = getelementptr float, ptr %33, i64 %1521
+  store <vscale x 4 x float> %1519, ptr %1522, align 4
+  %1523 = add i64 %1512, 1
+  br label %1511
 
-1530:                                             ; preds = %1517
-  %1531 = mul i64 %1511, %19
-  %1532 = add i64 %1531, %1267
-  %1533 = getelementptr float, ptr %1265, i64 %1532
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1516, ptr %1533, i32 0, i32 %1270)
-  br label %1534
+1524:                                             ; preds = %1511
+  %1525 = add i64 %274, %1261
+  %1526 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.to.svbool.nxv16i1(<vscale x 16 x i1> %131)
+  %1527 = trunc i64 %1525 to i32
+  %1528 = call <vscale x 16 x i1> @llvm.aarch64.sve.psel.nxv16i1(<vscale x 16 x i1> %1526, <vscale x 16 x i1> %111, i32 %1527)
+  %1529 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv16i1(<vscale x 16 x i1> %1528)
+  %1530 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1529, i64 0)
+  br label %1531
 
-1534:                                             ; preds = %1537, %1530
-  %1535 = phi i64 [ %1546, %1537 ], [ 0, %1530 ]
-  %1536 = icmp slt i64 %1535, %30
-  br i1 %1536, label %1537, label %1547
+1531:                                             ; preds = %1534, %1524
+  %1532 = phi i64 [ %1543, %1534 ], [ 0, %1524 ]
+  %1533 = icmp slt i64 %1532, %23
+  br i1 %1533, label %1534, label %1544
 
-1537:                                             ; preds = %1534
-  %1538 = trunc i64 %1535 to i32
-  %1539 = mul i64 %1535, %30
-  %1540 = add i64 %1539, 0
-  %1541 = getelementptr float, ptr %38, i64 %1540
-  %1542 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1538)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1541, i32 0, i32 %1538)
-  %1543 = mul i64 %1535, %30
-  %1544 = add i64 %1543, 0
-  %1545 = getelementptr float, ptr %38, i64 %1544
-  store <vscale x 4 x float> %1542, ptr %1545, align 4
-  %1546 = add i64 %1535, 1
-  br label %1534
+1534:                                             ; preds = %1531
+  %1535 = trunc i64 %1532 to i32
+  %1536 = mul i64 %1532, %23
+  %1537 = add i64 %1536, 0
+  %1538 = getelementptr float, ptr %31, i64 %1537
+  %1539 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1535)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1538, i32 0, i32 %1535)
+  %1540 = mul i64 %1532, %23
+  %1541 = add i64 %1540, 0
+  %1542 = getelementptr float, ptr %31, i64 %1541
+  store <vscale x 4 x float> %1539, ptr %1542, align 4
+  %1543 = add i64 %1532, 1
+  br label %1531
 
-1547:                                             ; preds = %1534
-  %1548 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1515, i64 4)
-  br label %1549
+1544:                                             ; preds = %1531
+  %1545 = mul i64 %1525, %19
+  %1546 = add i64 %1545, 0
+  %1547 = getelementptr float, ptr %1283, i64 %1546
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1530, ptr %1547, i32 0, i32 %1287)
+  br label %1548
 
-1549:                                             ; preds = %1552, %1547
-  %1550 = phi i64 [ %1561, %1552 ], [ 0, %1547 ]
-  %1551 = icmp slt i64 %1550, %30
-  br i1 %1551, label %1552, label %1562
+1548:                                             ; preds = %1551, %1544
+  %1549 = phi i64 [ %1560, %1551 ], [ 0, %1544 ]
+  %1550 = icmp slt i64 %1549, %23
+  br i1 %1550, label %1551, label %1561
 
-1552:                                             ; preds = %1549
-  %1553 = trunc i64 %1550 to i32
-  %1554 = mul i64 %1550, %30
-  %1555 = add i64 %1554, 0
-  %1556 = getelementptr float, ptr %36, i64 %1555
-  %1557 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1553)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1556, i32 0, i32 %1553)
-  %1558 = mul i64 %1550, %30
-  %1559 = add i64 %1558, 0
-  %1560 = getelementptr float, ptr %36, i64 %1559
-  store <vscale x 4 x float> %1557, ptr %1560, align 4
-  %1561 = add i64 %1550, 1
-  br label %1549
+1551:                                             ; preds = %1548
+  %1552 = trunc i64 %1549 to i32
+  %1553 = mul i64 %1549, %23
+  %1554 = add i64 %1553, 0
+  %1555 = getelementptr float, ptr %31, i64 %1554
+  %1556 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1552)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1555, i32 0, i32 %1552)
+  %1557 = mul i64 %1549, %23
+  %1558 = add i64 %1557, 0
+  %1559 = getelementptr float, ptr %31, i64 %1558
+  store <vscale x 4 x float> %1556, ptr %1559, align 4
+  %1560 = add i64 %1549, 1
+  br label %1548
 
-1562:                                             ; preds = %1549
-  %1563 = add i64 %1531, %1300
-  %1564 = getelementptr float, ptr %1265, i64 %1563
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1548, ptr %1564, i32 0, i32 %1270)
-  br label %1565
+1561:                                             ; preds = %1548
+  %1562 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1529, i64 4)
+  br label %1563
 
-1565:                                             ; preds = %1568, %1562
-  %1566 = phi i64 [ %1577, %1568 ], [ 0, %1562 ]
-  %1567 = icmp slt i64 %1566, %30
-  br i1 %1567, label %1568, label %1578
+1563:                                             ; preds = %1566, %1561
+  %1564 = phi i64 [ %1575, %1566 ], [ 0, %1561 ]
+  %1565 = icmp slt i64 %1564, %23
+  br i1 %1565, label %1566, label %1576
 
-1568:                                             ; preds = %1565
-  %1569 = trunc i64 %1566 to i32
-  %1570 = mul i64 %1566, %30
-  %1571 = add i64 %1570, 0
-  %1572 = getelementptr float, ptr %36, i64 %1571
-  %1573 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1569)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1572, i32 0, i32 %1569)
-  %1574 = mul i64 %1566, %30
-  %1575 = add i64 %1574, 0
-  %1576 = getelementptr float, ptr %36, i64 %1575
-  store <vscale x 4 x float> %1573, ptr %1576, align 4
-  %1577 = add i64 %1566, 1
-  br label %1565
+1566:                                             ; preds = %1563
+  %1567 = trunc i64 %1564 to i32
+  %1568 = mul i64 %1564, %23
+  %1569 = add i64 %1568, 0
+  %1570 = getelementptr float, ptr %29, i64 %1569
+  %1571 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1567)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1570, i32 0, i32 %1567)
+  %1572 = mul i64 %1564, %23
+  %1573 = add i64 %1572, 0
+  %1574 = getelementptr float, ptr %29, i64 %1573
+  store <vscale x 4 x float> %1571, ptr %1574, align 4
+  %1575 = add i64 %1564, 1
+  br label %1563
 
-1578:                                             ; preds = %1565
-  %1579 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1515, i64 8)
-  br label %1580
+1576:                                             ; preds = %1563
+  %1577 = add i64 %1545, %23
+  %1578 = getelementptr float, ptr %1283, i64 %1577
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1562, ptr %1578, i32 0, i32 %1287)
+  br label %1579
 
-1580:                                             ; preds = %1583, %1578
-  %1581 = phi i64 [ %1592, %1583 ], [ 0, %1578 ]
-  %1582 = icmp slt i64 %1581, %30
-  br i1 %1582, label %1583, label %1593
+1579:                                             ; preds = %1582, %1576
+  %1580 = phi i64 [ %1591, %1582 ], [ 0, %1576 ]
+  %1581 = icmp slt i64 %1580, %23
+  br i1 %1581, label %1582, label %1592
 
-1583:                                             ; preds = %1580
-  %1584 = trunc i64 %1581 to i32
-  %1585 = mul i64 %1581, %30
-  %1586 = add i64 %1585, 0
-  %1587 = getelementptr float, ptr %34, i64 %1586
-  %1588 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1584)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1587, i32 0, i32 %1584)
-  %1589 = mul i64 %1581, %30
-  %1590 = add i64 %1589, 0
-  %1591 = getelementptr float, ptr %34, i64 %1590
-  store <vscale x 4 x float> %1588, ptr %1591, align 4
-  %1592 = add i64 %1581, 1
-  br label %1580
+1582:                                             ; preds = %1579
+  %1583 = trunc i64 %1580 to i32
+  %1584 = mul i64 %1580, %23
+  %1585 = add i64 %1584, 0
+  %1586 = getelementptr float, ptr %29, i64 %1585
+  %1587 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1583)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1586, i32 0, i32 %1583)
+  %1588 = mul i64 %1580, %23
+  %1589 = add i64 %1588, 0
+  %1590 = getelementptr float, ptr %29, i64 %1589
+  store <vscale x 4 x float> %1587, ptr %1590, align 4
+  %1591 = add i64 %1580, 1
+  br label %1579
 
-1593:                                             ; preds = %1580
-  %1594 = add i64 %1531, %1332
-  %1595 = getelementptr float, ptr %1265, i64 %1594
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1579, ptr %1595, i32 0, i32 %1270)
-  br label %1596
+1592:                                             ; preds = %1579
+  %1593 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1529, i64 8)
+  br label %1594
 
-1596:                                             ; preds = %1599, %1593
-  %1597 = phi i64 [ %1608, %1599 ], [ 0, %1593 ]
-  %1598 = icmp slt i64 %1597, %30
-  br i1 %1598, label %1599, label %1609
+1594:                                             ; preds = %1597, %1592
+  %1595 = phi i64 [ %1606, %1597 ], [ 0, %1592 ]
+  %1596 = icmp slt i64 %1595, %23
+  br i1 %1596, label %1597, label %1607
 
-1599:                                             ; preds = %1596
-  %1600 = trunc i64 %1597 to i32
-  %1601 = mul i64 %1597, %30
-  %1602 = add i64 %1601, 0
-  %1603 = getelementptr float, ptr %34, i64 %1602
-  %1604 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1600)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1603, i32 0, i32 %1600)
-  %1605 = mul i64 %1597, %30
-  %1606 = add i64 %1605, 0
-  %1607 = getelementptr float, ptr %34, i64 %1606
-  store <vscale x 4 x float> %1604, ptr %1607, align 4
-  %1608 = add i64 %1597, 1
-  br label %1596
+1597:                                             ; preds = %1594
+  %1598 = trunc i64 %1595 to i32
+  %1599 = mul i64 %1595, %23
+  %1600 = add i64 %1599, 0
+  %1601 = getelementptr float, ptr %27, i64 %1600
+  %1602 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1598)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1601, i32 0, i32 %1598)
+  %1603 = mul i64 %1595, %23
+  %1604 = add i64 %1603, 0
+  %1605 = getelementptr float, ptr %27, i64 %1604
+  store <vscale x 4 x float> %1602, ptr %1605, align 4
+  %1606 = add i64 %1595, 1
+  br label %1594
 
-1609:                                             ; preds = %1596
-  %1610 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1515, i64 12)
-  br label %1611
+1607:                                             ; preds = %1594
+  %1608 = add i64 %1545, %274
+  %1609 = getelementptr float, ptr %1283, i64 %1608
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1593, ptr %1609, i32 0, i32 %1287)
+  br label %1610
 
-1611:                                             ; preds = %1614, %1609
-  %1612 = phi i64 [ %1623, %1614 ], [ 0, %1609 ]
-  %1613 = icmp slt i64 %1612, %30
-  br i1 %1613, label %1614, label %1624
+1610:                                             ; preds = %1613, %1607
+  %1611 = phi i64 [ %1622, %1613 ], [ 0, %1607 ]
+  %1612 = icmp slt i64 %1611, %23
+  br i1 %1612, label %1613, label %1623
 
-1614:                                             ; preds = %1611
-  %1615 = trunc i64 %1612 to i32
-  %1616 = mul i64 %1612, %30
-  %1617 = add i64 %1616, 0
-  %1618 = getelementptr float, ptr %32, i64 %1617
-  %1619 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1615)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1618, i32 0, i32 %1615)
-  %1620 = mul i64 %1612, %30
-  %1621 = add i64 %1620, 0
-  %1622 = getelementptr float, ptr %32, i64 %1621
-  store <vscale x 4 x float> %1619, ptr %1622, align 4
-  %1623 = add i64 %1612, 1
-  br label %1611
+1613:                                             ; preds = %1610
+  %1614 = trunc i64 %1611 to i32
+  %1615 = mul i64 %1611, %23
+  %1616 = add i64 %1615, 0
+  %1617 = getelementptr float, ptr %27, i64 %1616
+  %1618 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1614)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1617, i32 0, i32 %1614)
+  %1619 = mul i64 %1611, %23
+  %1620 = add i64 %1619, 0
+  %1621 = getelementptr float, ptr %27, i64 %1620
+  store <vscale x 4 x float> %1618, ptr %1621, align 4
+  %1622 = add i64 %1611, 1
+  br label %1610
 
-1624:                                             ; preds = %1611
-  %1625 = add i64 %1531, %1364
-  %1626 = getelementptr float, ptr %1265, i64 %1625
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1610, ptr %1626, i32 0, i32 %1270)
-  br label %1627
+1623:                                             ; preds = %1610
+  %1624 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1529, i64 12)
+  br label %1625
 
-1627:                                             ; preds = %1630, %1624
-  %1628 = phi i64 [ %1639, %1630 ], [ 0, %1624 ]
-  %1629 = icmp slt i64 %1628, %30
-  br i1 %1629, label %1630, label %1640
+1625:                                             ; preds = %1628, %1623
+  %1626 = phi i64 [ %1637, %1628 ], [ 0, %1623 ]
+  %1627 = icmp slt i64 %1626, %23
+  br i1 %1627, label %1628, label %1638
 
-1630:                                             ; preds = %1627
-  %1631 = trunc i64 %1628 to i32
-  %1632 = mul i64 %1628, %30
-  %1633 = add i64 %1632, 0
-  %1634 = getelementptr float, ptr %32, i64 %1633
-  %1635 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1631)
-  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1634, i32 0, i32 %1631)
-  %1636 = mul i64 %1628, %30
-  %1637 = add i64 %1636, 0
-  %1638 = getelementptr float, ptr %32, i64 %1637
-  store <vscale x 4 x float> %1635, ptr %1638, align 4
-  %1639 = add i64 %1628, 1
-  br label %1627
+1628:                                             ; preds = %1625
+  %1629 = trunc i64 %1626 to i32
+  %1630 = mul i64 %1626, %23
+  %1631 = add i64 %1630, 0
+  %1632 = getelementptr float, ptr %25, i64 %1631
+  %1633 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1629)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1632, i32 0, i32 %1629)
+  %1634 = mul i64 %1626, %23
+  %1635 = add i64 %1634, 0
+  %1636 = getelementptr float, ptr %25, i64 %1635
+  store <vscale x 4 x float> %1633, ptr %1636, align 4
+  %1637 = add i64 %1626, 1
+  br label %1625
 
-1640:                                             ; preds = %1627
-  %1641 = add i64 %297, %1243
-  %1642 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.to.svbool.nxv16i1(<vscale x 16 x i1> %83)
-  %1643 = trunc i64 %1641 to i32
-  %1644 = call <vscale x 16 x i1> @llvm.aarch64.sve.psel.nxv16i1(<vscale x 16 x i1> %1642, <vscale x 16 x i1> %67, i32 %1643)
-  %1645 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv16i1(<vscale x 16 x i1> %1644)
-  %1646 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1645, i64 0)
-  %1647 = mul i64 %1641, %19
-  %1648 = add i64 %1647, %1267
-  %1649 = getelementptr float, ptr %1265, i64 %1648
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1646, ptr %1649, i32 0, i32 %1270)
-  %1650 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1645, i64 4)
-  %1651 = add i64 %1647, %1300
-  %1652 = getelementptr float, ptr %1265, i64 %1651
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1650, ptr %1652, i32 1, i32 %1270)
-  %1653 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1645, i64 8)
-  %1654 = add i64 %1647, %1332
-  %1655 = getelementptr float, ptr %1265, i64 %1654
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1653, ptr %1655, i32 2, i32 %1270)
-  %1656 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1645, i64 12)
-  %1657 = add i64 %1647, %1364
-  %1658 = getelementptr float, ptr %1265, i64 %1657
-  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1656, ptr %1658, i32 3, i32 %1270)
-  %1659 = add i64 %1243, 1
-  br label %1242
+1638:                                             ; preds = %1625
+  %1639 = add i64 %1545, %328
+  %1640 = getelementptr float, ptr %1283, i64 %1639
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1624, ptr %1640, i32 0, i32 %1287)
+  br label %1641
 
-1660:                                             ; preds = %1242
-  %1661 = add i64 %85, 1
-  br label %84
+1641:                                             ; preds = %1644, %1638
+  %1642 = phi i64 [ %1653, %1644 ], [ 0, %1638 ]
+  %1643 = icmp slt i64 %1642, %23
+  br i1 %1643, label %1644, label %1654
 
-1662:                                             ; preds = %84
-  %1663 = add i64 %69, %55
+1644:                                             ; preds = %1641
+  %1645 = trunc i64 %1642 to i32
+  %1646 = mul i64 %1642, %23
+  %1647 = add i64 %1646, 0
+  %1648 = getelementptr float, ptr %25, i64 %1647
+  %1649 = call <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float> poison, <vscale x 4 x i1> splat (i1 true), i32 0, i32 %1645)
+  call void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1> splat (i1 true), ptr %1648, i32 0, i32 %1645)
+  %1650 = mul i64 %1642, %23
+  %1651 = add i64 %1650, 0
+  %1652 = getelementptr float, ptr %25, i64 %1651
+  store <vscale x 4 x float> %1649, ptr %1652, align 4
+  %1653 = add i64 %1642, 1
+  br label %1641
+
+1654:                                             ; preds = %1641
+  %1655 = add i64 %328, %1261
+  %1656 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.to.svbool.nxv16i1(<vscale x 16 x i1> %131)
+  %1657 = trunc i64 %1655 to i32
+  %1658 = call <vscale x 16 x i1> @llvm.aarch64.sve.psel.nxv16i1(<vscale x 16 x i1> %1656, <vscale x 16 x i1> %111, i32 %1657)
+  %1659 = call <vscale x 16 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv16i1(<vscale x 16 x i1> %1658)
+  %1660 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1659, i64 0)
+  %1661 = mul i64 %1655, %19
+  %1662 = add i64 %1661, 0
+  %1663 = getelementptr float, ptr %1283, i64 %1662
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1660, ptr %1663, i32 0, i32 %1287)
+  %1664 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1659, i64 4)
+  %1665 = add i64 %1661, %23
+  %1666 = getelementptr float, ptr %1283, i64 %1665
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1664, ptr %1666, i32 1, i32 %1287)
+  %1667 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1659, i64 8)
+  %1668 = add i64 %1661, %274
+  %1669 = getelementptr float, ptr %1283, i64 %1668
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1667, ptr %1669, i32 2, i32 %1287)
+  %1670 = call <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1> %1659, i64 12)
+  %1671 = add i64 %1661, %328
+  %1672 = getelementptr float, ptr %1283, i64 %1671
+  call void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1> %1670, ptr %1672, i32 3, i32 %1287)
+  %1673 = add i64 %1261, 1
+  br label %1260
+
+1674:                                             ; preds = %1260
+  %1675 = add i64 %133, 1
+  br label %132
+
+1676:                                             ; preds = %132
+  %1677 = add i64 %113, %48
+  br label %112
+
+1678:                                             ; preds = %112
+  %1679 = add i64 %101, %48
+  br label %100
+
+1680:                                             ; preds = %100
+  %1681 = add i64 %95, 128
+  br label %94
+
+1682:                                             ; preds = %94
+  %1683 = add i64 %69, 16
   br label %68
 
-1664:                                             ; preds = %68
-  %1665 = add i64 %57, %55
-  br label %56
+1684:                                             ; preds = %68
+  %1685 = add i64 %62, 16
+  br label %61
 
-1666:                                             ; preds = %56
-  ret { ptr, ptr, i64, [2 x i64], [2 x i64] } %28
+1686:                                             ; preds = %61
+  %1687 = add i64 %56, 128
+  br label %55
+
+1688:                                             ; preds = %55
+  %1689 = add i64 %50, 128
+  br label %49
+
+1690:                                             ; preds = %49
+  ret void
 }
 
 ; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
@@ -2398,6 +2451,9 @@ declare <vscale x 16 x i32> @llvm.stepvector.nxv16i32() #3
 ; Function Attrs: nocallback nofree nosync nounwind willreturn memory(argmem: readwrite, inaccessiblemem: readwrite)
 declare void @llvm.prefetch.p0(ptr readonly captures(none), i32 immarg range(i32 0, 2), i32 immarg range(i32 0, 4), i32 immarg range(i32 0, 2)) #4
 
+; Function Attrs: nocallback nofree nosync nounwind willreturn memory(argmem: read)
+declare <vscale x 16 x float> @llvm.masked.load.nxv16f32.p0(ptr captures(none), <vscale x 16 x i1>, <vscale x 16 x float>) #5
+
 ; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
 declare <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 x float>, i64 immarg) #1
 
@@ -2405,7 +2461,7 @@ declare <vscale x 4 x float> @llvm.vector.extract.nxv4f32.nxv16f32(<vscale x 16 
 declare <vscale x 4 x i32> @llvm.stepvector.nxv4i32() #3
 
 ; Function Attrs: nocallback nofree nosync nounwind willreturn memory(target_mem1: readwrite)
-declare void @llvm.aarch64.sme.mopa.nxv4f32(i32 immarg, <vscale x 4 x i1>, <vscale x 4 x i1>, <vscale x 4 x float>, <vscale x 4 x float>) #5
+declare void @llvm.aarch64.sme.mopa.nxv4f32(i32 immarg, <vscale x 4 x i1>, <vscale x 4 x i1>, <vscale x 4 x float>, <vscale x 4 x float>) #6
 
 ; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
 declare <vscale x 16 x i1> @llvm.aarch64.sve.convert.to.svbool.nxv16i1(<vscale x 16 x i1>) #1
@@ -2420,29 +2476,29 @@ declare <vscale x 16 x i1> @llvm.aarch64.sve.convert.from.svbool.nxv16i1(<vscale
 declare <vscale x 4 x i1> @llvm.vector.extract.nxv4i1.nxv16i1(<vscale x 16 x i1>, i64 immarg) #1
 
 ; Function Attrs: nocallback nofree nosync nounwind willreturn memory(argmem: readwrite, target_mem1: readwrite)
-declare void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1>, ptr, i32 immarg, i32) #6
+declare void @llvm.aarch64.sme.st1w.horiz.p0(<vscale x 4 x i1>, ptr, i32 immarg, i32) #7
 
 ; Function Attrs: nocallback nofree nosync nounwind willreturn memory(target_mem1: read)
-declare <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float>, <vscale x 4 x i1>, i32 immarg, i32) #7
+declare <vscale x 4 x float> @llvm.aarch64.sme.read.horiz.nxv4f32(<vscale x 4 x float>, <vscale x 4 x i1>, i32 immarg, i32) #8
 
 ; Function Attrs: nocallback nofree nosync nounwind willreturn memory(argmem: readwrite, target_mem1: readwrite)
-declare void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1>, ptr, i32 immarg, i32) #6
+declare void @llvm.aarch64.sme.ld1w.horiz.p0(<vscale x 4 x i1>, ptr, i32 immarg, i32) #7
 
 ; Function Attrs: nocallback nofree nosync nounwind willreturn memory(argmem: read)
-declare <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr captures(none), <vscale x 4 x i1>, <vscale x 4 x float>) #8
+declare <vscale x 4 x float> @llvm.masked.load.nxv4f32.p0(ptr captures(none), <vscale x 4 x i1>, <vscale x 4 x float>) #5
 
 ; Function Attrs: nocallback nofree nosync nounwind willreturn memory(target_mem1: readwrite)
-declare void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 immarg, i32, <vscale x 4 x i1>, <vscale x 4 x float>) #5
+declare void @llvm.aarch64.sme.write.horiz.nxv4f32(i32 immarg, i32, <vscale x 4 x i1>, <vscale x 4 x float>) #6
 
 attributes #0 = { "aarch64_new_za" "aarch64_pstate_sm_body" }
 attributes #1 = { nocallback nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #2 = { nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none) }
 attributes #3 = { nocallback nofree nosync nounwind willreturn memory(none) }
 attributes #4 = { nocallback nofree nosync nounwind willreturn memory(argmem: readwrite, inaccessiblemem: readwrite) }
-attributes #5 = { nocallback nofree nosync nounwind willreturn memory(target_mem1: readwrite) }
-attributes #6 = { nocallback nofree nosync nounwind willreturn memory(argmem: readwrite, target_mem1: readwrite) }
-attributes #7 = { nocallback nofree nosync nounwind willreturn memory(target_mem1: read) }
-attributes #8 = { nocallback nofree nosync nounwind willreturn memory(argmem: read) }
+attributes #5 = { nocallback nofree nosync nounwind willreturn memory(argmem: read) }
+attributes #6 = { nocallback nofree nosync nounwind willreturn memory(target_mem1: readwrite) }
+attributes #7 = { nocallback nofree nosync nounwind willreturn memory(argmem: readwrite, target_mem1: readwrite) }
+attributes #8 = { nocallback nofree nosync nounwind willreturn memory(target_mem1: read) }
 
 !llvm.module.flags = !{!0}
 

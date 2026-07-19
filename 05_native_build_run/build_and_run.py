@@ -41,11 +41,14 @@ def main() -> int:
     summary_lines: list[str] = []
 
     # 先尝试统一主线最终产物；这是第五步真正关心的对象。
-    unified_mlir = ROOT / "04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir"
+    unified_mlir = ROOT / "04_vector_arm_sme_llvm/output/02_llvm_prefetch.mlir"
     unified_ll = output / "step4_llvm_prefetch.ll"
     unified_obj = output / "step4_llvm_prefetch.o"
     unified_exe = output / "unified_demo"
     unified_log = output / "unified_demo.log"
+
+    for stale_path in [unified_ll, unified_obj, unified_exe, unified_log]:
+        remove_if_exists(stale_path)
 
     result = run(
         [str(MLIR_TRANSLATE), "--mlir-to-llvmir", str(unified_mlir), "-o", str(unified_ll)],
