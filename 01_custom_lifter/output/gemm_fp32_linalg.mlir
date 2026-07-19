@@ -4,13 +4,14 @@
 // 目标：保留 GEMM 的高层算子语义，作为后续 vector / arm_sme lowering 的输入
 //
 // 阅读建议：
-// 1. 先看外层 scf.for，它们对应 C kernel 中的 mc / nc / kc 分块。
+// 1. 先看外层 scf.for，它们对应 C kernel 中的 mc / nc 输出分块。
 // 2. 再看内层 scf.for，它们对应 mr / nr 微块切分。
-// 3. 最后看 linalg.matmul，它是从 C 中恢复出的核心矩阵乘语义。
+// 3. 最后看 ko 循环和 linalg.matmul，它们共同表达沿 K 维分块累加。
 // ============================================================================
 #tile_outer = affine_map<(d0, d1) -> (128, d0 - d1)>
 #tile_inner_m = affine_map<(d0, d1) -> (16, d0 - d1)>
 #tile_inner_n = affine_map<(d0, d1) -> (16, d0 - d1)>
+#add2 = affine_map<(d0, d1) -> (d0 + d1)>
 
 module {
   // 这个函数不是逐条模拟 C 语句，而是把 C kernel 提升为“块级 matmul 语义”。
@@ -36,41 +37,41 @@ module {
     %k = memref.dim %a, %c1 : memref<?x?xf32>
     %n = memref.dim %b, %c1 : memref<?x?xf32>
 
-    // 外层三层循环保持论文中的 mc / nc / kc 分块结构。
+    // 外层两层循环保持论文中的 mc / nc 输出分块结构。
     scf.for %i = %c0 to %m step %mc0 {
       %mc = affine.min #tile_outer(%m, %i)
 
       scf.for %j = %c0 to %n step %nc0 {
         %nc = affine.min #tile_outer(%n, %j)
 
-        scf.for %ko = %c0 to %k step %kc0 {
-          %kc = affine.min #tile_outer(%k, %ko)
+        %c_tile = memref.subview %c[%i, %j] [%mc, %nc] [%c1, %c1]
+          : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
 
-          // subview 把整矩阵裁成当前 tile，便于后续继续做向量化和 ArmSME lowering。
-          %a_tile = memref.subview %a[%i, %ko] [%mc, %kc] [%c1, %c1]
-            : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
-          %b_tile = memref.subview %b[%ko, %j] [%kc, %nc] [%c1, %c1]
-            : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
-          %c_tile = memref.subview %c[%i, %j] [%mc, %nc] [%c1, %c1]
-            : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+        // 内层两层循环保留 mr / nr 微块信息。
+        scf.for %ii = %c0 to %mc step %mr0 {
+          %mr = affine.min #tile_inner_m(%mc, %ii)
 
-          // 内层两层循环保留 mr / nr 微块信息。
-          scf.for %ii = %c0 to %mc step %mr0 {
-            %mr = affine.min #tile_inner_m(%mc, %ii)
+          scf.for %jj = %c0 to %nc step %nr0 {
+            %nr = affine.min #tile_inner_n(%nc, %jj)
 
-            scf.for %jj = %c0 to %nc step %nr0 {
-              %nr = affine.min #tile_inner_n(%nc, %jj)
+            %a_row = affine.apply #add2(%i, %ii)
+            %b_col = affine.apply #add2(%j, %jj)
+            %c_block = memref.subview %c_tile[%ii, %jj] [%mr, %nr] [%c1, %c1]
+              : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<?x?xf32, strided<[?, ?], offset: ?>>
 
-              %a_block = memref.subview %a_tile[%ii, %c0] [%mr, %kc] [%c1, %c1]
-                : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<?x?xf32, strided<[?, ?], offset: ?>>
-              %b_block = memref.subview %b_tile[%c0, %jj] [%kc, %nr] [%c1, %c1]
-                : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<?x?xf32, strided<[?, ?], offset: ?>>
-              %c_block = memref.subview %c_tile[%ii, %jj] [%mr, %nr] [%c1, %c1]
-                : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+            // 研究版语义只保留 C = A * B，所以每个输出微块在进入 K 分块前清零一次。
+            linalg.fill ins(%cst_0 : f32)
+                        outs(%c_block : memref<?x?xf32, strided<[?, ?], offset: ?>>)
 
-              // 研究版语义只保留 C = A * B，所以每个输出微块先清零。
-              linalg.fill ins(%cst_0 : f32)
-                          outs(%c_block : memref<?x?xf32, strided<[?, ?], offset: ?>>)
+            // ko 循环保留 kc 分块，但每个分块都累加到同一个 C 微块。
+            scf.for %ko = %c0 to %k step %kc0 {
+              %kc = affine.min #tile_outer(%k, %ko)
+
+              // A/B 的 subview 暴露当前 K tile 的数据流，后续可分别转换到 affine 分析或 vector lowering。
+              %a_block = memref.subview %a[%a_row, %ko] [%mr, %kc] [%c1, %c1]
+                : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+              %b_block = memref.subview %b[%ko, %b_col] [%kc, %nr] [%c1, %c1]
+                : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
 
               // 这里是最关键的提升结果：把标量乘加模式恢复成 linalg.matmul。
               linalg.matmul

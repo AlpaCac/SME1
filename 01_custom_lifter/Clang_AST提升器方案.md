@@ -10,7 +10,7 @@
 
 - 用正则确认固定函数签名
 - 从注释中读取 `@kernel` / `@blocking` 等标注
-- 用模板生成 `linalg` 和 `affine` 两份 MLIR
+- 用模板生成研究用的高层 `linalg` MLIR
 
 这种方式适合原型验证，但普适性不足。
 
@@ -56,7 +56,7 @@
 C kernel
 -> Clang AST JSON
 -> 受限 GEMM 结构识别
--> 高层 MLIR
+-> 高层 linalg MLIR
 ```
 
 这里的关键点是：
