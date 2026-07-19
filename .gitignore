@@ -1,0 +1,20 @@
+.DS_Store
+
+# Native build artifacts
+*.o
+/03_prefetch_injection/build/
+/04_vector_arm_sme_llvm/build/
+
+# Step-4 temporary lowering artifacts
+/04_vector_arm_sme_llvm/step4_*/
+/04_vector_arm_sme_llvm/output/02_memref_prefetch.mlir
+/04_vector_arm_sme_llvm/output/04_compute_vector.mlir
+/04_vector_arm_sme_llvm/output/05_compute_arm_sme.mlir
+/04_vector_arm_sme_llvm/output/06_compute_llvm.mlir
+/04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch_pre_legalize.mlir
+/04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch_legalized.mlir
+/04_vector_arm_sme_llvm/output/step4_llvm_prefetch_pre_legalize.mlir
+/04_vector_arm_sme_llvm/output/step4_llvm_prefetch_legalized.mlir
+
+# Locally generated executables in step outputs
+/05_native_build_run/output/unified_demo

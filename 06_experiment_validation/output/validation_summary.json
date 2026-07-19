@@ -1,0 +1,26 @@
+{
+  "environment": {
+    "host": "Apple Silicon macOS",
+    "branch": "04_vector_arm_sme_llvm"
+  },
+  "functional_validation": {
+    "llvm_ir_accepted": true,
+    "prefetch_intrinsic_recognized_unified_branch": true,
+    "sme_intrinsics_recognized_unified_branch": true,
+    "final_assembly_contains_prefetch_unified_branch": true,
+    "final_assembly_contains_sme_unified_branch": true,
+    "unified_pipeline_runs_locally": true,
+    "stable_wrapper_descriptor_works": true,
+    "unified_prefetch_call_count": 3
+  },
+  "performance_validation": {
+    "status": "pending_lx2_environment",
+    "reason": "当前仓库已完成本机功能性验证，但 README 方案中的性能实验依赖 LX2 + 毕昇编译器 + PMU/perf 环境，本机无法替代该目标环境。",
+    "planned_experiments": [
+      "Baseline 1 (No Prefetch)",
+      "Baseline 2 (BiSheng Native Prefetch)",
+      "Proposed (MLIR pipeline + BiSheng backend)",
+      "FlagGEMM irregular-control-flow throughput experiment"
+    ]
+  }
+}
