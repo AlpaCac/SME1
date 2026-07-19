@@ -1,15 +1,19 @@
 # 第二步分析结果
 
-这份报告由 `step2-prefetch-cost-model` MLIR pass 生成。输入是第一步的 `linalg` 主线，分析层是经过 linalg lowering 得到的 `scf + affine indexing` 循环形态。
+这份报告由 `step2-prefetch-cost-model` MLIR pass 生成。输入是第一步的 `linalg` 主线，分析层是经过 linalg lowering 和保守规范化得到的 `affine-normalized` 循环形态。
 
 ## 1. IR 结构摘要
 
 - `linalg.matmul` 数量：`0`
 - `linalg.fill` 数量：`0`
-- `scf.for` 数量：`10`
+- `scf.for` 数量：`0`
+- `affine.for` 数量：`10`
 - `memref.subview` 数量：`4`
-- `memref.load` 数量：`3`
-- `memref.store` 数量：`2`
+- `memref.load` 数量：`0`
+- `memref.store` 数量：`0`
+
+- `affine.load` 数量：`3`
+- `affine.store` 数量：`2`
 
 ## 2. 分块和工作集
 

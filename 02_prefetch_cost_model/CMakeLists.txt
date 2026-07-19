@@ -31,6 +31,7 @@ add_llvm_library(SMEPrefetchCostModelPass
   mlir-opt
 
   LINK_LIBS
+  MLIRAffineDialect
   MLIRArithDialect
   MLIRFuncDialect
   MLIRIR

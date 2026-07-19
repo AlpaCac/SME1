@@ -1,6 +1,6 @@
 {
   "input_layer": "linalg mainline",
-  "analysis_layer": "scf+affine-indexing",
+  "analysis_layer": "affine-normalized",
   "tile_config": {
     "mc": 128,
     "nc": 128,
@@ -12,10 +12,13 @@
   "ir_summary": {
     "linalg_matmul_count": 0,
     "linalg_fill_count": 0,
-    "scf_for_count": 10,
+    "scf_for_count": 0,
+    "affine_for_count": 10,
     "memref_subview_count": 4,
-    "memref_load_count": 3,
-    "memref_store_count": 2
+    "memref_load_count": 0,
+    "memref_store_count": 0,
+    "affine_load_count": 3,
+    "affine_store_count": 2
   },
   "working_set_bytes": {
     "macro_A": 65536,
