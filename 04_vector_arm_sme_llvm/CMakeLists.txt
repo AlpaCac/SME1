@@ -31,7 +31,6 @@ add_llvm_library(SMEStep4LoweringPasses
   mlir-opt
 
   LINK_LIBS
-  MLIRAffineDialect
   MLIRArithDialect
   MLIRFuncDialect
   MLIRIR

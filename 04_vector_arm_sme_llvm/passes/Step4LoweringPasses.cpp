@@ -2,32 +2,22 @@
 //
 // 第四步 MLIR pass 插件。
 //
-// 这个文件把早期 Python 脚本中的 IR 文本改写逻辑迁移为真正的 MLIR pass：
-//   1. step4-convert-research-prefetch-to-affine
-//      把第三步已经注册的 research.prefetch 桥接为标准 affine.prefetch。
-//   2. step4-inject-vector-memref-prefetch
+// 这个文件把第四步主线中的研究改写逻辑实现为真正的 MLIR pass：
+//   1. step4-inject-vector-memref-prefetch
 //      在 vector.transfer_read 之前插入 memref.prefetch，让预取进入 vector 主线。
-//   3. step4-repair-llvm-index-bridges
+//   2. step4-repair-llvm-index-bridges
 //      把末端 i64 -> index -> i32 桥接残留规整为 llvm.trunc。
 //
 // 这些 pass 只负责“研究语义改写”。真正的 affine/vector/arm_sme/llvm lowering
 // 仍然由 mlir-opt 的官方 pass pipeline 调度。
 //
-// 注意：research dialect 的注册职责属于第三步插件。第四步作为 pass 插件
-// 读取第三步已经可解析的 IR，不重复注册同名 dialect，避免同一个插件既作为
-// dialect plugin 又作为 pass plugin 加载时产生边界混乱。
-//
 //===----------------------------------------------------------------------===//
 
-#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/IR/AffineExpr.h"
-#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Pass/Pass.h"
@@ -38,99 +28,6 @@
 using namespace mlir;
 
 namespace {
-
-static bool isResearchPrefetch(Operation *op) {
-  return op->getName().getStringRef() == "research.prefetch";
-}
-
-static unsigned localityToHint(Operation *op) {
-  StringAttr locality = op->getAttrOfType<StringAttr>("locality");
-  if (locality && locality.getValue().equals_insensitive("KEEP"))
-    return 3;
-  return 0;
-}
-
-//===----------------------------------------------------------------------===//
-// research.prefetch -> affine.prefetch
-//===----------------------------------------------------------------------===//
-
-struct ConvertResearchPrefetchToAffinePass
-    : public PassWrapper<ConvertResearchPrefetchToAffinePass,
-                         OperationPass<func::FuncOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
-      ConvertResearchPrefetchToAffinePass)
-
-  StringRef getArgument() const final {
-    return "step4-convert-research-prefetch-to-affine";
-  }
-
-  StringRef getDescription() const final {
-    return "Bridge registered research.prefetch ops to affine.prefetch ops";
-  }
-
-  void getDependentDialects(DialectRegistry &registry) const final {
-    registry.insert<affine::AffineDialect, func::FuncDialect>();
-  }
-
-  void runOnOperation() final {
-    func::FuncOp func = getOperation();
-    SmallVector<Operation *> prefetchOps;
-    func.walk([&](Operation *op) {
-      if (isResearchPrefetch(op))
-        prefetchOps.push_back(op);
-    });
-
-    for (Operation *op : prefetchOps) {
-      if (failed(rewriteOnePrefetch(op))) {
-        signalPassFailure();
-        return;
-      }
-    }
-
-    if (!prefetchOps.empty()) {
-      OpBuilder builder(func.getContext());
-      func->setAttr("step4_prefetch_bridge",
-                    builder.getStringAttr("research_to_affine"));
-    }
-  }
-
-private:
-  static LogicalResult rewriteOnePrefetch(Operation *op) {
-    StringAttr target = op->getAttrOfType<StringAttr>("target");
-    if (!target)
-      return op->emitOpError("expected target attribute");
-
-    Value memref = op->getOperand(0);
-    SmallVector<Value> indices(op->getOperands().drop_front());
-    if (indices.size() != 4)
-      return op->emitOpError("expected four research indices");
-
-    MLIRContext *ctx = op->getContext();
-    AffineExpr d0, d1, d2, d3;
-    bindDims(ctx, d0, d1, d2, d3);
-
-    AffineMap map;
-    if (target.getValue() == "B") {
-      // B 的 research operands 是 ko, j, jj, kk。
-      // 标准 affine.prefetch 下标为 B[ko + kk, j + jj]。
-      map = AffineMap::get(4, 0, {d0 + d3, d1 + d2}, ctx);
-    } else if (target.getValue() == "A") {
-      // A 的 research operands 是 i, ii, ko, kk。
-      // 标准 affine.prefetch 下标为 A[i + ii, ko + kk]。
-      map = AffineMap::get(4, 0, {d0 + d1, d2 + d3}, ctx);
-    } else {
-      return op->emitOpError("only A/B research.prefetch are supported");
-    }
-
-    OpBuilder builder(op);
-    affine::AffinePrefetchOp::create(builder, op->getLoc(), memref, map,
-                                     indices, /*isWrite=*/false,
-                                     localityToHint(op),
-                                     /*isDataCache=*/true);
-    op->erase();
-    return success();
-  }
-};
 
 //===----------------------------------------------------------------------===//
 // vector.transfer_read 前插入 memref.prefetch
@@ -259,7 +156,6 @@ private:
 };
 
 void registerStep4Passes() {
-  PassRegistration<ConvertResearchPrefetchToAffinePass>();
   PassRegistration<InjectVectorMemrefPrefetchPass>();
   PassRegistration<RepairLLVMIndexBridgesPass>();
 }

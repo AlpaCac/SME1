@@ -6,7 +6,7 @@
 
 第五步现在只有一个主目标：
 
-1. 把第四步的统一产物 [09_unified_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch.mlir) 继续翻译、编译，并在本机实际运行。
+1. 把第四步的统一产物 [03_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir) 继续翻译、编译，并在本机实际运行。
 
 研究主线只有一条，即：
 
@@ -23,7 +23,7 @@
 当前脚本会先尝试统一主线：
 
 ```text
-09_unified_llvm_prefetch.mlir
+03_llvm_prefetch.mlir
 -> mlir-translate --mlir-to-llvmir
 -> llc -mattr=+sme
 -> clang 链接 unified_harness.c
@@ -53,7 +53,7 @@
 
 现在第五步已经可以把统一主线推进到“生成 LLVM IR、编译、链接，并实际运行”：
 
-- `09_unified_llvm_prefetch.mlir` 可以成功翻译为 LLVM IR
+- `03_llvm_prefetch.mlir` 可以成功翻译为 LLVM IR
 - `llc -mattr=+sme` 可以成功生成目标文件
 - `clang` 可以成功链接统一主线最小 harness
 - `unified_demo` 可以在本机实际运行

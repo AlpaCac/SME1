@@ -343,9 +343,9 @@ call void @llvm.prefetch.p0(ptr %addr, i32 0, i32 3, i32 1)
 
 第四步生成的 MLIR 继续通过 `mlir-translate --mlir-to-llvmir` 导出后，会在 `.ll` 文件中出现 LLVM intrinsic 调用。
 
-当前仓库中的例子位于：
+当前第 04 步可以用 `mlir-translate --mlir-to-llvmir` 从下面文件导出 `.ll`：
 
-- [05_native_build_run/output/09_unified_llvm_prefetch.ll](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/09_unified_llvm_prefetch.ll)
+- [04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir)
 
 其中可以看到类似语句：
 

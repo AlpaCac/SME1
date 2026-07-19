@@ -1,7 +1,7 @@
 {
   "environment": {
     "host": "Apple Silicon macOS",
-    "branch": "yhf"
+    "branch": "04_vector_arm_sme_llvm"
   },
   "functional_validation": {
     "llvm_ir_accepted": true,

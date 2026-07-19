@@ -41,9 +41,9 @@ def main() -> int:
     summary_lines: list[str] = []
 
     # 先尝试统一主线最终产物；这是第五步真正关心的对象。
-    unified_mlir = ROOT / "04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch.mlir"
-    unified_ll = output / "09_unified_llvm_prefetch.ll"
-    unified_obj = output / "09_unified_llvm_prefetch.o"
+    unified_mlir = ROOT / "04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir"
+    unified_ll = output / "step4_llvm_prefetch.ll"
+    unified_obj = output / "step4_llvm_prefetch.o"
     unified_exe = output / "unified_demo"
     unified_log = output / "unified_demo.log"
 

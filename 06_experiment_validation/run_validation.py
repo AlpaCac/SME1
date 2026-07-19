@@ -52,10 +52,10 @@ def main() -> int:
         "performance_validation": {},
     }
 
-    unified_mlir = ROOT / "04_vector_arm_sme_llvm/output/09_unified_llvm_prefetch.mlir"
-    unified_ll = ROOT / "05_native_build_run/output/09_unified_llvm_prefetch.ll"
+    unified_mlir = ROOT / "04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir"
+    unified_ll = ROOT / "05_native_build_run/output/step4_llvm_prefetch.ll"
     unified_log = ROOT / "05_native_build_run/output/unified_demo.log"
-    unified_obj = ROOT / "05_native_build_run/output/09_unified_llvm_prefetch.o"
+    unified_obj = ROOT / "05_native_build_run/output/step4_llvm_prefetch.o"
 
     summary["functional_validation"] = {
         "llvm_ir_accepted": unified_ll.exists(),
@@ -113,7 +113,7 @@ def main() -> int:
 
 ## 关键证据
 
-- 统一主线 LLVM IR： [09_unified_llvm_prefetch.ll]({unified_ll})
+- 统一主线 LLVM IR： [step4_llvm_prefetch.ll]({unified_ll})
 - 统一主线运行日志： [unified_demo.log]({unified_log})
 - 本次结构化摘要： [validation_summary.json]({OUTPUT / "validation_summary.json"})
 
