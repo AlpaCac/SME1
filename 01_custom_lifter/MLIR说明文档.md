@@ -186,18 +186,17 @@ linalg.matmul
 
 ---
 
-## 4. 第一步为什么要生成两份 MLIR
+## 4. 第一步为什么只生成 linalg MLIR
 
-第一步输出了两份文件：
+当前第一步只输出一份文件：
 
 - [output/gemm_fp32_linalg.mlir](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/output/gemm_fp32_linalg.mlir)
-- [output/gemm_fp32_affine.mlir](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/output/gemm_fp32_affine.mlir)
 
-这样做不是重复，而是服务于两个不同研究目标。
+这样做是为了让 `linalg` 成为后续所有研究分支的统一入口，而不是在提升阶段人为维护两份可能逐渐不一致的 IR。
 
-### 4.1 linalg 版本
+### 4.1 linalg 主线
 
-`linalg` 版本尽量保留：
+`linalg` 主线尽量保留：
 
 - 高层矩阵乘语义
 - 分块结构
@@ -205,26 +204,53 @@ linalg.matmul
 
 它适合继续研究：
 
+- `linalg -> scf/affine-like loops` 访存分析
 - `vector` 化
 - `arm_sme` lowering
 - 高层算子如何逐步下降
 
-### 4.2 affine 版本
+### 4.2 为什么不在第一步直接生成 affine 文件
 
-`affine` 版本故意保留：
+`affine` 形式确实适合分析：
 
 - 规则循环
 - 显式索引
 - 标量 `load/store`
 - 标量归约
 
-它适合继续研究：
+但如果第一步同时生成 `linalg` 和 `affine` 两份文件，就会出现一个问题：两份 IR 都来自同一份 C kernel，却需要分别维护分块、边界、索引和语义。当后续修改 kernel 或提升规则时，两条线很容易不一致。
+
+因此当前设计是：
+
+```text
+C kernel
+-> linalg 主线 MLIR
+   -> 后续 pass 派生出 scf/affine-like 分析形态
+   -> 后续 pass 派生出 vector/arm_sme lowering 形态
+```
+
+也就是说，`affine` 不再是第一步的直接输出，而是后续分析阶段从 `linalg` 主线派生出的视图。
+
+### 4.3 当前 linalg 输出对后续转换的支持
+
+第一步生成的 `linalg` 文件中仍然保留了对后续分析有用的信息：
 
 - stride
 - reuse distance
 - working set
 - 预取距离
 - 预取注入点
+
+这些信息不是通过手写 `affine.load/store` 暴露出来，而是通过下面的结构保留下来：
+
+- `scf.for`
+  - 保留 `mc / nc / kc / mr / nr` 分块层次
+- `memref.subview`
+  - 保留 A/B/C 子块的数据范围
+- `linalg.fill`
+  - 表达输出微块初始化
+- `linalg.matmul`
+  - 表达核心矩阵乘与归约语义
 
 ---
 
@@ -589,154 +615,22 @@ return
 
 ---
 
-## 7. 以 affine 版本为例说明各部分含义
+## 7. 后续如何从 linalg 派生分析层
 
-下面结合 [gemm_fp32_affine.mlir](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/output/gemm_fp32_affine.mlir) 来看。
+第一步不再直接生成 `affine` 文件，但它保留了足够的结构，后续可以用 MLIR pass 把 `linalg` 展开成更适合分析的循环形式。
 
-和 `linalg` 版相比，这份文件最大的不同是：
-
-- 不再把核心计算压缩成 `linalg.matmul`
-- 而是显式保留所有循环、索引和标量访问
-
-这更适合分析预取。
-
-### 7.1 affine_map
-
-```mlir
-#tile_outer = affine_map<(d0, d1) -> (128, d0 - d1)>
-#row_index = affine_map<(d0, d1, d2) -> (d0 + d1 + d2)>
-#col_index = affine_map<(d0, d1, d2) -> (d0 + d1 + d2)>
-```
-
-含义：
-
-- `#tile_outer` 还是用于边界块大小
-- `#row_index` 和 `#col_index` 用于统一表达行列索引计算
-
-例如：
-
-```mlir
-%c_row = affine.apply #row_index(%i, %ii, %i_inner)
-```
-
-意思就是：
-
-- `c_row = i + ii + i_inner`
-
-### 7.2 affine.for
-
-```mlir
-affine.for %i = 0 to %m step 128 {
-```
-
-含义：
-
-- 这是仿射循环
-- 它比普通结构化循环更强调循环边界和下标表达式的仿射性质
-
-对分析来说，这很有用，因为：
-
-- 编译器更容易理解访存规律
-- 研究者也更容易做 stride、复用距离等分析
-
-### 7.3 arith.cmpi + scf.if
-
-```mlir
-%ii_in_bound = arith.cmpi ult, %ii, %mc : index
-scf.if %ii_in_bound {
-```
-
-含义：
-
-- 先比较 `%ii < %mc` 是否成立
-- 再根据这个布尔值决定是否进入分支
-
-这样做的原因是：
-
-- 外层 `affine.for %ii = 0 to 128 step 16` 是固定范围
-- 但边界块时真实大小 `%mc` 可能小于 `128`
-- 所以要用条件判断裁掉越界部分
-
-### 7.4 affine.apply
-
-```mlir
-%c_row_offset = affine.apply #row_index(%ii, %c0, %i_inner)
-```
-
-含义：
-
-- 使用前面定义的仿射映射计算下标
-
-如果代入 `#row_index(d0, d1, d2) = d0 + d1 + d2`，  
-这句就是：
+一个基本方向是：
 
 ```text
-c_row_offset = ii + 0 + i_inner
+linalg.matmul
+-> scf.for / memref.load / memref.store
+-> 访存分析 pass
+-> 预取决策
 ```
 
-### 7.5 affine.store
+如果需要更严格的 `affine.for / affine.load / affine.store`，可以在第二步或分析工具中实现专门的规整 pass，把当前 `scf.for + affine.apply + memref.subview` 的结构进一步规范化为 affine 分析视图。
 
-```mlir
-affine.store %f0, %c[%c_row, %c_col] : memref<?x?xf32>
-```
-
-含义：
-
-- 把 `%f0` 也就是 `0.0`
-- 写到矩阵 `C` 的 `(%c_row, %c_col)` 位置
-
-这对应“清零输出微块”的动作。
-
-### 7.6 affine.load
-
-```mlir
-%a_val = affine.load %a[%a_row, %a_col] : memref<?x?xf32>
-```
-
-含义：
-
-- 从 `A[a_row, a_col]` 位置读一个标量
-- 结果记到 `%a_val`
-
-`%b_val`、`%c_old` 也是同样逻辑。
-
-### 7.7 标量乘加
-
-```mlir
-%prod = arith.mulf %a_val, %b_val : f32
-%sum = arith.addf %c_old, %prod : f32
-affine.store %sum, %c[%c_row, %c_col] : memref<?x?xf32>
-```
-
-含义：
-
-- `%prod`
-  - 计算 `a_val * b_val`
-- `%sum`
-  - 计算 `c_old + prod`
-- `affine.store`
-  - 把结果写回 `C`
-
-这三句合起来就是最基本的 GEMM 标量更新：
-
-```text
-C[c_row, c_col] = C[c_row, c_col] + A[a_row, a_col] * B[b_row, b_col]
-```
-
-### 7.8 为什么这里不直接用 linalg.matmul
-
-因为这一份文件的任务不是“保留最高层算子语义”，而是：
-
-- 暴露具体访存路径
-- 暴露具体下标关系
-- 暴露具体归约循环
-
-只有这样，后续才方便研究：
-
-- 哪些访问是顺序流
-- 哪些访问会跨 cache line
-- 哪些访问存在复用
-- 预取距离应该怎么选
+这里要注意：`affine` 和 `vector` 不是简单的上下级关系。`affine` 更适合做循环和访存分析，`vector` 更适合表达 SIMD/SME 风格的数据并行。因此当前方案是从同一份 `linalg` 主线分别派生分析视图和向量化视图。
 
 ---
 
@@ -774,25 +668,17 @@ C[c_row, c_col] = C[c_row, c_col] + A[a_row, a_col] * B[b_row, b_col]
 - 重点看 `linalg.fill`
 - 重点看 `linalg.matmul`
 
-对于 `affine` 版：
-
-- 重点看 `affine.load`
-- 重点看 `arith.mulf`
-- 重点看 `arith.addf`
-- 重点看 `affine.store`
-
 ---
 
 ## 9. 和后续步骤的关系
 
-第一步输出的这两份 MLIR，不是最终结果，而是整个方案的起点。
+第一步输出的这份 MLIR，不是最终结果，而是整个方案的起点。
 
-它们分别服务于后续两个方向：
+它服务于后续两个方向：
 
 - `gemm_fp32_linalg.mlir`
-  - 更适合继续做 `vector -> arm_sme -> llvm`
-- `gemm_fp32_affine.mlir`
-  - 更适合继续做访存分析和预取注入
+  - 可以派生出分析用的 `scf/affine-like` 循环结构
+  - 可以继续做 `vector -> arm_sme -> llvm`
 
 因此，第一步的真正意义不是“把 C 改写成另一种语法”，而是：
 
@@ -806,7 +692,4 @@ C[c_row, c_col] = C[c_row, c_col] + A[a_row, a_col] * B[b_row, b_col]
 
 如果只用一句话概括第一步生成的 MLIR，可以这样理解：
 
-`linalg` 版是在说“这是一系列分块后的矩阵乘”；  
-`affine` 版是在说“这是一系列规则循环、显式访存和标量归约”。
-
-这两种表示都来自同一个 C kernel，但它们分别服务于后续不同的研究目标。
+`linalg` 版是在说“这是一系列分块后的矩阵乘”，后续分析层和向量化层都应该从这条主线继续派生。

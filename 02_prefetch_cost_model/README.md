@@ -1,112 +1,178 @@
 # 02 Prefetch Cost Model
 
-这个目录对应方案的第二步：在 `linalg` 层分析整体数据流性质，在 `affine` 层分析预取相关特征，并构建一个研究版 `cost module` 给出预取决策。
+这个目录对应总体方案的第二步：从第一步生成的 `linalg` 主线出发，形成适合访存分析的循环层表示，并构建预取 `cost model`。
 
-## 目标
+## 1. 第二步目标
 
-这一阶段不直接修改 MLIR，而是先把“为什么预取、对谁预取、预取到哪一层、优先级如何排”说明白。
+第二步不直接插入预取指令，而是回答下面几个问题：
 
-当前实现拆成三部分：
+- `A / B / C` 在 GEMM 中分别承担什么数据流角色
+- 分块结构对应多大的 working set
+- 哪些访问具有连续性和复用价值
+- 哪些数据对象应该预取
+- 预取应该采用什么优先级、缓存目标和 locality 策略
 
-1. `linalg` 层分析  
-   关注整体算子语义、输入输出角色、归约维、空间维、块级工作集和复用关系。
+当前输出的预取决策会作为第三步预取注入 pass 的输入依据。
 
-2. `affine` 层分析  
-   关注规则循环、访存模式、读写流、边界块条件、以及真正和预取决策相关的局部性信息。
+## 2. 输入和输出
 
-3. `cost module`  
-   把上面两层的结果汇总成一个结构化决策，给出：
-   - 是否预取
-   - 读 / 写预取
-   - 预取优先级
-   - 目标缓存层级
-   - 建议的预取距离
-   - `KEEP / STRM` 风格建议
+输入来自第一步：
 
-## 目录结构
+- [../01_custom_lifter/output/gemm_fp32_linalg.mlir](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/output/gemm_fp32_linalg.mlir)
 
-- [analyze_prefetch.py](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/analyze_prefetch.py)：第二步分析脚本
-- [output/prefetch_analysis.json](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/output/prefetch_analysis.json)：结构化结果
-- [output/prefetch_analysis.md](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/output/prefetch_analysis.md)：可直接阅读的结果文档
+第二步会先通过官方 MLIR lowering 把 `linalg.matmul` 展开成循环形态，然后通过自定义 pass 进行保守 affine 规范化：
 
-## 当前分析方法
+```text
+linalg.matmul
+-> scf.for / memref.load / memref.store / affine.apply
+-> affine.for / affine.apply / memref or affine load-store
+```
 
-### 1. Linalg 层
+这里称为 `affine-normalized 分析层`。它不是最终低层 LLVM IR，而是专门用于暴露循环、访存和 affine 下标关系的高层分析表示。
 
-脚本会读取第一步生成的：
+需要注意的是，当前转换是合法性驱动的保守转换，不会为了得到“看起来全是 affine”的文件而硬改语义。若某些循环的上界来自动态边界 tile，例如 `affine.min` 的结果，MLIR affine verifier 可能不允许它直接作为嵌套 `affine.for` bound，因此需要先把动态边界改写成固定 tile 循环加 guard。
 
-- [gemm_fp32_linalg.mlir](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/output/gemm_fp32_linalg.mlir)
+当前 pass 针对这类动态边界 tile 实现了更进一步的通用规整：如果 `scf.for` 的上界来自 `affine.min`，并且该 `affine.min` 中包含可识别的静态 tile 大小，则将其改写为固定范围的 `affine.for`，再在循环体内部插入 `scf.if` guard。这样输出中循环骨架可以保持为 `affine.for`，边界合法性由 guard 保护。
 
-重点识别：
+输出包括：
 
-- 是否存在 `linalg.matmul`
-- 是否存在 `linalg.fill`
-- `subview` 与 `scf.for` 的组织关系
-- 块级输入输出角色
-- 宏块 / 微块工作集大小
-- `A / B / C` 的复用方式
+- [output/01_affine_analysis.mlir](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/output/01_affine_analysis.mlir)：带第二步分析属性的 affine-normalized 层 MLIR
+- [output/prefetch_analysis.json](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/output/prefetch_analysis.json)：结构化预取决策
+- [output/prefetch_analysis.md](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/output/prefetch_analysis.md)：可读分析报告
 
-### 2. Affine 层
+## 3. 为什么使用 MLIR pass
 
-脚本会读取：
+早期第二步使用 Python 脚本读取固定的 `gemm_fp32_affine.mlir`，这有两个问题：
 
-- [gemm_fp32_affine.mlir](/Users/alpaca/Documents/SME/SME1/01_custom_lifter/output/gemm_fp32_affine.mlir)
+- 第一，第一步现在只生成 `linalg` 主线，不再生成独立 affine 文件。
+- 第二，Python 文本分析依赖字符串和格式，不能真正复用 MLIR 的 IR 结构。
 
-重点分析：
+当前方案改为 MLIR pass：
 
-- `affine.for`
-- `affine.load`
-- `affine.store`
-- 边界块条件保护
-- A/B/C 的访问连续性与复用特征
+- 官方 pass 负责把 `linalg` 展开成循环层表示
+- 自定义 pass `step2-normalize-scf-to-affine` 负责把可安全转换的 `scf.for` 规范化为 `affine.for`
+- 官方 pass `affine-raise-from-memref` 负责把可表达为 affine 访问的 `memref.load/store` 提升为 `affine.load/store`
+- 自定义 pass `step2-prefetch-cost-model` 在规范化后的 MLIR IR 上统计和分析
+- 分析结果同时写入 IR 属性和外部报告文件
 
-### 3. Cost Module
+这样第二步更接近正式编译器流程，也更容易和第三步、第四步的 pass 串接。
 
-当前 `cost module` 是研究版启发式模型，不是最终硬件精确模型。它使用下面这些直观规则：
+## 4. 当前 pass 做了什么
 
-- 优先预取“连续读 + 跨迭代复用”的对象
-- 优先考虑输入流 `A/B`
-- 暂时不优先考虑 `C` 的软件预取
-- 优先把预取目标放在 `L1`
+pass 文件是：
 
-在当前 GEMM 结构下，默认决策是：
+- [passes/PrefetchCostModel.cpp](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/passes/PrefetchCostModel.cpp)
 
-- `B`：高优先级读预取
-- `A`：中优先级读预取
-- `C`：暂不主动预取
+注册的 pass 名称是：
 
-## 如何运行
+```text
+step2-normalize-scf-to-affine
+step2-prefetch-cost-model
+```
+
+`step2-normalize-scf-to-affine` 做保守规范化：
+
+- 不依赖函数名、变量名或固定 SSA 名称
+- 只处理没有 loop-carried values 的 `scf.for`
+- 只处理 step 是正常量的循环
+- 把上下界表达为 affine bound
+- 对无法安全转换的循环保持原样，避免改变程序语义
+
+`step2-prefetch-cost-model` 会分析：
+
+- `linalg.matmul` / `linalg.fill` 数量
+- `scf.for` 循环数量
+- `affine.for` 循环数量
+- `memref.subview` 数量
+- `memref.load` / `memref.store` 数量
+- `affine.load` / `affine.store` 数量
+- `mc / nc / kc / mr / nr` 分块参数
+- 宏块和微块 working set
+- `A / B / C` 的复用关系
+
+然后在函数属性中写入：
+
+```text
+step2.analysis_layer
+step2.tile.mc / nc / kc / mr / nr
+step2.count.scf_for
+step2.count.affine_for
+step2.count.memref_load
+step2.count.memref_store
+step2.count.affine_load
+step2.count.affine_store
+step2.prefetch.A
+step2.prefetch.B
+step2.prefetch.C
+```
+
+同时生成 `prefetch_analysis.json` 和 `prefetch_analysis.md`。
+
+## 5. 当前预取决策
+
+当前研究版 cost model 采用启发式规则：
+
+- 优先预取连续读流
+- 优先预取同时具有复用价值的数据
+- 优先考虑 `A / B`，暂时不主动预取 `C`
+- 目标缓存层级先设为 `L1`
+- locality 先采用 `KEEP`
+
+当前默认决策是：
+
+- `B`：开启读预取，优先级 `high`
+- `A`：开启读预取，优先级 `medium`
+- `C`：暂不开启主动软件预取
+
+## 6. 如何构建
 
 在仓库根目录执行：
 
 ```bash
-python3 02_prefetch_cost_model/analyze_prefetch.py
+cmake -S 02_prefetch_cost_model \
+  -B 02_prefetch_cost_model/build \
+  -DMLIR_DIR=/Users/alpaca/Documents/SME/external/llvm-project/build/lib/cmake/mlir \
+  -DLLVM_DIR=/Users/alpaca/Documents/SME/external/llvm-project/build/lib/cmake/llvm
+
+cmake --build 02_prefetch_cost_model/build
 ```
 
-默认输入：
+构建产物是：
 
-- `01_custom_lifter/output/gemm_fp32_linalg.mlir`
-- `01_custom_lifter/output/gemm_fp32_affine.mlir`
+```text
+02_prefetch_cost_model/build/SMEPrefetchCostModelPass.dylib
+```
 
-默认输出到：
+## 7. 如何运行
 
-- [02_prefetch_cost_model/output](/Users/alpaca/Documents/SME/SME1/02_prefetch_cost_model/output)
+在仓库根目录执行：
 
-## 当前输出的意义
+```bash
+/Users/alpaca/Documents/SME/external/llvm-project/build/bin/mlir-opt \
+  --load-pass-plugin=02_prefetch_cost_model/build/SMEPrefetchCostModelPass.dylib \
+  01_custom_lifter/output/gemm_fp32_linalg.mlir \
+  --pass-pipeline='builtin.module(convert-linalg-to-loops,canonicalize,func.func(step2-normalize-scf-to-affine,affine-raise-from-memref,canonicalize,step2-prefetch-cost-model))' \
+  -o 02_prefetch_cost_model/output/01_affine_analysis.mlir
+```
 
-这一步的产出不是最终“插入了预取指令的 MLIR”，而是下一步注入预取语义的依据。
+运行后会得到：
 
-也就是说，它回答的是：
+- `output/01_affine_analysis.mlir`
+- `output/prefetch_analysis.json`
+- `output/prefetch_analysis.md`
 
-- 为什么优先预取 `B`
-- 为什么 `A` 次之
-- 为什么 `C` 暂时不预取
-- 后面应该把预取 op 注入到 `affine` 层的什么位置
+## 8. 输入限制
 
-## 下一步建议
+当前 pass 是研究版 GEMM 分析 pass，不是通用 C/MLIR 预取分析器。
 
-完成这一阶段后，可以继续做三件事：
+当前输入需要满足：
 
-1. 把 `cost module` 的结果映射成自定义预取 op。
-2. 在 `affine` 层实现真正的预取语义注入。
-3. 继续研究这些预取语义如何跨层传递到 `vector / arm_sme / llvm`。
+- 来自第一步的 `linalg` 主线
+- 包含规则的 `mc / nc / kc / mr / nr` 分块结构
+- 包含 `linalg.matmul` 或已经由 `linalg.matmul` 展开的循环结构
+- 需要规范化为 affine 的循环没有 loop-carried values
+- 需要规范化为 affine 的循环 step 是正常量
+- 矩阵元素类型按 `f32` 计算
+- A/B/C 参数顺序保持为左输入、右输入、输出矩阵
+
+如果未来要支持更多 kernel，需要继续扩展数据流角色识别和 cost model；但当前实现已经不依赖具体函数名、SSA 名称或当前示例文件的固定文本格式。

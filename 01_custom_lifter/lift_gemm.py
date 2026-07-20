@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Restricted GEMM lifter: Clang AST + annotations -> high-level MLIR files."""
+"""Restricted GEMM lifter: Clang AST + annotations -> high-level linalg MLIR."""
 
 from __future__ import annotations
 
@@ -190,13 +190,14 @@ def emit_linalg_mlir(
 // 目标：保留 GEMM 的高层算子语义，作为后续 vector / arm_sme lowering 的输入
 //
 // 阅读建议：
-// 1. 先看外层 scf.for，它们对应 C kernel 中的 mc / nc / kc 分块。
+// 1. 先看外层 scf.for，它们对应 C kernel 中的 mc / nc 输出分块。
 // 2. 再看内层 scf.for，它们对应 mr / nr 微块切分。
-// 3. 最后看 linalg.matmul，它是从 C 中恢复出的核心矩阵乘语义。
+// 3. 最后看 ko 循环和 linalg.matmul，它们共同表达沿 K 维分块累加。
 // ============================================================================
 #tile_outer = affine_map<(d0, d1) -> ({mc}, d0 - d1)>
 #tile_inner_m = affine_map<(d0, d1) -> ({mr}, d0 - d1)>
 #tile_inner_n = affine_map<(d0, d1) -> ({nr}, d0 - d1)>
+#add2 = affine_map<(d0, d1) -> (d0 + d1)>
 
 module {{
   // 这个函数不是逐条模拟 C 语句，而是把 C kernel 提升为“块级 matmul 语义”。
@@ -222,41 +223,41 @@ module {{
     %k = memref.dim %a, %c1 : memref<?x?xf32>
     %n = memref.dim %b, %c1 : memref<?x?xf32>
 
-    // 外层三层循环保持论文中的 mc / nc / kc 分块结构。
+    // 外层两层循环保持论文中的 mc / nc 输出分块结构。
     scf.for %i = %c0 to %m step %mc0 {{
       %mc = affine.min #tile_outer(%m, %i)
 
       scf.for %j = %c0 to %n step %nc0 {{
         %nc = affine.min #tile_outer(%n, %j)
 
-        scf.for %ko = %c0 to %k step %kc0 {{
-          %kc = affine.min #tile_outer(%k, %ko)
+        %c_tile = memref.subview %c[%i, %j] [%mc, %nc] [%c1, %c1]
+          : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
 
-          // subview 把整矩阵裁成当前 tile，便于后续继续做向量化和 ArmSME lowering。
-          %a_tile = memref.subview %a[%i, %ko] [%mc, %kc] [%c1, %c1]
-            : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
-          %b_tile = memref.subview %b[%ko, %j] [%kc, %nc] [%c1, %c1]
-            : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
-          %c_tile = memref.subview %c[%i, %j] [%mc, %nc] [%c1, %c1]
-            : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+        // 内层两层循环保留 mr / nr 微块信息。
+        scf.for %ii = %c0 to %mc step %mr0 {{
+          %mr = affine.min #tile_inner_m(%mc, %ii)
 
-          // 内层两层循环保留 mr / nr 微块信息。
-          scf.for %ii = %c0 to %mc step %mr0 {{
-            %mr = affine.min #tile_inner_m(%mc, %ii)
+          scf.for %jj = %c0 to %nc step %nr0 {{
+            %nr = affine.min #tile_inner_n(%nc, %jj)
 
-            scf.for %jj = %c0 to %nc step %nr0 {{
-              %nr = affine.min #tile_inner_n(%nc, %jj)
+            %a_row = affine.apply #add2(%i, %ii)
+            %b_col = affine.apply #add2(%j, %jj)
+            %c_block = memref.subview %c_tile[%ii, %jj] [%mr, %nr] [%c1, %c1]
+              : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<?x?xf32, strided<[?, ?], offset: ?>>
 
-              %a_block = memref.subview %a_tile[%ii, %c0] [%mr, %kc] [%c1, %c1]
-                : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<?x?xf32, strided<[?, ?], offset: ?>>
-              %b_block = memref.subview %b_tile[%c0, %jj] [%kc, %nr] [%c1, %c1]
-                : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<?x?xf32, strided<[?, ?], offset: ?>>
-              %c_block = memref.subview %c_tile[%ii, %jj] [%mr, %nr] [%c1, %c1]
-                : memref<?x?xf32, strided<[?, ?], offset: ?>> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+            // 研究版语义只保留 C = A * B，所以每个输出微块在进入 K 分块前清零一次。
+            linalg.fill ins(%cst_0 : f32)
+                        outs(%c_block : memref<?x?xf32, strided<[?, ?], offset: ?>>)
 
-              // 研究版语义只保留 C = A * B，所以每个输出微块先清零。
-              linalg.fill ins(%cst_0 : f32)
-                          outs(%c_block : memref<?x?xf32, strided<[?, ?], offset: ?>>)
+            // ko 循环保留 kc 分块，但每个分块都累加到同一个 C 微块。
+            scf.for %ko = %c0 to %k step %kc0 {{
+              %kc = affine.min #tile_outer(%k, %ko)
+
+              // A/B 的 subview 暴露当前 K tile 的数据流，后续可分别转换到 affine 分析或 vector lowering。
+              %a_block = memref.subview %a[%a_row, %ko] [%mr, %kc] [%c1, %c1]
+                : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
+              %b_block = memref.subview %b[%ko, %b_col] [%kc, %nr] [%c1, %c1]
+                : memref<?x?xf32> to memref<?x?xf32, strided<[?, ?], offset: ?>>
 
               // 这里是最关键的提升结果：把标量乘加模式恢复成 linalg.matmul。
               linalg.matmul
@@ -275,141 +276,9 @@ module {{
 """
 
 
-def emit_affine_mlir(
-    kernel: str,
-    semantic: str,
-    layout: str,
-    blocking: dict[str, int],
-) -> str:
-    mc = blocking["mc"]
-    nc = blocking["nc"]
-    kc = blocking["kc"]
-    mr = blocking["mr"]
-    nr = blocking["nr"]
-
-    return f"""// ============================================================================ 
-// 自动生成文件：gemm_fp32_affine.mlir
-// 来源：gemm_mlir_kernel.c
-// 目标：保留规则循环、索引关系和标量访存，作为后续 affine 分析与预取研究的输入
-//
-// 阅读建议：
-// 1. 先看 affine.for，它们对应论文中的分块循环层次。
-// 2. 再看 affine.load / affine.store，它们暴露了最直接的访存行为。
-// 3. 这里故意不使用 linalg.matmul，而是保留标量归约结构，方便研究 reuse distance、
-//    working set、stride 和预取距离。
-// ============================================================================
-#tile_outer = affine_map<(d0, d1) -> ({mc}, d0 - d1)>
-#row_index = affine_map<(d0, d1, d2) -> (d0 + d1 + d2)>
-#col_index = affine_map<(d0, d1, d2) -> (d0 + d1 + d2)>
-
-module {{
-  // 这个函数保留的是“规则循环 + 标量访存 + 标量归约”形式，适合做 affine 层分析。
-  func.func @gemm_fp32_affine(%a: memref<?x?xf32>, %b: memref<?x?xf32>, %c: memref<?x?xf32>) attributes {{
-    c_kernel = "{kernel}",
-    semantic = "{semantic}",
-    layout = "{layout}",
-    mlir_level = "affine"
-  }} {{
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %c128 = arith.constant {mc} : index
-    %c128_n = arith.constant {nc} : index
-    %c128_k = arith.constant {kc} : index
-    %c16 = arith.constant {mr} : index
-    %c16_n = arith.constant {nr} : index
-    %f0 = arith.constant 0.0 : f32
-
-    // 从输入矩阵中恢复问题规模。
-    %m = memref.dim %a, %c0 : memref<?x?xf32>
-    %k = memref.dim %a, %c1 : memref<?x?xf32>
-    %n = memref.dim %b, %c1 : memref<?x?xf32>
-
-    // 外层三层 affine.for 对应论文中的 mc / nc / kc。
-    affine.for %i = 0 to %m step {mc} {{
-      %mc = affine.min #tile_outer(%m, %i)
-
-      affine.for %j = 0 to %n step {nc} {{
-        %nc = affine.min #tile_outer(%n, %j)
-
-        affine.for %ko = 0 to %k step {kc} {{
-          %kc = affine.min #tile_outer(%k, %ko)
-
-          // 这里把 ii / jj / kk 都固定在论文给定的块大小上，
-          // 再用条件判断裁掉边界块。这样既保留 affine 结构，
-          // 又避免动态上界在嵌套 affine.for 中触发符号约束。
-          affine.for %ii = 0 to {mc} step {mr} {{
-            %ii_in_bound = arith.cmpi ult, %ii, %mc : index
-            scf.if %ii_in_bound {{
-              affine.for %jj = 0 to {nc} step {nr} {{
-                %jj_in_bound = arith.cmpi ult, %jj, %nc : index
-                scf.if %jj_in_bound {{
-                  // 第一步：对当前输出微块清零。
-                  affine.for %i_inner = 0 to {mr} {{
-                    %c_row_offset = affine.apply #row_index(%ii, %c0, %i_inner)
-                    %row_valid = arith.cmpi ult, %c_row_offset, %mc : index
-                    scf.if %row_valid {{
-                      %c_row = affine.apply #row_index(%i, %ii, %i_inner)
-
-                      affine.for %j_inner = 0 to {nr} {{
-                        %c_col_offset = affine.apply #col_index(%jj, %c0, %j_inner)
-                        %col_valid = arith.cmpi ult, %c_col_offset, %nc : index
-                        scf.if %col_valid {{
-                          %c_col = affine.apply #col_index(%j, %jj, %j_inner)
-                          affine.store %f0, %c[%c_row, %c_col] : memref<?x?xf32>
-                        }}
-                      }}
-                    }}
-                  }}
-
-                  // 第二步：显式保留 kk 归约循环和标量乘加模式。
-                  affine.for %kk = 0 to {kc} {{
-                    %in_k_bound = arith.cmpi ult, %kk, %kc : index
-                    scf.if %in_k_bound {{
-                      affine.for %i_inner = 0 to {mr} {{
-                        %a_row_offset = affine.apply #row_index(%ii, %c0, %i_inner)
-                        %row_valid = arith.cmpi ult, %a_row_offset, %mc : index
-                        scf.if %row_valid {{
-                          %a_row = affine.apply #row_index(%i, %ii, %i_inner)
-                          %a_col = affine.apply #col_index(%ko, %c0, %kk)
-                          %a_val = affine.load %a[%a_row, %a_col] : memref<?x?xf32>
-
-                          affine.for %j_inner = 0 to {nr} {{
-                            %b_col_offset = affine.apply #col_index(%jj, %c0, %j_inner)
-                            %col_valid = arith.cmpi ult, %b_col_offset, %nc : index
-                            scf.if %col_valid {{
-                              %b_row = affine.apply #row_index(%ko, %c0, %kk)
-                              %b_col = affine.apply #col_index(%j, %jj, %j_inner)
-                              %c_row = affine.apply #row_index(%i, %ii, %i_inner)
-                              %c_col = affine.apply #col_index(%j, %jj, %j_inner)
-
-                              %b_val = affine.load %b[%b_row, %b_col] : memref<?x?xf32>
-                              %c_old = affine.load %c[%c_row, %c_col] : memref<?x?xf32>
-                              %prod = arith.mulf %a_val, %b_val : f32
-                              %sum = arith.addf %c_old, %prod : f32
-                              affine.store %sum, %c[%c_row, %c_col] : memref<?x?xf32>
-                            }}
-                          }}
-                        }}
-                      }}
-                    }}
-                  }}
-                }}
-              }}
-            }}
-          }}
-        }}
-      }}
-    }}
-
-    return
-  }}
-}}
-"""
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Lift a restricted GEMM C kernel into linalg and affine MLIR."
+        description="Lift a restricted GEMM C kernel into high-level linalg MLIR."
     )
     parser.add_argument("input", type=pathlib.Path, help="path to the restricted C kernel")
     parser.add_argument(
@@ -451,16 +320,12 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     linalg_path = args.output_dir / "gemm_fp32_linalg.mlir"
-    affine_path = args.output_dir / "gemm_fp32_affine.mlir"
 
     linalg_path.write_text(
         emit_linalg_mlir(kernel, semantic, layout, lift_target, blocking),
         encoding="utf-8",
     )
-    affine_path.write_text(
-        emit_affine_mlir(kernel, semantic, layout, blocking),
-        encoding="utf-8",
-    )
+    print(f"wrote {linalg_path}")
     return 0
 
 

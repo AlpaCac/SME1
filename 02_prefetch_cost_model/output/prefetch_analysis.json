@@ -1,4 +1,6 @@
 {
+  "input_layer": "linalg mainline",
+  "analysis_layer": "affine-normalized",
   "tile_config": {
     "mc": 128,
     "nc": 128,
@@ -7,148 +9,62 @@
     "nr": 16,
     "element_bytes": 4
   },
-  "linalg_analysis": {
-    "operator_summary": {
-      "has_linalg_matmul": true,
-      "has_linalg_fill": true,
-      "subview_count": 6,
-      "scf_loop_count": 7
-    },
-    "dataflow_roles": {
-      "A": "只读输入，提供 MxK 左操作数",
-      "B": "只读输入，提供 KxN 右操作数",
-      "C": "输出块，先 fill 再 matmul 累加写回",
-      "reduction_dim": "K / ko / kk",
-      "spatial_dims": [
-        "M / i / ii",
-        "N / j / jj"
-      ]
-    },
-    "tile_bytes": {
-      "macro_tile": {
-        "A_bytes": 65536,
-        "B_bytes": 65536,
-        "C_bytes": 65536,
-        "total_bytes": 196608
-      },
-      "micro_tile": {
-        "A_bytes": 8192,
-        "B_bytes": 8192,
-        "C_bytes": 1024,
-        "total_bytes": 17408
-      }
-    },
-    "reuse_summary": {
-      "A_value_reuse_in_micro_kernel": 16,
-      "B_value_reuse_in_micro_kernel": 16,
-      "C_element_accumulation_depth": 128,
-      "interpretation": "A 在 j_inner 方向复用，B 在 i_inner 方向复用，C 在 kk 方向持续累加。"
-    }
+  "ir_summary": {
+    "linalg_matmul_count": 0,
+    "linalg_fill_count": 0,
+    "scf_for_count": 0,
+    "affine_for_count": 10,
+    "memref_subview_count": 4,
+    "memref_load_count": 0,
+    "memref_store_count": 0,
+    "affine_load_count": 3,
+    "affine_store_count": 2
   },
-  "affine_analysis": {
-    "operator_summary": {
-      "affine_loop_count": 13,
-      "affine_load_count": 4,
-      "affine_store_count": 3,
-      "boundary_guard_count": 7
-    },
-    "access_patterns": {
-      "A": {
-        "pattern": "a[a_row, a_col]",
-        "inner_locality": "kk 连续推进，A 沿行方向按 stride-1 访问",
-        "cross_tile_reuse": "同一 A 微块在 j_inner 上被重复使用"
-      },
-      "B": {
-        "pattern": "b[b_row, b_col]",
-        "inner_locality": "j_inner 连续推进，B 沿列块内呈 stride-1 访问",
-        "cross_tile_reuse": "同一 B 微块在 i_inner 上被重复使用"
-      },
-      "C": {
-        "pattern": "c[c_row, c_col]",
-        "inner_locality": "j_inner 连续写，kk 上反复读改写",
-        "cross_tile_reuse": "当前实现中主要局限于单个微块生命周期"
-      }
-    },
-    "prefetch_relevant_metrics": {
-      "micro_tile_shape": [
-        16,
-        16,
-        128
-      ],
-      "macro_tile_shape": [
-        128,
-        128,
-        128
-      ],
-      "A_stream_bytes_per_micro_tile": 8192,
-      "B_stream_bytes_per_micro_tile": 8192,
-      "C_write_bytes_per_micro_tile": 1024,
-      "interpretation": "A/B 是主要读流；C 更像短生命周期的累加输出块。"
-    }
+  "working_set_bytes": {
+    "macro_A": 65536,
+    "macro_B": 65536,
+    "macro_C": 65536,
+    "macro_total": 196608,
+    "micro_A": 8192,
+    "micro_B": 8192,
+    "micro_C": 1024,
+    "micro_total": 17408
   },
-  "cost_module": {
-    "assumptions": {
-      "element_type": "f32",
-      "element_bytes": 4,
-      "cache_line_bytes": 64,
-      "macro_working_set_bytes": 196608,
-      "micro_read_stream_bytes": {
-        "A": 8192,
-        "B": 8192,
-        "C_write": 1024
-      }
+  "reuse_summary": {
+    "A_value_reuse_in_micro_kernel": 16,
+    "B_value_reuse_in_micro_kernel": 16,
+    "C_element_accumulation_depth": 128
+  },
+  "decisions": [
+    {
+      "tensor": "B",
+      "enable": true,
+      "kind": "read",
+      "priority": "high",
+      "target_cache": "L1",
+      "locality": "KEEP",
+      "distance": "2 kk cache lines or next B micro-tile",
+      "reason": "B has contiguous reads across N and reuse across M micro iterations."
     },
-    "decision_policy": {
-      "guideline": "优先预取读流且优先选择同时具备连续访问和跨迭代复用的数据对象。",
-      "expected_benefit_order": [
-        "B",
-        "A",
-        "C"
-      ]
+    {
+      "tensor": "A",
+      "enable": true,
+      "kind": "read",
+      "priority": "medium",
+      "target_cache": "L1",
+      "locality": "KEEP",
+      "distance": "1-2 kk cache lines",
+      "reason": "A is contiguous along K and each value is reused across the N micro-tile."
     },
-    "decisions": [
-      {
-        "tensor": "B",
-        "enable": true,
-        "kind": "read",
-        "priority": "high",
-        "target_cache": "L1",
-        "distance": "按未来 2 个 kk-cache-line 或未来 1 个 B 微块边界",
-        "policy": "KEEP",
-        "reason": "B 在 j_inner 上连续访问，同时在 i_inner 上复用，既有良好流式特征又有明显重用价值。"
-      },
-      {
-        "tensor": "A",
-        "enable": true,
-        "kind": "read",
-        "priority": "medium",
-        "target_cache": "L1",
-        "distance": "按未来 1 到 2 个 kk-cache-line",
-        "policy": "KEEP",
-        "reason": "A 在 kk 上连续，单个 a_val 在 j_inner 上被重复消费，适合较短距离读预取。"
-      },
-      {
-        "tensor": "C",
-        "enable": false,
-        "kind": "write",
-        "priority": "low",
-        "target_cache": "none",
-        "distance": "none",
-        "policy": "none",
-        "reason": "当前研究版中 C 微块较小，且生命周期局限在单微块内，主动软件预取收益预期较弱。"
-      }
-    ],
-    "prefetch_op_suggestions": [
-      {
-        "level": "affine",
-        "target": "B",
-        "suggested_form": "custom.prefetch %b[...] {{cache = \"L1\", rw = \"read\", locality = \"keep\"}}"
-      },
-      {
-        "level": "affine",
-        "target": "A",
-        "suggested_form": "custom.prefetch %a[...] {{cache = \"L1\", rw = \"read\", locality = \"keep\"}}"
-      }
-    ]
-  }
+    {
+      "tensor": "C",
+      "enable": false,
+      "kind": "write",
+      "priority": "low",
+      "target_cache": "none",
+      "locality": "none",
+      "distance": "none",
+      "reason": "C is a short-lived accumulation tile in the current research kernel."
+    }
+  ]
 }

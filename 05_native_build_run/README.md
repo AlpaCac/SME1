@@ -1,99 +1,52 @@
 # 05 Native Build Run
 
-这个目录对应第五步：把第四步统一主线的结果继续编译，并在本机环境中实际运行。
+本目录对应总体方案的第五步：将第四步生成的 LLVM dialect MLIR 继续导出为 LLVM IR，并编译成汇编、目标文件和本机可执行文件。
 
-## 目标
-
-第五步现在只有一个主目标：
-
-1. 把第四步的统一产物 [03_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir) 继续翻译、编译，并在本机实际运行。
-
-研究主线只有一条，即：
+当前主线是：
 
 ```text
-高层 MLIR
--> 预取分析
--> 预取注入
--> vector / arm_sme / llvm
--> 本机编译验证
+04_vector_arm_sme_llvm/output/02_llvm_prefetch.mlir
+-> output/step4_llvm_prefetch.ll
+-> output/step4_llvm_prefetch.s
+-> output/step4_llvm_prefetch.o
+-> output/step4_llvm_prefetch_demo
 ```
 
-## 当前状态
+## 1. 输入
 
-当前脚本会先尝试统一主线：
+输入文件是第四步最终产物：
 
-```text
-03_llvm_prefetch.mlir
--> mlir-translate --mlir-to-llvmir
--> llc -mattr=+sme
--> clang 链接 unified_harness.c
--> 本机运行
-```
+- [../04_vector_arm_sme_llvm/output/02_llvm_prefetch.mlir](/Users/alpaca/Documents/SME/SME1/04_vector_arm_sme_llvm/output/02_llvm_prefetch.mlir)
 
-这里显式加上 `-mattr=+sme`，是因为统一主线里已经包含 streaming SME 相关属性；如果不打开 SME 目标特性，LLVM 后端会拒绝生成目标对象。
+该文件已经包含：
 
-这里的统一主线运行现在由两层组成：
+- `llvm.func`
+- `llvm.intr.prefetch`
+- `arm_sme.intr.*`
+- `arm_sve.intr.*`
 
-- [unified_wrapper.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/unified_wrapper.c)
-  - 直接调用原始 lowering 导出的 `_gemm_step4_compute`
-  - 不再把它的原始返回 ABI 直接暴露给普通 C 调用者
-  - 明确按“结果就是输出缓冲区 C”来重建稳定的 `memref` 返回描述符
+## 2. 输出
 
-- [unified_harness.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/unified_harness.c)
-  - 调用 `gemm_step4_compute_stable`
-  - 同时验证“原地写回的 C”与“wrapper 返回的 descriptor”是否一致
+第五步会生成：
 
-这样做的原因是：
+- [output/step4_llvm_prefetch.ll](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/step4_llvm_prefetch.ll)：LLVM IR 文本
+- [output/step4_llvm_prefetch.s](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/step4_llvm_prefetch.s)：AArch64 汇编
+- `output/step4_llvm_prefetch.o`：目标文件
+- `output/step4_llvm_prefetch_demo`：最小可执行文件
+- [output/step4_llvm_prefetch_demo.log](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/step4_llvm_prefetch_demo.log)：运行输出
+- [output/summary.txt](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/summary.txt)：构建摘要
 
-- 统一主线函数本身已经可以运行
-- 但原始 lowering 直接导出的返回 ABI，在 Darwin + 当前 llc 产物上不适合作为稳定的普通 C 接口
-- 因此第五步单独增加一层稳定 wrapper，把“执行语义”和“研究接口 ABI”解耦
+## 3. 工具
 
-## 当前阶段结论
+当前使用本机已有工具：
 
-现在第五步已经可以把统一主线推进到“生成 LLVM IR、编译、链接，并实际运行”：
+- `mlir-translate`：把 LLVM dialect MLIR 导出为 LLVM IR `.ll`
+- `llc -mattr=+sme`：把 `.ll` 编译成汇编和目标文件
+- `/usr/bin/clang`：把目标文件和最小 harness 链接成可执行文件
 
-- `03_llvm_prefetch.mlir` 可以成功翻译为 LLVM IR
-- `llc -mattr=+sme` 可以成功生成目标文件
-- `clang` 可以成功链接统一主线最小 harness
-- `unified_demo` 可以在本机实际运行
-- 稳定 wrapper 返回的 `memref descriptor` 也可以被本机 C 代码安全读取
+其中 `-mattr=+sme` 是必要的，因为第四步输出中包含 Arm SME intrinsic。
 
-当前运行结果见：
-
-- [output/unified_demo.log](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/unified_demo.log)
-
-当前统一主线输出为：
-
-```text
-C =
-  12.0   13.0   12.0   13.0
-  28.0   29.0   28.0   29.0
-  44.0   45.0   44.0   45.0
-  60.0   61.0   60.0   61.0
-C_from_descriptor =
-  12.0   13.0   12.0   13.0
-  28.0   29.0   28.0   29.0
-  44.0   45.0   44.0   45.0
-  60.0   61.0   60.0   61.0
-```
-
-因此第五步现在已经完成了“实际运行级验证”。
-
-不过需要明确：
-
-1. 现在验证的是“统一主线函数体 + SME lowering + 预取相关代码”已经能运行。
-2. 对外稳定接口使用的是 `unified_wrapper.c` 重建后的 descriptor，而不是直接暴露原始 lowering 产物的返回 ABI。
-
-## 目录结构
-
-- [build_and_run.py](/Users/alpaca/Documents/SME/SME1/05_native_build_run/build_and_run.py)：第五步自动化脚本
-- [unified_wrapper.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/unified_wrapper.c)：统一主线的稳定 ABI wrapper
-- [unified_harness.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/unified_harness.c)：运行统一主线 `gemm_step4_compute` 的最小本机 C harness
-- [output/summary.txt](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/summary.txt)：本次构建和运行摘要
-- [output/unified_demo.log](/Users/alpaca/Documents/SME/SME1/05_native_build_run/output/unified_demo.log)：统一主线本机运行输出
-
-## 如何运行
+## 4. 如何运行
 
 在仓库根目录执行：
 
@@ -101,10 +54,55 @@ C_from_descriptor =
 python3 05_native_build_run/build_and_run.py
 ```
 
-## 当前预期
+脚本会依次执行：
 
-根据现在的中间结果：
+```bash
+mlir-translate --mlir-to-llvmir
+llc -mattr=+sme -filetype=asm
+llc -mattr=+sme -filetype=obj
+clang step4_llvm_prefetch.o native_harness.c
+```
 
-- 统一主线已经能走到“LLVM IR -> 目标对象 -> 可执行文件 -> 本机运行”
+## 5. Harness 说明
 
-所以第五步现在记录的是“统一主线已经完成运行级验证”。
+[native_harness.c](/Users/alpaca/Documents/SME/SME1/05_native_build_run/native_harness.c) 提供一个最小 `main` 函数。
+
+它构造 4x4 的 A、B、C 矩阵，然后调用第四步导出的函数：
+
+```c
+gemm_fp32_linalg(...)
+```
+
+调用参数采用 MLIR memref descriptor 展开形式：
+
+```text
+allocated pointer, aligned pointer, offset, size0, size1, stride0, stride1
+```
+
+这样可以让没有 `main` 的 LLVM IR kernel 被链接成可执行文件。
+
+## 6. 验证点
+
+生成 `.ll` 后检查：
+
+```llvm
+call void @llvm.prefetch.p0(...)
+```
+
+生成 `.s` 后检查：
+
+```asm
+prfm
+fmopa
+smstart
+```
+
+其中：
+
+- `prfm` 说明预取 intrinsic 被后端选择为 AArch64 预取指令
+- `fmopa` 说明 SME matrix outer product intrinsic 被后端选择为 SME 指令
+- `smstart` 说明函数进入 SME streaming/ZA 相关状态
+
+## 7. 一句话总结
+
+第五步把第四步的 LLVM dialect 产物推进到本机可执行层，验证预取语义和 SME 计算语义可以继续进入 LLVM IR、汇编和可执行文件。

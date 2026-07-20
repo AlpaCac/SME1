@@ -1,43 +1,33 @@
 # 第二步分析结果
 
-这份文档由 `analyze_prefetch.py` 自动生成，目标是把第一步得到的 `linalg` 与 `affine` 两个 MLIR 文件进一步整理为预取研究可用的分析结果。
+这份报告由 `step2-prefetch-cost-model` MLIR pass 生成。输入是第一步的 `linalg` 主线，分析层是经过 linalg lowering 和保守规范化得到的 `affine-normalized` 循环形态。
 
-## 1. Linalg 层整体数据流性质
+## 1. IR 结构摘要
 
-- 核心算子：`linalg.matmul` = `True`
-- 块初始化：`linalg.fill` = `True`
-- `memref.subview` 数量：`6`
-- `scf.for` 数量：`7`
-- 数据流角色：A 为左输入，B 为右输入，C 为输出累加块。
-- 归约维：`K / ko / kk`
-- 空间维：`M / i / ii, N / j / jj`
-- 宏块工作集：`196608` bytes
-- 微块工作集：`17408` bytes
-- 复用摘要：A 在 j_inner 方向复用，B 在 i_inner 方向复用，C 在 kk 方向持续累加。
+- `linalg.matmul` 数量：`0`
+- `linalg.fill` 数量：`0`
+- `scf.for` 数量：`0`
+- `affine.for` 数量：`10`
+- `memref.subview` 数量：`4`
+- `memref.load` 数量：`0`
+- `memref.store` 数量：`0`
 
-## 2. Affine 层预取相关分析
+- `affine.load` 数量：`3`
+- `affine.store` 数量：`2`
 
-- `affine.for` 数量：`13`
-- `affine.load` 数量：`4`
-- `affine.store` 数量：`3`
-- 边界保护 `scf.if` 数量：`7`
-- A：沿 `kk` 呈连续读，适合短距离读预取。
-- B：沿 `j_inner` 呈连续读，并在 `i_inner` 方向复用，是优先级最高的预取对象。
-- C：主要表现为微块内读改写，主动软件预取价值相对较低。
+## 2. 分块和工作集
 
-## 3. Cost Module 决策
+- 宏块：`mc=128, nc=128, kc=128`
+- 微块：`mr=16, nr=16`
+- 宏块工作集：`196608 bytes`
+- 微块工作集：`17408 bytes`
 
-- 决策原则：优先预取读流且优先选择同时具备连续访问和跨迭代复用的数据对象。
-- 预计收益排序：`B > A > C`
-- `B`：开启 `read` 预取，缓存目标 `L1`，策略 `KEEP`。
-  说明：B 在 j_inner 上连续访问，同时在 i_inner 上复用，既有良好流式特征又有明显重用价值。
-- `A`：开启 `read` 预取，缓存目标 `L1`，策略 `KEEP`。
-  说明：A 在 kk 上连续，单个 a_val 在 j_inner 上被重复消费，适合较短距离读预取。
-- `C`：关闭 `write` 预取，缓存目标 `none`，策略 `none`。
-  说明：当前研究版中 C 微块较小，且生命周期局限在单微块内，主动软件预取收益预期较弱。
+## 3. 预取决策
 
-## 4. 对后续 MLIR 注入的含义
+- `B`：开启读预取，优先级 high，目标 L1，策略 KEEP。原因是 B 在 N 方向连续访问，并在 M 微块方向复用。
+- `A`：开启读预取，优先级 medium，目标 L1，策略 KEEP。原因是 A 沿 K 方向连续访问，并在 N 微块方向复用。
+- `C`：当前不开启主动软件预取。原因是 C 是短生命周期累加块，更适合先观察实际硬件行为后再决定。
 
-- 在 `affine` 层优先对 `B` 注入读预取，再考虑 `A`。
-- `C` 目前建议不主动注入预取，而是观察后续真实硬件行为后再决定。
-- 如果下一步要设计自定义预取 op，可以先只覆盖 `A/B` 两个输入流。
+## 4. 对第三步的输出接口
+
+第三步应读取 `prefetch_analysis.json` 中的 `decisions`，并在 vector 主线中对 A/B 的读流插入预取语义。本步骤不直接修改计算语义，只给出分析结果和决策。

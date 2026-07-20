@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step 5: build and run the unified step-4 result locally."""
+"""Step 5: translate, assemble, link, and run the step-4 LLVM output."""
 
 from __future__ import annotations
 
@@ -40,12 +40,27 @@ def main() -> int:
 
     summary_lines: list[str] = []
 
-    # 先尝试统一主线最终产物；这是第五步真正关心的对象。
-    unified_mlir = ROOT / "04_vector_arm_sme_llvm/output/03_llvm_prefetch.mlir"
+    # 第五步从第四步最终 MLIR 产物继续生成 LLVM IR、汇编、目标文件和可执行文件。
+    unified_mlir = ROOT / "04_vector_arm_sme_llvm/output/02_llvm_prefetch.mlir"
     unified_ll = output / "step4_llvm_prefetch.ll"
+    unified_asm = output / "step4_llvm_prefetch.s"
     unified_obj = output / "step4_llvm_prefetch.o"
-    unified_exe = output / "unified_demo"
-    unified_log = output / "unified_demo.log"
+    unified_exe = output / "step4_llvm_prefetch_demo"
+    unified_log = output / "step4_llvm_prefetch_demo.log"
+
+    for stale_path in [
+        unified_ll,
+        unified_asm,
+        unified_obj,
+        unified_exe,
+        unified_log,
+        output / "unified_translate.stderr",
+        output / "unified_asm.stderr",
+        output / "unified_obj.stderr",
+        output / "unified_link.stderr",
+        output / "unified_run.stderr",
+    ]:
+        remove_if_exists(stale_path)
 
     result = run(
         [str(MLIR_TRANSLATE), "--mlir-to-llvmir", str(unified_mlir), "-o", str(unified_ll)],
@@ -58,40 +73,61 @@ def main() -> int:
         remove_if_exists(output / "unified_translate.stderr")
         summary_lines.append("unified_mainline_translate: ok")
         result = run(
-            [str(LLC), "-mattr=+sme", str(unified_ll), "-filetype=obj", "-o", str(unified_obj)],
+            [
+                str(LLC),
+                "-mattr=+sme",
+                str(unified_ll),
+                "-filetype=asm",
+                "-o",
+                str(unified_asm),
+            ],
             ROOT,
         )
         if result.returncode != 0:
-            write_text(output / "unified_llc.stderr", result.stderr)
-            summary_lines.append("unified_mainline_object: failed")
+            write_text(output / "unified_asm.stderr", result.stderr)
+            summary_lines.append("unified_mainline_asm: failed")
         else:
-            remove_if_exists(output / "unified_llc.stderr")
-            summary_lines.append("unified_mainline_object: ok")
+            summary_lines.append("unified_mainline_asm: ok")
             result = run(
                 [
-                    str(CLANG),
-                    str(unified_obj),
-                    str(workdir / "unified_wrapper.c"),
-                    str(workdir / "unified_harness.c"),
+                    str(LLC),
+                    "-mattr=+sme",
+                    str(unified_ll),
+                    "-filetype=obj",
                     "-o",
-                    str(unified_exe),
+                    str(unified_obj),
                 ],
                 ROOT,
             )
             if result.returncode != 0:
-                write_text(output / "unified_link.stderr", result.stderr)
-                summary_lines.append("unified_mainline_link: failed")
+                write_text(output / "unified_obj.stderr", result.stderr)
+                summary_lines.append("unified_mainline_object: failed")
             else:
-                remove_if_exists(output / "unified_link.stderr")
-                summary_lines.append("unified_mainline_link: ok")
-                result = run([str(unified_exe)], ROOT)
-                write_text(unified_log, (result.stdout or "") + (result.stderr or ""))
-                if result.returncode == 0:
-                    summary_lines.append("unified_mainline_run: ok")
+                summary_lines.append("unified_mainline_object: ok")
+                result = run(
+                    [
+                        str(CLANG),
+                        str(unified_obj),
+                        str(workdir / "native_harness.c"),
+                        "-o",
+                        str(unified_exe),
+                    ],
+                    ROOT,
+                )
+                if result.returncode != 0:
+                    write_text(output / "unified_link.stderr", result.stderr)
+                    summary_lines.append("unified_mainline_link: failed")
                 else:
-                    summary_lines.append(
-                        f"unified_mainline_run: failed ({result.returncode})"
-                    )
+                    summary_lines.append("unified_mainline_link: ok")
+                    result = run([str(unified_exe)], ROOT)
+                    write_text(unified_log, (result.stdout or "") + (result.stderr or ""))
+                    if result.returncode != 0:
+                        write_text(output / "unified_run.stderr", result.stderr)
+                        summary_lines.append(
+                            f"unified_mainline_run: failed ({result.returncode})"
+                        )
+                    else:
+                        summary_lines.append("unified_mainline_run: ok")
 
     write_text(output / "summary.txt", "\n".join(summary_lines) + "\n")
     return 0

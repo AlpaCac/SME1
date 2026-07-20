@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SMEPrefetchInjection LANGUAGES CXX C)
+project(SMEPrefetchCostModel LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard")
 set(CMAKE_CXX_STANDARD_REQUIRED YES)
@@ -22,19 +22,22 @@ include_directories(${MLIR_INCLUDE_DIRS})
 link_directories(${LLVM_BUILD_LIBRARY_DIR})
 add_definitions(${LLVM_DEFINITIONS})
 
-add_llvm_library(SMEPrefetchInjectionPass
+add_llvm_library(SMEPrefetchCostModelPass
   MODULE
-  passes/InjectVectorPrefetch.cpp
+  passes/PrefetchCostModel.cpp
 
   DEPENDS
   PLUGIN_TOOL
   mlir-opt
 
   LINK_LIBS
+  MLIRAffineDialect
+  MLIRArithDialect
   MLIRFuncDialect
   MLIRIR
+  MLIRLinalgDialect
   MLIRMemRefDialect
   MLIRPass
+  MLIRSCFDialect
   MLIRSupport
-  MLIRVectorDialect
 )
