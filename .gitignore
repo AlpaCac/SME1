@@ -19,3 +19,4 @@
 
 # Locally generated executables in step outputs
 /05_native_build_run/output/unified_demo
+/05_native_build_run/output/step4_llvm_prefetch_demo
