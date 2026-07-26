@@ -2,6 +2,8 @@
 
 # Local stencil build artifacts
 *.o
+*.pyc
+__pycache__/
 /build/
 /stencil_sme_kernels.ll
 /stencil_sme_kernels.s

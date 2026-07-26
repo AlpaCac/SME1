@@ -14,6 +14,7 @@
 | `stencil_sme_kernels.c` | 使用 `arm_sme.h` 和 `arm_sve.h` 实现的 2D5P、3D7P kernel |
 | `stencil预取优化实施方案.md` | 计算模型、预取类别、决策算法和 Clang/LLVM pass 实施步骤 |
 | `software_prefetch_sme_analysis.md` | SME stencil 软件读预取的背景与原理分析 |
+| `01_llvm_ir_analysis/` | 步骤 1：生成 LLVM IR 并自动验证循环、地址和向量访存结构 |
 
 ## Kernel
 
@@ -49,6 +50,14 @@ clang -target arm64-apple-macos15 \
   -o stencil_sme_kernels.ll
 ```
 
+运行步骤 1 的完整生成与检查：
+
+```bash
+./01_llvm_ir_analysis/generate_and_check.sh
+```
+
+检查结果写入 `01_llvm_ir_analysis/output/analysis_report.md`。
+
 ## 预取实现主线
 
 ```text
@@ -81,3 +90,8 @@ clang -target arm64-apple-macos15 \
 2D5P 通常合并为 3 条主要 cache-line 流，3D7P 通常合并为 5 条。两者共享 LLVM 分析框架，但分别进行距离、层级、KEEP/STRM 和流准入决策。
 
 完整设计与实现顺序见 `stencil预取优化实施方案.md`。
+
+## 实施状态
+
+1. 步骤 1：Clang LLVM IR 生成与可分析性检查，已完成。
+2. 步骤 2：LLVM new-pass-manager 插件，尚未实现。
