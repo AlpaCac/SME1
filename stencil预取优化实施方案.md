@@ -649,6 +649,8 @@ struct StreamInfo {
   const SCEV *Address;
   StreamKind Kind;
   unsigned LogicalLoadCount;
+  unsigned ReuseCount;
+  uint64_t ReuseDistanceBytes;
 };
 
 struct PrefetchDecision {
@@ -656,6 +658,7 @@ struct PrefetchDecision {
   unsigned DistanceIterations;
   CacheLevel Level;
   LocalityPolicy Policy;
+  DecisionReason Reason;
 };
 ```
 
@@ -665,19 +668,284 @@ struct PrefetchDecision {
 
 ### 步骤 4：边分析边选择并插入预取
 
-对每条合并后的流，按第二部分的模型依次执行：
+本步骤必须把第二部分的原则变成确定的 pass 算法。决策不能只写成“根据代价选择”，而要明确输入、计算公式、阈值、降级顺序和默认结果。
+
+#### 4.1 决策输入
+
+决策输入分为目标机参数和当前循环属性。
+
+目标机参数由 pass 命令行选项或目标机 profile 提供：
 
 ```text
-识别 StreamKind
--> 估计每次向量迭代计算周期
--> 生成距离候选
--> 估计活跃工作集和复用距离
--> 选择 L1/L2/L3
--> 选择 KEEP/STRM
--> 检查 cache、带宽和流数量预算
--> 构造未来地址
--> 去重并插入 intrinsic
+cache_line_bytes
+L1_capacity_bytes
+L2_capacity_bytes
+L1_prefetch_latency_cycles
+L2_prefetch_latency_cycles
+memory_latency_cycles
+max_prefetch_streams
+max_prefetch_instructions_per_iteration
+max_prefetch_bytes_per_iteration
+alpha1, alpha2
+assumed_streaming_vl_bytes
+expected_row_bytes
+expected_plane_or_tile_bytes
 ```
+
+LLVM 的 TTI 不保证提供完整、准确的 cache 容量和内存延迟，因此不能假设这些值都能从后端查询。第一版在 pass 中维护按 CPU 名称选择的 C++ `TargetPrefetchProfile` 表；命令行参数可以覆盖 profile，便于实验扫描。该 profile 是目标机配置，不是分析结果，不使用 JSON，也不在分析和插入之间传递文件。
+
+SME streaming vector length 在编译时可能是可伸缩值。距离以“向量迭代数”保存，不依赖固定 VL；只有估算 cache 占用时才使用 `assumed_streaming_vl_bytes`。如果目标部署允许多个 VL，应为每个 VL 建立 profile，或使用预期最大 VL 做保守容量判断。
+
+当前循环属性由 `LoopInfo`、SCEV 和步骤 3 的流识别得到：
+
+```text
+stencil_kind                 // 2D5P 或 3D7P
+inner_trip_count             // 可静态求值时使用
+row_bytes = W * sizeof(float)
+plane_bytes = H * row_bytes  // 仅 3D
+bytes_per_vector_iteration
+useful_cycles_per_iteration
+stream kind
+reuse_count
+reuse_distance_bytes
+```
+
+`useful_cycles_per_iteration` 第一版采用目标 profile 中的 2D/3D 基准值；后续可结合 TTI 对循环体 load、FMA 和 add 的吞吐量估算。不能直接用 IR 指令条数代替周期，因为 SME/SVE 指令吞吐和 load issue 宽度不同。
+
+当前 C kernel 的 `W/H` 可能是运行时参数，而 `llvm.aarch64.prefetch` 的层级和 KEEP/STRM 参数必须是编译期立即数。pass 按以下顺序获得容量判断所需的尺寸：
+
+1. 优先使用常量传播后 SCEV 可证明的 `W/H` 或 tile 尺寸。
+2. 尺寸动态时，使用 workload profile 中的 `expected_row_bytes` 和 `expected_plane_or_tile_bytes`。
+3. 如果既没有静态尺寸也没有 workload profile，则把复用距离视为未知：近距离前沿仍可按预算生成 STRM，依赖整行或整平面驻留的 KEEP 和远距离 warming 默认关闭。
+4. 只有确实需要覆盖两类差异很大的尺寸时，才通过 loop versioning 生成两套具有不同立即数的循环，并在函数入口按 `W/H` 分派；第一版不默认启用这种代码膨胀。
+
+#### 4.2 为每条流生成距离候选
+
+对目标层级 `L` 计算：
+
+```text
+raw_distance(L)
+  = ceil(prefetch_latency_cycles(L)
+         / useful_cycles_per_iteration)
+
+distance(L)
+  = clamp(raw_distance(L), min_distance(L), max_distance)
+```
+
+其中：
+
+```text
+max_distance
+  = floor(inner_trip_count / 2)    // trip count 已知
+  = profile.max_distance           // trip count 未知
+```
+
+如果 `inner_trip_count <= 2 * raw_distance(L)`，说明稳定预取区间太短，关闭该流的内层前向预取，避免大部分迭代都落入 guard 或尾部。
+
+距离还要向 cache-line 前沿取整：
+
+```text
+line_iterations
+  = ceil(cache_line_bytes / assumed_streaming_vl_bytes)
+
+distance(L)
+  = ceil(distance(L) / line_iterations) * line_iterations
+```
+
+这里的取整只用于减少同一 cache line 的重复预取，不改变最终未来地址仍以运行时 `svcntsw()` 计算的事实。
+
+#### 4.3 选择缓存层级
+
+先为每个流计算放入目标层级后的在途占用：
+
+```text
+live_bytes(stream, L)
+  = distance(stream, L)
+  * assumed_streaming_vl_bytes
+
+L1_budget = alpha1 * L1_capacity_bytes
+L2_budget = alpha2 * L2_capacity_bytes
+```
+
+再分别计算 L1 的活跃 cache-line 前沿和 L2 的平面/tile 工作集：
+
+```text
+frontier_bytes_per_stream
+  = max(cache_line_bytes, assumed_streaming_vl_bytes)
+
+2D active_L1_frontier
+  = 3 * frontier_bytes_per_stream
+
+3D active_L1_frontier
+  = 5 * frontier_bytes_per_stream
+
+3D active_L2_working_set
+  = 3 * min(plane_bytes, tile_plane_bytes)
+```
+
+若没有 tiling，`tile_plane_bytes = plane_bytes`。L1 只计算当前计算前沿涉及的 cache lines，不把完整行或完整平面都计入 L1；完整工作集能否保留由 4.4 的 KEEP/STRM 判定负责。L2 才额外评估 plane 或 plane tile 的驻留。层级按以下规则确定：
+
+1. A/B 类和 C 类近距离候选先尝试 L1。
+2. 只有 `active_L1_frontier + sum(live_bytes of admitted L1 streams) <= L1_budget` 时才接受 L1。
+3. L1 超预算时，不是简单缩短到无法覆盖延迟；先尝试把远距离 warming 改为 L2，再关闭低优先级流。
+4. C 类远距离和 D 类从 L2 开始，满足对应 L2 预算后才接受。
+5. L3 默认禁用；只有 profile 明确声明共享末级缓存可用且候选使用时间明显晚于 L2 距离时才生成 L3 候选。
+
+对 3D plane 流，两级接力仅在以下条件同时成立时启用：
+
+```text
+distance(L2) > distance(L1)
+L2 capacity check passes
+L1 near-frontier capacity check passes
+plane/tile has enough iterations to cover both distances
+```
+
+否则只保留近距离 L1，或在 L1 压力过大时只保留 L2 warming，不能无条件插入两条预取。
+
+#### 4.4 选择 KEEP 或 STRM
+
+对每条流估算：
+
+```text
+reuse_fits(level)
+  = reuse_count > 1
+  && reuse_distance_bytes <= effective_capacity(level)
+```
+
+决策为：
+
+```text
+if reuse_fits(level):
+  policy = KEEP
+else:
+  policy = STRM
+```
+
+当前两个算子的复用距离按下列方式计算：
+
+| 流 | 复用关系 | 初始 `reuse_distance_bytes` |
+|---|---|---:|
+| 2D current/north/south row | 同一输入行随 `y` 轮换角色 | 约 `3 * row_bytes` |
+| 3D current-plane row | 同一平面内随 `y` 轮换 | 约 `5 * row_bytes` |
+| 3D front/back plane | 同一输入平面随 `z` 轮换 | 约一个 plane 工作集 |
+| D next-row/plane/tile | 是否复用取决于下一块的 tile | 下一块有效工作集 |
+
+因此 2D B 类通常得到 L1 + KEEP。3D C 类的近距离 L1 候选在完整 plane 不能留在 L1 时得到 STRM；若 plane tile 能留在 L2，远距离 L2 warming 得到 KEEP，否则得到 STRM。
+
+#### 4.5 流准入、裁剪和降级
+
+一个未来 SME 向量可能跨越多个 cache line。先计算每条物理流在一次向量迭代中需要覆盖的 line 数：
+
+```text
+lines_per_vector
+  = ceil(assumed_streaming_vl_bytes / cache_line_bytes)
+
+prefetch_instructions_per_iteration
+  = admitted_physical_streams * lines_per_vector
+
+candidate_prefetch_bytes_per_iteration
+  = prefetch_instructions_per_iteration * cache_line_bytes
+
+candidate_stream_count
+```
+
+`candidate_stream_count` 用于限制硬件同时跟踪的独立地址流，`prefetch_instructions_per_iteration` 用于限制额外指令数，二者不能混为一个指标。若 `lines_per_vector > 1`，同一未来向量地址需要按 cache-line 步长生成多个 `PRFM`；如果 profile 不能保证运行时 VL，则第一版只允许为已知部署 VL 生成该展开，否则采用单 cache-line 的保守模式并在诊断中标记覆盖不完整。
+
+只有同时满足以下条件才准入：
+
+```text
+candidate_stream_count <= max_prefetch_streams
+prefetch_instructions_per_iteration
+  <= max_prefetch_instructions_per_iteration
+candidate_prefetch_bytes_per_iteration
+  <= max_prefetch_bytes_per_iteration
+cache capacity check passes
+distance can be covered by the main loop
+```
+
+预算超限时按最低优先级开始删除：
+
+| 算子 | 从高到低的保留优先级 |
+|---|---|
+| 2D5P | B 跨行 → D next-row → A 连续维 |
+| 3D7P | C 跨平面近距离 → B 跨行 → C 跨平面远距离 → D next-plane/tile → A 连续维 |
+
+A 类默认最后考虑，因为连续 `x` 流最可能已被硬件预取覆盖。D 类只有在行、平面或 tile 切换的冷启动成本能够摊销时启用。删除一项候选后必须重新计算层级容量，不能沿用删除前的占用。
+
+如果某个候选不满足预算，按以下顺序降级：
+
+```text
+取消两级接力中的远距离预取
+-> 将远距离 L1 warming 改为 L2
+-> 缩短距离，但不得短于覆盖目标层延迟的最小值
+-> 改为 STRM 减少保留倾向
+-> 关闭该流
+```
+
+`STRM` 只是 cache replacement hint，不能被当成突破容量或带宽预算的理由。
+
+#### 4.6 第一版的确定性默认决策
+
+当 profile 只有 cache/延迟参数、没有 PMU 反馈时，pass 使用以下基线：
+
+```text
+2D5P:
+  current row A: disabled
+  north/south row B:
+    L1 + policy from reuse_fits(L1), distance(L1)
+  next-row D: disabled
+
+3D7P:
+  current row A: disabled
+  north/south row B:
+    L1 + policy from reuse_fits(L1), distance(L1)
+  front/back plane C near: L1 + STRM, distance(L1)
+  front/back plane C far:
+    enabled only if L2 capacity and stream budgets pass
+    L2 + KEEP when plane tile fits L2, otherwise L2 + STRM
+  next-plane/tile D: disabled
+```
+
+该默认值不是最终调优结果，但它保证相同 IR 和相同 target profile 产生相同决策。PMU 数据用于更新 profile 或默认参数，不在一次编译过程中动态改变 pass 逻辑。
+
+#### 4.7 pass 决策伪代码
+
+```cpp
+for (Loop *L : findCandidateInnerLoops(F)) {
+  StencilInfo SI = recognizeStencil(L, SE);
+  if (!SI.isValid())
+    continue;
+
+  SmallVector<StreamInfo> Streams = mergePhysicalStreams(SI);
+  SmallVector<PrefetchDecision> Candidates;
+
+  for (const StreamInfo &S : Streams) {
+    for (CacheLevel Level : initialLevels(SI.Kind, S.Kind)) {
+      unsigned Distance = computeDistance(S, Level, Profile, SI);
+      if (!hasStablePrefetchWindow(SI, Distance))
+        continue;
+
+      LocalityPolicy Policy =
+          reuseFits(S, Level, Profile) ? KEEP : STRM;
+      Candidates.push_back(
+          {true, Distance, Level, Policy, InitialCandidate});
+    }
+  }
+
+  sortByStencilPriority(Candidates, SI.Kind);
+  SmallVector<PrefetchDecision> Admitted =
+      admitWithinCacheStreamAndBandwidthBudgets(
+          Candidates, SI, Profile);
+
+  for (const PrefetchDecision &D : Admitted)
+    for (Value *Address : buildSafeFutureAddresses(D, SI))
+      insertAArch64ReadPrefetch(Address, D);
+}
+```
+
+`buildSafeFutureAddresses` 根据 `lines_per_vector` 返回一个或多个 cache-line 地址。`Reason` 字段记录 `InitialCandidate`、`L1CapacityReject`、`BandwidthReject`、`ShortTripCount` 等原因。调试模式打印每条流的输入值、候选值和最终结果，使性能异常能够追溯，而不是只看到“插入或未插入”。
+
+#### 4.8 构造未来地址并插入
 
 未来位置为：
 
