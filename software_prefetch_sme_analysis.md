@@ -35,14 +35,14 @@
 当前 `SME1` 仓库已经具备可复用的预取后半段基础设施：
 
 ```text
-affine-normalized 层分析
--> vector 层插入 memref.prefetch
+stencil 规范化与 vectorization
+-> vector/scf 层边分析边插入 stencil.prefetch
 -> Arm SME / LLVM lowering
--> llvm.intr.prefetch
--> AArch64 prfm
+-> llvm.aarch64.prefetch
+-> 精确目标层级与 KEEP/STRM 的读预取
 ```
 
-目前仓库还没有完整的 stencil kernel、stencil 语义分析或 stencil 预取注入产物。因此本文描述的是后续以 stencil 为主线时应实现的方案，而不是现有完成状态。
+目前仓库已有 `stencil_sme_kernels.c` 中的 2D5P/3D7P kernel，但还没有完整的 stencil MLIR 语义分析、自定义预取 op 或集成注入 pass。因此本文中的编译器方案仍是后续实现目标。
 
 ## 3. 参考依据
 
@@ -55,12 +55,14 @@ affine-normalized 层分析
 3. `04_vector_arm_sme_llvm/prefetch参数映射说明.md`
 4. `README.md`
 
+现有 JSON cost-model 文件只作为早期实验背景，不再作为 stencil 分析与插入之间的信息通道。
+
 这些材料的主要复用价值是：
 
-1. 在高层循环 IR 中形成结构化预取决策
-2. 在 vector/memref 层插入标准 `memref.prefetch`
-3. 将预取语义保留到 `llvm.intr.prefetch`
-4. 最终验证汇编中的 AArch64 `prfm`
+1. 在 vector/scf IR 中识别 stencil 访存流
+2. 在同一个 pass 中立即决策、计算未来地址并插入 `stencil.prefetch`
+3. 通过自定义 op 无损保存目标缓存层级与 `KEEP/STRM`
+4. 直接降低到 AArch64 专用 `llvm.aarch64.prefetch`
 
 不应直接复用基于固定操作数身份或 rank-1 load 出现顺序的流分类方法。stencil 必须根据索引映射、维度和邻域偏移识别数据流。
 
@@ -73,8 +75,8 @@ Google Scholar 检索中，与本文最直接相关的是：
 
 编译器层参考：
 
-1. MLIR `memref.prefetch`
-2. LLVM `llvm.prefetch`
+1. MLIR 自定义 dialect 与 operation 定义机制
+2. LLVM AArch64 `llvm.aarch64.prefetch` intrinsic
 
 ## 4. 为什么 SME Stencil 需要软件预取
 
@@ -233,17 +235,18 @@ prefetch_address
 7. 时间 tile
 8. 常系数或变系数模式
 
-可采用 `linalg.generic`、结构化 stencil 表达或带属性的 `scf/affine` 循环作为分析入口。关键要求是不能在 cost model 运行前丢失邻域语义。
+可采用 `linalg.generic`、结构化 stencil 表达或带属性的 `scf/affine` 循环作为入口。关键要求是 vectorization 后仍能通过 indices、source tracing 或显式 offset attribute 恢复邻域语义。
 
-### 7.2 在 affine-normalized 层识别访存流
+### 7.2 在 vector/scf 层识别访存流
 
-对每个 load 回溯 base memref 和 affine index map，识别：
+集成 pass 对每个 `vector.transfer_read` 回溯 base memref、`memref.subview` 和 index 表达式，识别：
 
 1. 中心流
 2. 最内层左右邻居
 3. 行邻居
 4. 平面邻居
 5. 系数流
+
 随后按以下条件合并请求：
 
 1. 相同底层 buffer
@@ -251,9 +254,9 @@ prefetch_address
 3. 落在相同 cache line
 4. 使用时间窗口相近
 
-### 7.3 输出通用的结构化决策
+### 7.3 在 pass 内即时形成决策
 
-建议每条决策至少包含：
+不再把分析结果写入 JSON，也不再由另一个 pass 读取。每识别出一条流，就在当前 pass 的局部 `StreamInfo` / `PrefetchDecision` 中计算：
 
 ```text
 kernel = stencil
@@ -269,11 +272,25 @@ neighbor_offset = 索引向量
 guard = 边界合法性条件
 ```
 
-### 7.4 在 vector 层插入近距离预取
+随后立即构造未来地址和边界 guard，并插入 `stencil.prefetch`。这些字段最终固化为 op attribute，供 lowering 使用，而不是作为分析与插入之间的传递格式。
 
-在真实 `vector.transfer_read` 或等价向量 load 前若干迭代插入 `memref.prefetch`。
+距离、层级和策略通过 pass options 控制，例如：
 
-注入器需要：
+```text
+--stencil-prefetch-row-distance=2
+--stencil-prefetch-plane-distance=3
+--stencil-prefetch-row-level=L1
+--stencil-prefetch-plane-level=L1
+--stencil-prefetch-policy=KEEP
+```
+
+### 7.4 在同一 pass 中插入近距离预取
+
+在真实 `vector.transfer_read` 或等价向量 load 前若干迭代计算未来地址，并插入自定义 `stencil.prefetch`。
+
+不能使用标准 `memref.prefetch` 承载最终决策：它的 `locality<0..3>` 只是抽象局部性提示，不是精确的 `L1/L2/L3`，也没有独立的 `KEEP/STRM` 字段。
+
+集成 pass 需要：
 
 1. 从向量 load 追踪到原始 stencil 流
 2. 根据向量迭代变量计算未来地址
@@ -283,7 +300,7 @@ guard = 边界合法性条件
 
 ### 7.5 在外层循环插入远距离预取
 
-行、平面和 tile 级 `L2` 预取不能只观察单个向量 load。注入器需要访问外层循环上下文，在以下位置生成预取：
+行、平面和 tile 级 `L2` 预取不能只观察单个向量 load。集成 pass 需要访问外层循环上下文，在以下位置生成预取：
 
 1. 行循环内部的下一行前沿
 2. 平面循环内部的下一平面前沿
@@ -295,10 +312,16 @@ guard = 边界合法性条件
 预取主线应保持：
 
 ```text
-memref.prefetch
--> llvm.intr.prefetch
--> AArch64 prfm
+stencil.prefetch
+-> llvm.call_intrinsic "llvm.aarch64.prefetch"
+-> 精确的目标层级与 KEEP/STRM 读预取
 ```
+
+`stencil.prefetch` 至少包含 `level`、`policy`、`stream` 和 `distance_iterations` 属性。lowering 将其映射为：
+
+1. `L1/L2/L3 -> target 0/1/2`
+2. `KEEP/STRM -> isStream 0/1`
+3. 数据读固定为 `isWrite = 0`、`isData = 1`
 
 同时保留 metadata 或函数属性，以便回答：
 
@@ -451,5 +474,5 @@ stencil 预取地址必须位于合法对象内。即使目标 CPU 将 `PRFM` �
 1. [Google Scholar: ARM SME software prefetch stencil](https://scholar.google.com/scholar?q=%22ARM+SME%22+software+prefetch+stencil)
 2. [Google Scholar: SME high-order stencil prefetch](https://scholar.google.com/scholar?q=SME+high-order+stencil+prefetch)
 3. [SMEStencil: Optimizing High-Order Stencils on ARM Multicore Using SME Unit](https://ieeexplore.ieee.org/abstract/document/11328920/)
-4. [MLIR `memref.prefetch` 文档](https://mlir.llvm.org/docs/Dialects/MemRef/)
-5. [LLVM `llvm.prefetch` 文档](https://www.llvm.org/docs/LangRef.html)
+4. [MLIR 自定义 Dialect 文档](https://mlir.llvm.org/docs/DefiningDialects/)
+5. [LLVM AArch64 intrinsic 定义](https://github.com/llvm/llvm-project/blob/main/llvm/include/llvm/IR/IntrinsicsAArch64.td)
