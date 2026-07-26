@@ -8,6 +8,7 @@
 |---|---|
 | `generate_and_check.sh` | 从仓库根目录的 C kernel 生成 LLVM IR，并运行自动检查 |
 | `check_ir.py` | 按函数检查循环、GEP、masked load/store、SVE/SME intrinsic 和函数属性 |
+| `C与LLVM_IR对应关系.md` | 逐段说明 C 函数、循环、邻域地址和 ACLE intrinsic 如何对应到当前 LLVM IR |
 | `output/stencil_sme_kernels.ll` | 当前 Clang 生成的 LLVM IR |
 | `output/analysis_report.md` | 自动检查结果和后续 pass 可使用的信息 |
 
