@@ -5,6 +5,7 @@
 *.pyc
 __pycache__/
 /build/
+/02_llvm_pass_plugin/build/
 /stencil_sme_kernels.ll
 /stencil_sme_kernels.s
 /stencil_benchmark

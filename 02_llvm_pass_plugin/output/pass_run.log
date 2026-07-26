@@ -1,0 +1,2 @@
+StencilPrefetchPass: function=stencil_2d5p_sme_f32 loops=2 innermost-loops=1 computable-trip-counts=1 dom-tree-root=yes analyses=LoopInfo,ScalarEvolution,DominatorTree,TargetIR,AssumptionCache
+StencilPrefetchPass: function=stencil_3d7p_sme_f32 loops=3 innermost-loops=1 computable-trip-counts=2 dom-tree-root=yes analyses=LoopInfo,ScalarEvolution,DominatorTree,TargetIR,AssumptionCache
