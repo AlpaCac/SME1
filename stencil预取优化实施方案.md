@@ -485,204 +485,80 @@ D 下一块：next-plane/next-tile 默认使用 L2，
 
 ## 第三部分：通过 MLIR 实现预取方案
 
-### 3.1 总体编译流程
+本部分按照实际开发顺序实现。分析和插入由同一个 pass 完成，不生成 JSON，也不通过外部文件传递决策。
 
-建议使用一个“边分析、边决策、边插入”的集成 pass，不生成 JSON，也不把分析结果交给另一个注入 pass：
+整体流程：
 
 ```text
-stencil C / 高层 MLIR
--> scf / affine-normalized 循环
--> vectorization / SME mapping
+高层 stencil MLIR
+-> 规范化并向量化
+-> 定义并注册 stencil.prefetch
 -> AnalyzeAndInsertStencilPrefetchPass
-   1. 识别维度、邻域偏移和独立内存流
-   2. 在 pass 内存中计算 enable/level/policy/distance
-   3. 立即计算未来地址并插入 stencil.prefetch
--> Arm SME lowering
--> LLVM dialect
--> llvm.aarch64.prefetch
--> 目标汇编与性能验证
+-> LowerStencilPrefetchToAArch64Pass
+-> LLVM IR / AArch64 汇编
+-> 正确性与性能验证
 ```
 
-集成 pass 在 vector/scf 层运行：这一层仍保留循环、memref 来源和下标关系，同时已经知道一次向量迭代消费多少元素。pass 可以回溯 `vector.transfer_read` 的 source、indices、`memref.subview` 和外围循环，恢复 stencil 邻域关系。
+### 步骤 1：准备可分析的 stencil MLIR
 
-如果前序 vectorization 会丢失邻域 offset，应该在 vectorization 时把 offset 作为 op attribute 保留在相应 `vector.transfer_read` 上；该 attribute 属于 IR 语义的一部分，不是分析与插入之间的外部传递文件。
+#### 目标
 
-### 3.2 高层 MLIR 表达
+让 2D5P 和 3D7P 在进入预取 pass 时仍保留循环、输入 memref、向量 load 和邻域下标关系。
 
-2D5P 可先表达为：
+#### 输入要求
 
-```mlir
-func.func @stencil_2d5p(
-    %input: memref<?x?xf32>,
-    %output: memref<?x?xf32>,
-    %height: index,
-    %width: index,
-    %wc: f32,
-    %wa: f32) {
-  affine.for %y = 1 to %height_minus_1 {
-    affine.for %x = 1 to %width_minus_1 {
-      %c = affine.load %input[%y, %x] : memref<?x?xf32>
-      %l = affine.load %input[%y, %x - 1] : memref<?x?xf32>
-      %r = affine.load %input[%y, %x + 1] : memref<?x?xf32>
-      %n = affine.load %input[%y - 1, %x] : memref<?x?xf32>
-      %s = affine.load %input[%y + 1, %x] : memref<?x?xf32>
-      // 乘加后写入 output[y, x]
-    }
-  }
-  return
-}
-```
-
-3D7P 在此基础上增加 `%z` 循环和两个 load：
-
-```mlir
-%f = affine.load %input[%z - 1, %y, %x] : memref<?x?x?xf32>
-%b = affine.load %input[%z + 1, %y, %x] : memref<?x?x?xf32>
-```
-
-建议在函数上保留显式属性：
+2D5P 函数至少保留：
 
 ```mlir
 attributes {
+  stencil.kind = "2d5p",
   stencil.dimension = 2 : i64,
   stencil.radius = 1 : i64,
-  stencil.kind = "2d5p",
-  stencil.layout = "row-major",
   stencil.inner_dimension = 1 : i64
 }
 ```
 
-3D7P 使用 `dimension = 3`、`kind = "3d7p"`、`inner_dimension = 2`。
+3D7P 函数至少保留：
 
-### 3.3 集成 pass 的邻域识别
+```mlir
+attributes {
+  stencil.kind = "3d7p",
+  stencil.dimension = 3 : i64,
+  stencil.radius = 1 : i64,
+  stencil.inner_dimension = 2 : i64
+}
+```
 
-`AnalyzeAndInsertStencilPrefetchPass` 遍历同一输出 store 所依赖的所有输入 load，并把 load 下标与输出下标相减。实际在 vector IR 中，应对 `vector.transfer_read` 和 `vector.transfer_write` 做相同的来源与 index 表达式比较。
-
-2D5P 期望识别：
+最内层 `x` 循环完成 vectorization 后，应能看到：
 
 ```text
-(dy, dx):
-( 0,  0) center
-( 0, -1) left
-( 0, +1) right
-(-1,  0) north
-(+1,  0) south
+scf.for / affine.for
+vector.transfer_read
+vector arithmetic
+vector.transfer_write
 ```
 
-3D7P 期望识别：
+预取 pass 需要能够从每个 `vector.transfer_read` 回溯：
 
-```text
-(dz, dy, dx):
-( 0,  0,  0) center
-( 0,  0, -1) left
-( 0,  0, +1) right
-( 0, -1,  0) north
-( 0, +1,  0) south
-(-1,  0,  0) front
-(+1,  0,  0) back
-```
+1. 底层输入 memref
+2. `memref.subview` 来源
+3. 当前 `z/y/x` 下标
+4. 相对于输出点的邻域偏移
+5. 外层行、平面和 tile 循环
 
-识别后按 cache-line 流合并：
+如果 vectorization 后无法从下标表达式恢复邻域偏移，应在 vectorization 前给 load 添加 `stencil.offset` 属性，并让该属性保留到 vector IR。
 
-```text
-2D:
-  (0, 0/-1/+1) -> current-row
-  (-1, 0)       -> north-row
-  (+1, 0)       -> south-row
+#### 输出
 
-3D:
-  (0, 0, 0/-1/+1) -> current-row
-  (0, -1, 0)       -> north-row
-  (0, +1, 0)       -> south-row
-  (-1, 0, 0)       -> front-plane
-  (+1, 0, 0)       -> back-plane
-```
+步骤 1 的输出是仍具有 stencil 访存语义的 vector/scf MLIR，它是集成预取 pass 的直接输入。
 
-这些流信息只保存在当前 pass 的局部数据结构中。完成一组 load 的识别后，pass 立即为该组流做决策并插入自定义 op，不输出外部文件，也不等待后续 pass。不能继续采用现有 pass 中“按 rank-1 `vector.transfer_read` 出现顺序猜对象”的方式。
+### 步骤 2：定义自定义 `stencil.prefetch` op
 
-### 3.4 Pass 内部数据结构与即时决策
+#### 目标
 
-pass 内部使用 C++ 结构体保存临时分析结果：
+在 MLIR 中无损保存未来地址、目标 cache 层级以及 `KEEP/STRM` 策略。
 
-```cpp
-enum class StreamKind {
-  CurrentRow,
-  NorthRow,
-  SouthRow,
-  FrontPlane,
-  BackPlane,
-  NextRow,
-  NextPlane,
-  NextTile
-};
-
-enum class CacheLevel { L1, L2, L3 };
-enum class PrefetchPolicy { Keep, Strm };
-
-struct StreamInfo {
-  StreamKind kind;
-  SmallVector<int64_t> neighborOffset;
-  Value source;
-  SmallVector<Value> currentIndices;
-  scf::ForOp innerLoop;
-  int64_t reuseCount;
-  int64_t reuseDistanceBytes;
-  int64_t estimatedLiveBytes;
-  bool isNearUse;
-};
-
-struct PrefetchDecision {
-  bool enable;
-  CacheLevel level;
-  PrefetchPolicy policy;
-  int64_t distanceIterations;
-};
-```
-
-对每个 stencil 内层循环，pass 按以下顺序执行：
-
-1. 收集同一计算组中的所有输入 `vector.transfer_read`
-2. 根据下标差识别 2D 的 3 条流或 3D 的 5 条流
-3. 合并 left/center/right 等价 cache-line 流
-4. 对每个 `StreamInfo` 估算复用次数、复用距离和活跃占用
-5. 依次调用 `chooseDistance`、`chooseCacheLevel` 和 `choosePolicy`
-6. 调用 `fitsCacheAndBandwidthBudgets` 检查联合约束
-7. 如果 `enable = true`，立即生成未来索引、边界 guard 和 `stencil.prefetch`
-8. 继续处理下一条流或下一个内层循环
-
-第一版决策可以直接由 pass options 和静态启发式驱动：
-
-```text
---stencil-prefetch-inner-distance=0
---stencil-prefetch-row-distance=2
---stencil-prefetch-plane-near-distance=3
---stencil-prefetch-plane-far-distance=8
---stencil-prefetch-tile-distance=1
---stencil-prefetch-row-level=L1
---stencil-prefetch-plane-near-level=L1
---stencil-prefetch-plane-far-level=L2
---stencil-prefetch-tile-level=L2
---stencil-prefetch-row-policy=KEEP
---stencil-prefetch-plane-near-policy=STRM
---stencil-prefetch-plane-far-policy=KEEP
---stencil-prefetch-tile-policy=KEEP
-```
-
-其中距离为 0 表示关闭该类预取。实验扫描距离、层级和 policy 时，直接改变 pass option 并重新编译，不再生成或编辑中间 JSON。
-
-分析与插入在一次 pass 运行中完成，但决策仍会固化在新生成的 `stencil.prefetch` 属性中，供后续 lowering 和调试使用。
-
-### 3.5 为什么必须使用自定义 `stencil.prefetch`
-
-标准 `memref.prefetch` 只能表达：
-
-1. read 或 write
-2. `locality<0..3>` 抽象局部性
-3. data 或 instruction cache
-
-其中 `locality` 不是目标缓存层级，不能精确表达 `L1/L2/L3`；标准 op 也没有独立的 `KEEP/STRM` 字段。如果把 `L1 + KEEP` 和 `L2 + STRM` 都压缩成 `locality`，中间层就无法无损保存预取决策。
-
-因此 stencil 主线不再使用 `memref.prefetch`，而是定义：
+标准 `memref.prefetch` 只有抽象 locality，不能精确表达这些信息，因此本方案使用：
 
 ```mlir
 stencil.prefetch %input[%z, %y, %xp] {
@@ -693,20 +569,20 @@ stencil.prefetch %input[%z, %y, %xp] {
 } : memref<?x?x?xf32>
 ```
 
-该 op 只表示数据读预取，不提供 read/write 开关。建议包含以下字段：
+#### Op 字段
 
-| 字段 | 类型 | 作用 |
+| 字段 | 类型 | 说明 |
 |---|---|---|
-| `source` | memref | 被预取的数据对象 |
-| `indices` | variadic index | 未来合法地址 |
-| `level` | enum `L1/L2/L3` | 精确目标缓存层级 |
-| `policy` | enum `KEEP/STRM` | 精确保留或流式策略 |
-| `stream` | string | current-row、north-row、front-plane 等 |
+| `source` | memref | 输入网格 |
+| `indices` | variadic index | 未来预取地址 |
+| `level` | enum | `L1/L2/L3` |
+| `policy` | enum | `KEEP/STRM` |
+| `stream` | string | row、plane 或 tile 流 |
 | `distance_iterations` | i64 | 提前的向量迭代次数 |
 
-`level` 和 `policy` 必须是编译期枚举属性，因为后续 AArch64 intrinsic 的对应参数要求立即数。
+该 op 只表示数据读预取，不提供 write 模式。
 
-TableGen 设计可采用：
+#### TableGen 骨架
 
 ```tablegen
 def CacheLevelL1 : I32EnumAttrCase<"L1", 0>;
@@ -727,181 +603,235 @@ def Stencil_PrefetchOp : Stencil_Op<"prefetch"> {
 }
 ```
 
-op verifier 至少检查：
+#### Verifier
 
-1. `indices` 数量等于 memref rank
-2. 所有下标类型都是 `index`
+verifier 检查：
+
+1. indices 数量等于 memref rank
+2. indices 均为 `index`
 3. `distance_iterations > 0`
-4. `stream` 属于集成 pass 已识别的数据流
-5. op 位于可证明地址合法的区域，或受 `scf.if` guard 控制
-6. op 带有适当 memory effect，不能被 DCE 当成无效纯操作删除
+4. `level` 和 `policy` 是合法枚举
+5. op 具有防止 DCE 删除的 memory effect
 
-### 3.6 Vector 层计算未来地址
+地址是否越界由步骤 4 的循环范围或 guard 保证。
 
-假设 vector 层的当前内层索引为 `%x`，一次处理 `%vl` 个 `f32` 元素，预取距离为 `%d` 次向量迭代：
+#### 输出
+
+完成 dialect 注册，使 `mlir-opt` 能解析、打印和验证 `stencil.prefetch`。
+
+### 步骤 3：在一个 pass 中分析数据流并形成决策
+
+#### Pass
+
+新增：
+
+```text
+AnalyzeAndInsertStencilPrefetchPass
+```
+
+该 pass 在 vector/scf 层运行，分析结果只保存在 pass 的局部数据结构中。
+
+#### 3.1 收集计算组
+
+以一个 `vector.transfer_write` 为输出根节点，沿 def-use 链收集参与该 stencil 更新的 `vector.transfer_read`。
+
+不能按 load 出现顺序分类，必须比较 source 和 index 表达式。
+
+#### 3.2 识别并合并数据流
+
+2D5P 识别：
+
+```text
+( 0,  0) center
+( 0, -1) left
+( 0, +1) right
+(-1,  0) north
+(+1,  0) south
+```
+
+合并为：
+
+```text
+current-row
+north-row
+south-row
+```
+
+3D7P 额外识别：
+
+```text
+(-1, 0, 0) front
+(+1, 0, 0) back
+```
+
+最终合并为：
+
+```text
+current-row
+north-row
+south-row
+front-plane
+back-plane
+```
+
+left、center、right 必须合并，避免同一 cache line 重复预取。
+
+#### 3.3 计算三维决策
+
+每条流形成：
+
+```cpp
+struct PrefetchDecision {
+  bool enable;
+  int64_t distanceIterations;
+  CacheLevel level;
+  PrefetchPolicy policy;
+};
+```
+
+依次执行：
+
+```text
+chooseDistance
+-> chooseCacheLevel
+-> choosePolicy
+-> fitsCacheAndBandwidthBudgets
+```
+
+决策依据来自第二部分：
+
+1. 距离由访问延迟和每次向量迭代周期决定
+2. L1/L2/L3 由使用时间窗口和 cache 占用决定
+3. KEEP/STRM 由复用次数和复用距离决定
+4. 超出容量或带宽预算时关闭低优先级流
+
+第一版通过 pass options 提供初始参数：
+
+```text
+--stencil-prefetch-row-distance=2
+--stencil-prefetch-plane-near-distance=3
+--stencil-prefetch-plane-far-distance=8
+--stencil-prefetch-row-level=L1
+--stencil-prefetch-plane-near-level=L1
+--stencil-prefetch-plane-far-level=L2
+--stencil-prefetch-row-policy=KEEP
+--stencil-prefetch-plane-near-policy=STRM
+--stencil-prefetch-plane-far-policy=KEEP
+```
+
+距离为 0 表示关闭对应预取。
+
+#### 输出
+
+pass 不输出 JSON。每得到一条启用决策，就立即进入步骤 4 插入 `stencil.prefetch`。
+
+### 步骤 4：计算未来地址并立即插入预取
+
+#### 4.1 计算未来 `x`
+
+当前内层索引为 `%x`，一次向量迭代处理 `%vl` 个元素，距离为 `%d`：
 
 ```mlir
 %step = arith.muli %vl, %d : index
 %xp = arith.addi %x, %step : index
-%valid = arith.cmpi ult, %xp, %width_minus_1 : index
-scf.if %valid {
-  stencil.prefetch %input[%y, %xp] {
-    level = #stencil.cache_level<l1>,
-    policy = #stencil.prefetch_policy<keep>,
-    stream = "current-row",
-    distance_iterations = 2 : i64
-  } : memref<?x?xf32>
-}
 ```
 
-2D 跨行预取：
+预取必须使用 `%xp`，不能使用真实 load 当前正在访问的 `%x`。
+
+#### 4.2 插入 row 预取
+
+2D/3D 的 north-row：
 
 ```mlir
 %north = arith.subi %y, %c1 : index
-%south = arith.addi %y, %c1 : index
-
 stencil.prefetch %input[%north, %xp] {
   level = #stencil.cache_level<l1>,
   policy = #stencil.prefetch_policy<keep>,
   stream = "north-row",
   distance_iterations = 2 : i64
 } : memref<?x?xf32>
-
-stencil.prefetch %input[%south, %xp] {
-  level = #stencil.cache_level<l1>,
-  policy = #stencil.prefetch_policy<keep>,
-  stream = "south-row",
-  distance_iterations = 2 : i64
-} : memref<?x?xf32>
 ```
 
-3D 跨平面预取：
+south-row 使用 `%y + 1`。
+
+#### 4.3 插入 plane 预取
+
+3D 的 front-plane：
 
 ```mlir
 %front = arith.subi %z, %c1 : index
-%back = arith.addi %z, %c1 : index
-
 stencil.prefetch %input[%front, %y, %xp] {
   level = #stencil.cache_level<l1>,
   policy = #stencil.prefetch_policy<strm>,
   stream = "front-plane",
   distance_iterations = 3 : i64
 } : memref<?x?x?xf32>
-
-stencil.prefetch %input[%back, %y, %xp] {
-  level = #stencil.cache_level<l1>,
-  policy = #stencil.prefetch_policy<strm>,
-  stream = "back-plane",
-  distance_iterations = 3 : i64
-} : memref<?x?x?xf32>
 ```
 
-这里的关键是预取 `%xp`，而不是预取当前真实 load 正在访问的 `%x`。如果仍对 `%x` 插入预取，通常已经太晚。
+back-plane 使用 `%z + 1`。
 
-### 3.7 Cache-line 去重
-
-假设 cache line 为 64 字节，`float32` 每行包含 16 个元素。只在未来地址进入新 cache line 时发出预取：
+远距离 plane warming 可在更早位置额外插入 `L2` op，形成：
 
 ```text
-line(xp) != line(xp - vector_step)
+L2 远距离预热
+-> L1 近距离接力
+-> 真实 load
 ```
 
-MLIR 可通过整数除法或位移计算 line id：
+#### 4.4 边界保护
+
+未来地址必须满足：
+
+```text
+xp < width - 1
+```
+
+动态边界使用：
 
 ```mlir
-%line = arith.divui %xp, %c16 : index
-%prev_xp = arith.subi %xp, %vl : index
-%prev_line = arith.divui %prev_xp, %c16 : index
-%new_line = arith.cmpi ne, %line, %prev_line : index
+%valid = arith.cmpi ult, %xp, %width_minus_1 : index
+scf.if %valid {
+  // stencil.prefetch
+}
 ```
 
-只有 `%new_line` 为真时才插入/执行预取。若 vector step 本身大于等于 cache-line 元素数，可以省略该动态判断，由编译期调度控制每次迭代的预取数量。
+内部区已保证 `y +/- 1`、`z +/- 1` 合法；边界 kernel 默认不插入预取。
 
-### 3.8 边界与尾部
+#### 4.5 Cache-line 去重
 
-预取未来地址必须满足：
+只在 `%xp` 进入新 cache line 时发出预取。对于 64-byte cache line 和 `float32`：
 
 ```text
-1 <= xp < width - 1
-1 <= y + dy < height - 1 或位于合法输入边界
-1 <= z + dz < depth - 1 或位于合法输入边界
+elements_per_line = 16
+line_id = xp / 16
 ```
 
-当前两个 kernel 的主循环只处理内部点，因此 `y +/- 1`、`z +/- 1` 的真实邻域 load 合法。但 `xp = x + distance` 可能超过行尾，必须 guard。
+若当前 line id 与上一向量迭代相同，则跳过本次预取。
 
-推荐把执行结构拆成：
+#### 输出
 
-1. 无预取或有 guard 的边界区
-2. 可证明地址合法的内部预取主循环
-3. 使用 predicate 的向量尾部
+步骤 4 输出带 `stencil.prefetch` 的 vector/scf MLIR。`level`、`policy`、`stream` 和距离已经固化在 op 中。
 
-不要因为目标预取指令通常不触发异常，就在 MLIR 中构造越界 memref 下标。
+### 步骤 5：Lowering 到 AArch64 预取 intrinsic
 
-### 3.9 下一行、平面和 tile 的远距离注入
+#### Pass
 
-远距离预取需要观察外层循环，不能只匹配单个 `vector.transfer_read`。
-
-2D next-row：
+新增：
 
 ```text
-当前处理 row y 的后半段
--> 预取 row y + 2 的首批内部 cache line
--> 下一轮处理 row y + 1 时，该行将作为 south 邻居使用
+LowerStencilPrefetchToAArch64Pass
 ```
 
-3D plane frontier：
+该 pass 与 memref-to-LLVM conversion 配合：
 
-```text
-当前处理 (z, y, x)
--> 按相同 y/x 前沿预取 z + 2 平面的数据
--> 下一轮进入 z + 1 后，该数据成为 back 邻居
-```
+1. 将 source memref descriptor 和 indices 转换为元素 pointer
+2. 读取 `level` 与 `policy`
+3. 创建 `llvm.aarch64.prefetch`
+4. 删除原 `stencil.prefetch`
 
-如果做空间 tiling，则在当前 tile 剩余计算周期足以覆盖下一 tile 延迟时，预取下一 tile 的首批内部行。需要限制每次只预热少量 cache line，不能一次展开整个 tile 的预取。
+#### 属性映射
 
-### 3.10 与 SME lowering 的顺序
-
-推荐顺序：
-
-```text
-stencil 规范化
--> vectorization
--> vector/scf 层边分析边插入
--> SME lowering
--> memref/LLVM lowering
-```
-
-这样做的原因是：
-
-1. 不需要维护 JSON schema、文件路径和解析器
-2. 分析结果不会与已经变化的 IR 失配
-3. vector 层已经知道一次迭代的实际数据宽度
-4. 识别一条流后可以直接使用当前 SSA value 构造未来地址
-5. 自定义 op 能在 SME lowering 期间完整保留 level 和 policy
-
-当前 `03_prefetch_injection/passes/InjectVectorPrefetch.cpp` 需要重构：
-
-1. 删除 `loadAnalysisDecisions`、JSON 字段解析和固定对象结构
-2. pass 重命名为 `AnalyzeAndInsertStencilPrefetchPass`
-3. 新增 `StreamInfo` 收集、邻域 offset 恢复和流合并
-4. 新增 `chooseDistance`、`chooseCacheLevel`、`choosePolicy` 和预算检查
-5. 识别一条流后立即计算未来索引并插入 `stencil.prefetch`
-6. 增加边界 guard 和 cache-line 去重
-7. 3D 增加 plane stream 与外层 frontier 分析
-8. 不再创建 `memref::PrefetchOp`
-
-### 3.11 自定义 op 的 AArch64 lowering
-
-新增 `LowerStencilPrefetchToAArch64Pass`，并把它放入 memref-to-LLVM 的同一轮 dialect conversion。conversion pattern 接收已经由 type converter 转换的 memref descriptor，在删除 `stencil.prefetch` 前计算元素 pointer 并读取自定义属性。
-
-lowering 分两步：
-
-1. 使用转换后的 memref descriptor、strides 和 indices 计算预取元素的 LLVM pointer
-2. 把枚举属性转换成 AArch64 intrinsic 的立即数参数
-
-精确映射为：
-
-| `stencil.prefetch` | `llvm.aarch64.prefetch` 参数 |
+| 自定义 op | intrinsic 参数 |
 |---|---:|
 | 数据读 | `isWrite = 0` |
 | `L1` | `target = 0` |
@@ -911,71 +841,73 @@ lowering 分两步：
 | `STRM` | `isStream = 1` |
 | data cache | `isData = 1` |
 
-例如 `L2 + STRM` 降为：
+MLIR 结果形态：
 
 ```mlir
-%is_write = llvm.mlir.constant(0 : i32) : i32
-%target_l2 = llvm.mlir.constant(1 : i32) : i32
-%is_stream = llvm.mlir.constant(1 : i32) : i32
-%is_data = llvm.mlir.constant(1 : i32) : i32
-
 llvm.call_intrinsic "llvm.aarch64.prefetch"(
-    %ptr, %is_write, %target_l2, %is_stream, %is_data)
+    %ptr, %is_write, %target, %is_stream, %is_data)
     : (!llvm.ptr, i32, i32, i32, i32) -> ()
 ```
 
-这一路径不能替换成通用 `llvm.prefetch`，因为通用 intrinsic 同样不能无损承载精确的目标层级和 `KEEP/STRM`。
+最终 AArch64 汇编应出现：
 
-对于非 AArch64 目标，pass 应明确报错或保留 `stencil.prefetch`，不能静默降成语义较弱的通用预取。
-
-### 3.12 Lowering 与验证
-
-预取 lowering 主线：
-
-```text
-stencil.prefetch
--> llvm.call_intrinsic "llvm.aarch64.prefetch"
--> 精确的 L1/L2/L3 + KEEP/STRM 读预取
+```asm
+prfm pldl1keep, [address]
+prfm pldl1strm, [address]
+prfm pldl2keep, [address]
+prfm pldl2strm, [address]
 ```
 
-每个阶段都要验证：
+非 AArch64 目标应报错或保留自定义 op，不能静默降低为语义较弱的通用预取。
 
-1. affine 分析结果中，2D 是 3 条合并流，3D 是 5 条合并流
-2. vector IR 中预取地址使用未来索引 `%xp`
-3. 边界 guard 存在且没有越界 memref
-4. 2D 不出现 plane 预取
-5. 3D 的 front/back 预取可独立开关
-6. `stencil.prefetch` 的 level/policy 在 lowering 前保持不变
-7. LLVM dialect 中出现 `llvm.aarch64.prefetch`
-8. 最终目标代码中的层级和 KEEP/STRM 与自定义 op 一致
-9. 最终汇编同时保留 SME 向量计算和读预取
-10. 数值结果与无预取 baseline 一致
+### 步骤 6：接入 pass pipeline 并验证
 
-性能实验至少包含：
+#### Pipeline
 
 ```text
-2D5P:
-  baseline
-  A-inner
-  B-row
-  A+B
-  B+D-next-row
-
-3D7P:
-  baseline
-  B-row
-  C-plane
-  B+C
-  B+C+D-plane-frontier
+stencil normalization
+-> vectorization
+-> analyze-and-insert-stencil-prefetch
+-> SME lowering
+-> lower-stencil-prefetch-to-aarch64
+-> memref/func/arith to LLVM
+-> LLVM IR translation
 ```
 
-每组至少扫描：
+实际 conversion 中，`LowerStencilPrefetchToAArch64Pass` 应与 memref descriptor 转换放在同一轮，确保既能读取自定义属性，又能得到 LLVM pointer。
 
-1. 距离：`1/2/4/8` 次向量迭代
-2. 层级：近距离流比较 `L1/L2`，远距离流比较 `L2/L3`
-3. policy：分别比较 `KEEP/STRM`
+#### IR 验证
 
-并记录：
+2D5P：
+
+1. 识别 3 条合并流
+2. 不出现 plane 预取
+3. row 预取使用未来 `%xp`
+
+3D7P：
+
+1. 识别 5 条合并流
+2. front/back 可独立配置
+3. L1/L2 两级 plane 预取属性正确
+
+共同检查：
+
+1. 没有 JSON 输入输出
+2. 没有 `memref.prefetch`
+3. 所有未来地址都有合法边界
+4. lowering 后出现 `llvm.aarch64.prefetch`
+5. 汇编中的 `pldl{1|2|3}{keep|strm}` 与自定义 op 一致
+
+#### 正确性与性能验证
+
+预取版本必须与无预取 baseline 数值一致。性能测试至少扫描：
+
+1. 距离 `1/2/4/8`
+2. 近距离 `L1/L2`
+3. 远距离 `L2/L3`
+4. `KEEP/STRM`
+
+记录：
 
 1. cell updates/s
 2. 总周期
@@ -983,6 +915,13 @@ stencil.prefetch
 4. TLB miss
 5. memory bandwidth
 6. 指令数
-7. 单核与多核扩展效率
 
-第一阶段的完成标准是：正确识别 2D/3D 数据流，预取使用未来合法地址，并能稳定降低到最终目标代码。第二阶段才根据 PMU 数据选择每个算子的默认流和距离。
+完成标准：
+
+```text
+能够从 2D5P/3D7P vector IR 自动识别数据流
+-> 在同一 pass 中立即插入合法 stencil.prefetch
+-> 精确降低为 llvm.aarch64.prefetch
+-> 汇编生成对应 PRFM
+-> 数值正确且具备可重复的性能数据
+```
