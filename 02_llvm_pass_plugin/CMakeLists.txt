@@ -17,7 +17,18 @@ include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
 add_llvm_pass_plugin(StencilPrefetchPass
+  src/StencilAnalysis.cpp
   src/StencilPrefetchPass.cpp
+)
+
+target_include_directories(StencilPrefetchPass PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_compile_options(StencilPrefetchPass PRIVATE
+  -Wall
+  -Wextra
+  -Wpedantic
 )
 
 if(APPLE)

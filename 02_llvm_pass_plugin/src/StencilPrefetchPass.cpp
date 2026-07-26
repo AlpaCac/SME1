@@ -1,3 +1,5 @@
+#include "StencilAnalysis.h"
+
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
@@ -48,8 +50,8 @@ public:
     for (const Loop *L : LI)
       summarizeLoop(*L, SE, Summary);
 
-    // Step 2 only establishes the pass boundary and required analyses.
-    // Stencil recognition and IR mutation start in later steps.
+    // The pass remains read-only through step 3. Later steps consume the
+    // recognized streams to make and insert prefetch decisions.
     (void)TTI;
     (void)AC;
     errs() << "StencilPrefetchPass: function=" << F.getName()
@@ -59,6 +61,24 @@ public:
            << " dom-tree-root=" << (DT.getRootNode() != nullptr ? "yes" : "no")
            << " analyses=LoopInfo,ScalarEvolution,DominatorTree,"
               "TargetIR,AssumptionCache\n";
+
+    SmallVector<sme1::StencilInfo, 2> Stencils =
+        sme1::analyzeStencilFunction(F, LI, SE, DT);
+    for (const sme1::StencilInfo &Stencil : Stencils) {
+      errs() << "StencilAnalysis: function=" << F.getName()
+             << " kind=" << sme1::toString(Stencil.Kind)
+             << " logical-loads=" << Stencil.LogicalLoadCount
+             << " physical-streams=" << Stencil.Streams.size()
+             << " vector-step=cntsw streams=";
+      for (unsigned I = 0; I < Stencil.Streams.size(); ++I) {
+        if (I != 0)
+          errs() << ",";
+        const sme1::StreamInfo &Stream = Stencil.Streams[I];
+        errs() << sme1::toString(Stream.Kind) << ":"
+               << Stream.Loads.size();
+      }
+      errs() << "\n";
+    }
 
     return PreservedAnalyses::all();
   }

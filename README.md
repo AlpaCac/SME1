@@ -15,7 +15,7 @@
 | `stencil预取优化实施方案.md` | 计算模型、预取类别、决策算法和 Clang/LLVM pass 实施步骤 |
 | `software_prefetch_sme_analysis.md` | SME stencil 软件读预取的背景与原理分析 |
 | `01_llvm_ir_analysis/` | 步骤 1：生成 LLVM IR 并自动验证循环、地址和向量访存结构 |
-| `02_llvm_pass_plugin/` | 步骤 2：LLVM new-pass-manager 插件骨架、构建与加载测试 |
+| `02_llvm_pass_plugin/` | 步骤 2-3：LLVM 插件，以及 2D5P/3D7P 循环和物理流识别 |
 
 ## Kernel
 
@@ -96,4 +96,5 @@ clang -target arm64-apple-macos15 \
 
 1. 步骤 1：Clang LLVM IR 生成与可分析性检查，已完成。
 2. 步骤 2：LLVM new-pass-manager 插件，已完成。
-3. 步骤 3：识别 2D5P/3D7P 循环和物理流，尚未实现。
+3. 步骤 3：识别 2D5P/3D7P 循环和物理流，已完成。
+4. 步骤 4：预取决策与安全地址构造，尚未实现。

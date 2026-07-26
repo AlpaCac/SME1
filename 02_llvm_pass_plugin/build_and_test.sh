@@ -56,6 +56,13 @@ compat_ir="${build_dir}/stencil_sme_kernels.llvm18.ll"
 after_ir="${output_dir}/stencil_sme_kernels.after.ll"
 pass_log="${output_dir}/pass_run.log"
 report="${output_dir}/plugin_test_report.md"
+negative_ir="${script_dir}/tests/non_stencil.ll"
+negative_after_ir="${build_dir}/non_stencil.after.ll"
+negative_log="${output_dir}/negative_run.log"
+malformed_ir="${build_dir}/malformed_2d.ll"
+malformed_after_ir="${build_dir}/malformed_2d.after.ll"
+malformed_log="${output_dir}/malformed_run.log"
+recognition_report="${output_dir}/stencil_recognition_report.md"
 
 # Apple Clang 21 emits two textual IR additions that LLVM 18 cannot parse.
 # Removing them changes neither the pointer data flow nor the loop structure.
@@ -76,6 +83,59 @@ grep -q 'function=stencil_2d5p_sme_f32' "${pass_log}"
 grep -q 'function=stencil_3d7p_sme_f32' "${pass_log}"
 grep -q 'analyses=LoopInfo,ScalarEvolution,DominatorTree,TargetIR,AssumptionCache' \
   "${pass_log}"
+grep -q \
+  'kind=2D5P logical-loads=5 physical-streams=3 vector-step=cntsw streams=current-row:3,north-row:1,south-row:1' \
+  "${pass_log}"
+grep -q \
+  'kind=3D7P logical-loads=7 physical-streams=5 vector-step=cntsw streams=current-row:3,north-row:1,south-row:1,front-plane:1,back-plane:1' \
+  "${pass_log}"
+if [[ "$(grep -c '^StencilAnalysis:' "${pass_log}")" -ne 2 ]]; then
+  printf 'expected exactly two recognized stencil loops\n' >&2
+  exit 1
+fi
+if grep -q 'llvm\.aarch64\.prefetch\|llvm\.prefetch' "${after_ir}"; then
+  printf 'step 3 must not insert prefetch instructions\n' >&2
+  exit 1
+fi
+
+"${llvm_clang}" \
+  -x ir -O1 -S -emit-llvm \
+  -Wno-override-module \
+  -fpass-plugin="${plugin}" \
+  "${negative_ir}" \
+  -o "${negative_after_ir}" \
+  2> "${negative_log}"
+
+grep -q 'function=stencil_vector_copy' "${negative_log}"
+if grep -q '^StencilAnalysis:' "${negative_log}"; then
+  printf 'non-stencil negative test was incorrectly recognized\n' >&2
+  exit 1
+fi
+
+# Keep five 2D loads but make south use the north base. Recognition must
+# reject the broken +/-row-stride relation rather than trusting load count.
+sed 's/ptr %29, i64 %32/ptr %28, i64 %32/' \
+  "${compat_ir}" > "${malformed_ir}"
+if cmp -s "${compat_ir}" "${malformed_ir}"; then
+  printf 'failed to construct malformed 2D negative test\n' >&2
+  exit 1
+fi
+
+"${llvm_clang}" \
+  -x ir -O1 -S -emit-llvm \
+  -Wno-override-module \
+  -fpass-plugin="${plugin}" \
+  "${malformed_ir}" \
+  -o "${malformed_after_ir}" \
+  2> "${malformed_log}"
+
+if grep -q 'StencilAnalysis: function=stencil_2d5p_sme_f32' \
+  "${malformed_log}"; then
+  printf 'malformed 2D stride relation was incorrectly recognized\n' >&2
+  exit 1
+fi
+grep -q 'StencilAnalysis: function=stencil_3d7p_sme_f32 kind=3D7P' \
+  "${malformed_log}"
 
 plugin_name="$(basename "${plugin}")"
 llvm_version="$("${llvm_config}" --version)"
@@ -98,8 +158,34 @@ clang_version="$("${llvm_clang}" --version | head -n 1)"
   printf '## Pass 输出\n\n```text\n'
   grep 'StencilPrefetchPass:' "${pass_log}"
   printf '```\n\n'
-  printf '步骤 3 可以在该 function pass 中增加 stencil 循环和地址识别。\n'
+  printf '步骤 3 的 stencil 识别由同一个 function pass 实现。\n'
 } > "${report}"
+
+{
+  printf '# 步骤 3 Stencil 识别测试报告\n\n'
+  printf -- '- 总体结果：**PASS**\n'
+  printf -- '- 正例输入：`../01_llvm_ir_analysis/output/stencil_sme_kernels.ll`\n'
+  printf -- '- 负例输入：`tests/non_stencil.ll`\n'
+  printf -- '- 结构负例：保留 5 个 load，但破坏 2D 的 `±row` stride 配对\n'
+  printf -- '- IR 修改：无\n\n'
+  printf '## 识别条件\n\n'
+  printf '1. 最内层循环包含共同谓词的 5 或 7 个 masked load。\n'
+  printf '2. 循环包含一个使用同一谓词的 masked store。\n'
+  printf '3. 谓词由 `llvm.aarch64.sve.whilelo` 生成。\n'
+  printf '4. `x` PHI 的 SCEV step 来自 `llvm.aarch64.sme.cntsw`。\n'
+  printf '5. left/center/right 通过 `0/±sizeof(float)` 合并为 current-row。\n'
+  printf '6. 其余 GEP stride 通过 SCEV 相反数配对为 row/plane 流。\n'
+  printf '7. 包含外部调用或普通 store 的候选循环被拒绝。\n\n'
+  printf '## 正例结果\n\n```text\n'
+  grep '^StencilAnalysis:' "${pass_log}"
+  printf '```\n\n'
+  printf '## 负例结果\n\n'
+  printf '`stencil_vector_copy` 进入 pass，但没有产生 `StencilAnalysis` 结果，'
+  printf '证明识别不只依赖函数名前缀。\n\n'
+  printf '结构负例中的 2D 函数仍有原始 load 框架，但 south 与 north 使用'
+  printf '同一基址，因此没有被识别；同模块的 3D7P 仍被正确识别。\n'
+} > "${recognition_report}"
 
 printf 'Plugin: %s\n' "${plugin}"
 printf 'Report: %s\n' "${report}"
+printf 'Recognition report: %s\n' "${recognition_report}"

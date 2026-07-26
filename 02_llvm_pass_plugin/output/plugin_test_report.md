@@ -22,4 +22,4 @@ StencilPrefetchPass: function=stencil_2d5p_sme_f32 loops=2 innermost-loops=1 com
 StencilPrefetchPass: function=stencil_3d7p_sme_f32 loops=3 innermost-loops=1 computable-trip-counts=2 dom-tree-root=yes analyses=LoopInfo,ScalarEvolution,DominatorTree,TargetIR,AssumptionCache
 ```
 
-步骤 3 可以在该 function pass 中增加 stencil 循环和地址识别。
+步骤 3 的 stencil 识别由同一个 function pass 实现。
