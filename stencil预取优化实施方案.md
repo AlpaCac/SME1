@@ -290,12 +290,25 @@ d_iterations
   = ceil(memory_latency_cycles / useful_cycles_per_vector_iteration)
 ```
 
+公式中：
+
+- `d_iterations`：预取应领先真实 load 的向量循环迭代次数，单位为“次向量迭代”。
+- `memory_latency_cycles`：数据从预期来源层级到达目标 cache 的估计延迟，单位为 cycle；选择 L1、L2 或 L3 时应使用对应的延迟估计。
+- `useful_cycles_per_vector_iteration`：不包含当前 cache miss 等待时间时，一次 SME/SVE 向量迭代可用于掩盖内存延迟的有效计算周期。
+- `ceil`：向上取整，保证静态提前时间不少于估计的数据返回时间。
+
 再换算为 `x` 方向元素距离：
 
 ```text
 d_elements
   = d_iterations * streaming_vector_length_in_f32
 ```
+
+公式中：
+
+- `d_elements`：预取地址相对当前 `x` 的前移元素数，单位为 `float` 元素。
+- `streaming_vector_length_in_f32`：一次 streaming SVE 向量可处理的 `float` 元素数，对应运行时 `svcntsw()`。
+- 该换算不假定固定硬件向量长度；pass 保存 `d_iterations`，构造地址时通过可伸缩向量步长表达 `d_elements`。
 
 未来地址为：
 
@@ -307,7 +320,14 @@ d_elements
   address(z + dz, y + dy, x + d_elements)
 ```
 
-其中 `(dz, dy)` 决定当前预取属于当前行、跨行还是跨平面流。
+公式中：
+
+- `address(...)`：对应物理输入流在未来迭代将访问的元素地址，最终需要转换为可供预取 intrinsic 使用的指针。
+- `x/y/z`：当前向量迭代的空间坐标；`x` 是最内层连续维，`y` 是行维，`z` 是平面维。
+- `dy`：行方向邻域偏移；`0/-1/+1` 分别表示当前行、north 行和 south 行。
+- `dz`：平面方向邻域偏移；`0/-1/+1` 分别表示当前平面、front 平面和 back 平面。
+- `(dz, dy)` 决定当前预取属于当前行、跨行还是跨平面流；2D 模型中没有 `dz`。
+- 地址必须仍处于可安全预取的内部区域；靠近边界或循环尾部时需要通过 trip count、谓词或安全地址策略限制。
 
 距离模型至少要考虑：
 
@@ -347,6 +367,18 @@ total_live_bytes(level)
   = sum(prefetch_live_bytes(stream), stream targets level)
 ```
 
+公式中：
+
+- `stream`：去重后的物理 cache-line 流，例如 current-row、north-row、south-row、front-plane 或 back-plane，而不是每一条逻辑 load。
+- `level`：候选预取的目标 cache 层级，如 L1、L2 或 L3。
+- `lead_cycles(stream)`：该流从发出预取到真实 load 之间预计经过的周期数。
+- `d_iterations(stream)`：为该流和目标层级选择的预取提前迭代数；不同流可以不同。
+- `useful_cycles_per_vector_iteration`：一次向量迭代能够与预取传输重叠的有效计算周期。
+- `prefetch_live_bytes(stream)`：该流在预取领先窗口内需要占用目标 cache 的近似字节数。
+- `bytes_per_vector_iteration`：该物理流每次向量迭代新覆盖的数据字节数；应按 cache-line 去重，不能把 left/center/right 重复累加。
+- `total_live_bytes(level)`：所有指向同一 cache 层级的候选流在途占用之和。
+- `sum(..., stream targets level)`：只累加最终候选层级等于 `level` 的流；改变层级或删除流后必须重新计算。
+
 `prefetch_live_bytes` 是某条流从发出预取到真实使用之间的大致在途覆盖范围。实际选择还要加上当前 stencil 的活跃行、活跃平面和 tile 工作集。
 
 层级选择规则：
@@ -362,7 +394,12 @@ L1_budget = alpha1 * L1_capacity
 L2_budget = alpha2 * L2_capacity
 ```
 
-其中 `alpha1/alpha2` 可先取 `0.5~0.7`，为真实 load、store、栈和其他线程争用保留空间。
+公式中：
+
+- `L1_capacity/L2_capacity`：目标核心上相应 cache 的标称容量。
+- `alpha1/alpha2`：可分配给当前 stencil 预取和活跃工作集的容量折扣系数。
+- `L1_budget/L2_budget`：层级决策实际使用的有效容量上限，而不是硬件标称容量。
+- `alpha1/alpha2` 可先取 `0.5~0.7`，为真实 load、store、栈和其他线程争用保留空间。
 
 按预取类别的初始层级：
 
@@ -394,6 +431,13 @@ L2_budget = alpha2 * L2_capacity
 reuse_count(stream)
 reuse_distance_bytes(stream)
 ```
+
+其中：
+
+- `reuse_count(stream)`：同一 cache line 在离开当前复用窗口前预计被 stencil 再次读取的次数；值越大，保留该 line 的潜在收益越高。
+- `reuse_distance_bytes(stream)`：从本次使用到下一次使用之间预计访问的不同数据总量，单位为 byte；它近似表示该 line 在复用前承受的 cache 容量压力。
+- `stream`：已经合并和去重的物理输入流。left、center、right 对同一 current-row line 的访问应共同参与复用估算，不能作为三条独立流计算。
+- 这两个量是静态分析与目标 profile 的估计值；动态 `W/H` 或 tile 尺寸未知时应标记为未知，而不能默认其能够驻留 cache。
 
 选择规则：
 
