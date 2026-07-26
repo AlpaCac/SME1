@@ -329,25 +329,159 @@ d_plane
 d_tile
 ```
 
-### 2.8 2D 与 3D 的推荐初始策略
+### 2.8 目标 cache 层级选择模型
+
+预取距离回答“什么时候发出”，cache 层级回答“先把数据放到哪里”。两者必须联合决策。
+
+选择层级时需要估算预取数据在真实使用前的存活时间和占用：
+
+```text
+lead_cycles(stream)
+  = d_iterations(stream) * useful_cycles_per_vector_iteration
+
+prefetch_live_bytes(stream)
+  = d_iterations(stream)
+  * bytes_per_vector_iteration
+
+total_live_bytes(level)
+  = sum(prefetch_live_bytes(stream), stream targets level)
+```
+
+`prefetch_live_bytes` 是某条流从发出预取到真实使用之间的大致在途覆盖范围。实际选择还要加上当前 stencil 的活跃行、活跃平面和 tile 工作集。
+
+层级选择规则：
+
+1. **选择 L1**：数据将在较少的向量迭代后立即使用，并且所有 L1 预取流的 `total_live_bytes + active_working_set` 不超过可用 L1 预算。
+2. **选择 L2**：数据距离使用仍较远，或下一行、下一平面、下一 tile 的数据过早放入 L1 会污染当前工作集。
+3. **选择 L3**：只用于非常远的空间块预热，并且目标平台确实具有可控的共享末级缓存。第一版不默认使用 L3。
+
+建议使用有效容量而不是标称容量：
+
+```text
+L1_budget = alpha1 * L1_capacity
+L2_budget = alpha2 * L2_capacity
+```
+
+其中 `alpha1/alpha2` 可先取 `0.5~0.7`，为真实 load、store、栈和其他线程争用保留空间。
+
+按预取类别的初始层级：
+
+| 类别 | 初始层级 | 原因 |
+|---|---|---|
+| A 连续维 | L1 | 若启用，通常很快使用 |
+| B 跨行邻域 | L1 | north/south 的未来 cache line 接近使用 |
+| C 跨平面近距离 | L1 | front/back 的当前前沿即将使用 |
+| C 跨平面远距离 warming | L2 | 避免过早占用 L1 |
+| D 下一行/平面/tile | L2 | 切换前的远距离预热 |
+
+同一条 plane 流可以使用两级接力：
+
+```text
+较远处插入 L2 预取
+-> 接近真实 load 时插入 L1 预取
+-> 执行真实 load
+```
+
+这意味着 `StreamInfo` 不一定只生成一个 `stencil.prefetch`；启用两级策略时，可以生成一个远距离 L2 op 和一个近距离 L1 op。
+
+### 2.9 KEEP/STRM 策略选择模型
+
+`KEEP/STRM` 回答“数据进入目标 cache 后是否值得尽量保留”。选择依据不是地址是否连续，而是复用次数和复用距离。
+
+建议为每条流估算：
+
+```text
+reuse_count(stream)
+reuse_distance_bytes(stream)
+```
+
+选择规则：
+
+1. **选择 KEEP**：cache line 会再次使用，且 `reuse_distance_bytes` 小于目标 cache 的有效容量预算。
+2. **选择 STRM**：cache line 在当前阶段近似只使用一次，或再次使用前要跨越的工作集明显大于目标 cache 容量。
+
+2D5P 中，一条输入行会随 `y` 推进依次扮演 south、current、north，因此存在跨输出行复用：
+
+```text
+row(y + 1) 作为 south
+-> 下一轮作为 current
+-> 再下一轮作为 north
+```
+
+如果几条活跃行能留在目标 cache 中，B 类 row stream 优先使用 `KEEP`。当行非常长、多核争用严重、复用距离超过 cache 预算时，再比较 `STRM`。
+
+3D7P 中，front/back 平面也会随 `z` 推进轮换，但完整平面的复用距离可能远大于 L1：
+
+1. plane 近距离进入 L1、只服务当前计算前沿时，可优先比较 `STRM`
+2. plane/tile 能在 L2 内复用时，远距离 warming 使用 `KEEP`
+3. 完整平面大于 L2 有效容量时，L2 `STRM` 可能比 `KEEP` 更少污染
+
+因此不能使用一个全局 policy。至少分别配置：
+
+```text
+policy_inner
+policy_row
+policy_plane_near
+policy_plane_far
+policy_tile
+```
+
+### 2.10 距离、层级和策略的联合决策
+
+每条流的完整决策为：
+
+```text
+PrefetchDecision {
+  enable
+  distance_iterations
+  cache_level
+  policy
+}
+```
+
+推荐决策顺序：
+
+1. 根据预计延迟计算候选 `distance_iterations`
+2. 根据使用时间窗口和活跃工作集选择 `cache_level`
+3. 根据复用次数和复用距离选择 `policy`
+4. 重新计算该组合产生的 cache 占用和总预取流数量
+5. 如果超出 cache 或带宽预算，缩短距离、降到更低层 cache，或关闭低优先级流
+
+联合约束可写为：
+
+```text
+total_live_bytes(L1) + active_L1_working_set <= L1_budget
+total_live_bytes(L2) + active_L2_working_set <= L2_budget
+enabled_prefetch_streams <= stream_budget
+estimated_prefetch_bandwidth <= bandwidth_budget
+```
+
+第一版不需要追求完全准确的硬件模型。可以用静态启发式生成候选组合，再通过 PMU 实验筛选；但 pass 内必须显式保留三维决策，不能只保存距离。
+
+### 2.11 2D 与 3D 的推荐初始策略
 
 2D5P：
 
 ```text
-A 连续维：默认关闭，作为对照实验
-B 跨行：默认开启，近距离预取 north/south
+A 连续维：默认关闭；若开启，使用 L1 + KEEP
+B 跨行：默认开启，north/south 使用近距离 L1 + KEEP
 C 跨平面：不适用
-D 下一块：先实现 next-row，再评估空间 tile
+D 下一块：next-row 使用远距离 L2 + KEEP
 ```
 
 3D7P：
 
 ```text
-A 连续维：默认关闭，作为对照实验
-B 跨行：开启
-C 跨平面：优先实现并单独扫描距离
-D 下一块：实现 plane/tile prefetch frontier
+A 连续维：默认关闭；若开启，使用 L1 + KEEP
+B 跨行：使用近距离 L1 + KEEP
+C 跨平面近距离：先测试 L1 + STRM
+C 跨平面远距离：平面/tile 可复用时使用 L2 + KEEP，
+                  平面明显超过 L2 预算时比较 L2 + STRM
+D 下一块：next-plane/next-tile 默认使用 L2，
+           KEEP/STRM 由 tile 是否能在 L2 内复用决定
 ```
+
+以上是初始候选，不是固定结论。最终选择必须分别对 2D 和 3D 扫描距离、层级与 policy。
 
 ## 第三部分：通过 MLIR 实现预取方案
 
@@ -491,6 +625,10 @@ struct StreamInfo {
   Value source;
   SmallVector<Value> currentIndices;
   scf::ForOp innerLoop;
+  int64_t reuseCount;
+  int64_t reuseDistanceBytes;
+  int64_t estimatedLiveBytes;
+  bool isNearUse;
 };
 
 struct PrefetchDecision {
@@ -506,24 +644,31 @@ struct PrefetchDecision {
 1. 收集同一计算组中的所有输入 `vector.transfer_read`
 2. 根据下标差识别 2D 的 3 条流或 3D 的 5 条流
 3. 合并 left/center/right 等价 cache-line 流
-4. 对每个 `StreamInfo` 调用 `decidePrefetch(stream, loopContext)`
-5. 如果 `enable = true`，立即生成未来索引、边界 guard 和 `stencil.prefetch`
-6. 继续处理下一条流或下一个内层循环
+4. 对每个 `StreamInfo` 估算复用次数、复用距离和活跃占用
+5. 依次调用 `chooseDistance`、`chooseCacheLevel` 和 `choosePolicy`
+6. 调用 `fitsCacheAndBandwidthBudgets` 检查联合约束
+7. 如果 `enable = true`，立即生成未来索引、边界 guard 和 `stencil.prefetch`
+8. 继续处理下一条流或下一个内层循环
 
 第一版决策可以直接由 pass options 和静态启发式驱动：
 
 ```text
 --stencil-prefetch-inner-distance=0
 --stencil-prefetch-row-distance=2
---stencil-prefetch-plane-distance=3
+--stencil-prefetch-plane-near-distance=3
+--stencil-prefetch-plane-far-distance=8
 --stencil-prefetch-tile-distance=1
 --stencil-prefetch-row-level=L1
---stencil-prefetch-plane-level=L1
+--stencil-prefetch-plane-near-level=L1
+--stencil-prefetch-plane-far-level=L2
 --stencil-prefetch-tile-level=L2
---stencil-prefetch-policy=KEEP
+--stencil-prefetch-row-policy=KEEP
+--stencil-prefetch-plane-near-policy=STRM
+--stencil-prefetch-plane-far-policy=KEEP
+--stencil-prefetch-tile-policy=KEEP
 ```
 
-其中距离为 0 表示关闭该类预取。实验扫描 `1/2/4/8` 次向量迭代时，直接改变 pass option 并重新编译，不再生成或编辑中间 JSON。
+其中距离为 0 表示关闭该类预取。实验扫描距离、层级和 policy 时，直接改变 pass option 并重新编译，不再生成或编辑中间 JSON。
 
 分析与插入在一次 pass 运行中完成，但决策仍会固化在新生成的 `stencil.prefetch` 属性中，供后续 lowering 和调试使用。
 
@@ -638,14 +783,14 @@ stencil.prefetch %input[%south, %xp] {
 
 stencil.prefetch %input[%front, %y, %xp] {
   level = #stencil.cache_level<l1>,
-  policy = #stencil.prefetch_policy<keep>,
+  policy = #stencil.prefetch_policy<strm>,
   stream = "front-plane",
   distance_iterations = 3 : i64
 } : memref<?x?x?xf32>
 
 stencil.prefetch %input[%back, %y, %xp] {
   level = #stencil.cache_level<l1>,
-  policy = #stencil.prefetch_policy<keep>,
+  policy = #stencil.prefetch_policy<strm>,
   stream = "back-plane",
   distance_iterations = 3 : i64
 } : memref<?x?x?xf32>
@@ -739,7 +884,7 @@ stencil 规范化
 1. 删除 `loadAnalysisDecisions`、JSON 字段解析和固定对象结构
 2. pass 重命名为 `AnalyzeAndInsertStencilPrefetchPass`
 3. 新增 `StreamInfo` 收集、邻域 offset 恢复和流合并
-4. 新增基于 pass options 的 `decidePrefetch`
+4. 新增 `chooseDistance`、`chooseCacheLevel`、`choosePolicy` 和预算检查
 5. 识别一条流后立即计算未来索引并插入 `stencil.prefetch`
 6. 增加边界 guard 和 cache-line 去重
 7. 3D 增加 plane stream 与外层 frontier 分析
@@ -824,7 +969,13 @@ stencil.prefetch
   B+C+D-plane-frontier
 ```
 
-每组扫描 `1/2/4/8` 次向量迭代的距离，并记录：
+每组至少扫描：
+
+1. 距离：`1/2/4/8` 次向量迭代
+2. 层级：近距离流比较 `L1/L2`，远距离流比较 `L2/L3`
+3. policy：分别比较 `KEEP/STRM`
+
+并记录：
 
 1. cell updates/s
 2. 总周期
