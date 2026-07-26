@@ -349,6 +349,32 @@ d_plane
 d_tile
 ```
 
+#### 2.7.1 距离模型的约束条件
+
+距离公式只给出覆盖目标层延迟所需的原始提前量，最终距离必须同时满足：
+
+```text
+memory_latency_cycles > 0
+useful_cycles_per_vector_iteration > 0
+
+min_distance(level)
+  <= d_iterations(stream, level)
+  <= max_distance(stream)
+
+inner_trip_count
+  > 2 * d_iterations(stream, level)
+```
+
+约束含义如下：
+
+1. **输入有效性约束**：目标层延迟和每次迭代有效周期必须由目标机 profile、静态代价估算或实验标定提供，不能为零或未知。缺少可信输入时不生成该层级的距离候选。
+2. **循环长度约束**：距离不能超过内层循环可利用的稳定区间。若已知 trip count 不大于两倍距离，则关闭该流，避免大部分迭代都处于启动或收尾区。
+3. **cache-line 约束**：距离要向新的 cache-line 前沿取整；同一未来 cache line 的 left/center/right 和重复流只能产生一条预取。
+4. **地址安全约束**：`x + d_elements` 以及对应的 `y/z` 邻域偏移必须能构造为对象范围内、不发生整数或指针回绕的合法地址。无法证明时必须缩短有效循环范围、增加 guard，或关闭该候选。
+5. **可伸缩 VL 约束**：未来地址使用运行时 `svcntsw()` 表达；用于容量估算的 assumed VL 只能来自部署 profile，不能把它当成编译期固定 VL 改写地址。
+6. **按流独立约束**：不同物理流、不同目标 cache 层级分别计算距离。一个全局距离不能同时代表 row、plane 和 tile 流。
+7. **资源约束后置**：满足距离公式不代表候选一定准入；如果后续 cache 容量、指令数量、流数量或带宽约束失败，该距离候选仍需降级或删除。
+
 ### 2.8 目标 cache 层级选择模型
 
 预取距离回答“什么时候发出”，cache 层级回答“先把数据放到哪里”。两者必须联合决策。
@@ -421,6 +447,28 @@ L2_budget = alpha2 * L2_capacity
 
 这意味着一条 `StreamInfo` 不一定只插入一次预取；启用两级策略时，可以在较远位置插入一次 L2 `llvm.aarch64.prefetch`，并在接近真实 load 时再插入一次 L1 `llvm.aarch64.prefetch`。
 
+#### 2.8.1 Cache 层级模型的约束条件
+
+层级选择不是在 L1/L2/L3 中任意取值。一个层级候选只有满足以下容量条件才能接受：
+
+```text
+required_bytes(level)
+  = active_working_set(level)
+  + sum(prefetch_live_bytes(stream), stream targets level)
+
+required_bytes(level) <= budget(level)
+```
+
+此外还必须满足：
+
+1. **层级支持约束**：目标 AArch64 后端和目标机 profile 必须支持对应的数据读预取提示；L3 只有在 profile 明确启用时才参与候选生成。
+2. **时间窗口约束**：L1 只接收接近使用且 `lead_cycles` 能覆盖 L1 目标延迟的流；较远 warming 优先进入 L2，不能为了通过 L1 容量检查而把距离缩短到无法隐藏延迟。
+3. **容量约束**：必须把真实 stencil 活跃前沿、活跃 plane/tile 工作集和所有已准入预取流共同计入 `required_bytes`。每增加、删除或迁移一条流都要重新计算。
+4. **动态尺寸约束**：行、平面或 tile 大小无法由 SCEV/常量传播获得时，使用 workload profile。两者都缺失时，不允许作出依赖完整行或平面驻留的 L1/L2 决策。
+5. **两级接力约束**：同一 plane 流同时使用 L2 warming 和 L1 near prefetch 时，必须分别通过两个层级的容量检查，并保证循环长度足以覆盖两个距离。
+6. **共享资源约束**：多核共享 L2/L3 时，有效容量系数必须包含并发线程和其他数据的保留空间，不能把共享 cache 的标称容量全部分配给一个 kernel。
+7. **编译期常量约束**：`llvm.aarch64.prefetch` 的 cache 层级参数是立即数；同一路径不能依据运行时 `W/H` 动态改变层级。确需两种策略时只能使用 loop versioning，否则采用保守候选。
+
 ### 2.9 KEEP/STRM 策略选择模型
 
 `KEEP/STRM` 回答“数据进入目标 cache 后是否值得尽量保留”。选择依据不是地址是否连续，而是复用次数和复用距离。
@@ -469,6 +517,30 @@ policy_plane_near
 policy_plane_far
 policy_tile
 ```
+
+#### 2.9.1 KEEP/STRM 模型的约束条件
+
+策略必须在目标 cache 层级确定后按流计算：
+
+```text
+reuse_fits(stream, level)
+  = reuse_count(stream) > 1
+  && reuse_distance_bytes(stream) <= budget(level)
+
+policy(stream, level)
+  = KEEP, if reuse_fits(stream, level)
+  = STRM, otherwise
+```
+
+该判定受以下条件约束：
+
+1. **可证明复用约束**：只有分析能够识别下一次复用，并得到静态尺寸或 workload profile 支持的复用距离时，才能因复用选择 `KEEP`。
+2. **容量约束**：`reuse_distance_bytes` 必须与已选择层级的有效预算比较，而不是与标称容量比较；选择 L1 和 L2 可能得到不同 policy。
+3. **未知信息约束**：`reuse_count` 或 `reuse_distance_bytes` 未知时按 `reuse_fits = false` 处理，近距离候选保守使用 `STRM`；依赖长期驻留的远距离 warming 默认关闭。
+4. **按物理流约束**：policy 作用于去重后的物理 cache-line 流。left、center、right 不能分别作出互相冲突的 KEEP/STRM 决策。
+5. **资源约束**：`STRM` 只是替换倾向提示，不会减少预取指令、内存流量或实际工作集；候选仍必须通过 cache、流数量和带宽预算。
+6. **阶段约束**：同一 plane 流的 L2 warming 和 L1 near prefetch 可以采用不同 policy，但必须分别计算复用距离和层级预算。
+7. **编译期常量约束**：KEEP/STRM 最终也是 intrinsic 立即数。运行时尺寸跨越 KEEP/STRM 判定边界时，需要 loop versioning；否则选择保守的 STRM。
 
 ### 2.10 距离、层级和策略的联合决策
 
