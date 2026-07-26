@@ -63,6 +63,7 @@ malformed_ir="${build_dir}/malformed_2d.ll"
 malformed_after_ir="${build_dir}/malformed_2d.after.ll"
 malformed_log="${output_dir}/malformed_run.log"
 recognition_report="${output_dir}/stencil_recognition_report.md"
+decision_report="${output_dir}/stencil_prefetch_decision_report.md"
 
 # Apple Clang 21 emits two textual IR additions that LLVM 18 cannot parse.
 # Removing them changes neither the pointer data flow nor the loop structure.
@@ -93,8 +94,54 @@ if [[ "$(grep -c '^StencilAnalysis:' "${pass_log}")" -ne 2 ]]; then
   printf 'expected exactly two recognized stencil loops\n' >&2
   exit 1
 fi
-if grep -q 'llvm\.aarch64\.prefetch\|llvm\.prefetch' "${after_ir}"; then
-  printf 'step 3 must not insert prefetch instructions\n' >&2
+if [[ "$(grep -c '^StencilDecision:' "${pass_log}")" -ne 8 ]]; then
+  printf 'expected exactly eight step 4 prefetch decisions\n' >&2
+  exit 1
+fi
+if grep '^StencilDecision:' "${pass_log}" | grep -q 'enable=no'; then
+  printf 'generic-sme baseline unexpectedly rejected a prefetch decision\n' >&2
+  exit 1
+fi
+grep -q \
+  'kind=2D5P stream=north-row enable=yes distance=4 level=L1 policy=KEEP' \
+  "${pass_log}"
+grep -q \
+  'kind=3D7P stream=front-plane enable=yes distance=4 level=L1 policy=STRM' \
+  "${pass_log}"
+grep -q \
+  'kind=3D7P stream=front-plane enable=yes distance=10 level=L2 policy=KEEP' \
+  "${pass_log}"
+if grep '^StencilDecision:' "${pass_log}" | grep -q 'stream=current-row'; then
+  printf 'continuous current-row software prefetch must be disabled by default\n' >&2
+  exit 1
+fi
+
+if [[ "$(grep -c 'call void @llvm.aarch64.prefetch' "${after_ir}")" -ne 8 ]]; then
+  printf 'expected exactly eight AArch64 prefetch intrinsics\n' >&2
+  exit 1
+fi
+if [[ "$(grep -c 'call void @llvm.aarch64.prefetch.*i32 0, i32 0, i32 0, i32 1)' "${after_ir}")" -ne 4 ]]; then
+  printf 'expected four L1 KEEP prefetches\n' >&2
+  exit 1
+fi
+if [[ "$(grep -c 'call void @llvm.aarch64.prefetch.*i32 0, i32 0, i32 1, i32 1)' "${after_ir}")" -ne 2 ]]; then
+  printf 'expected two L1 STRM prefetches\n' >&2
+  exit 1
+fi
+if [[ "$(grep -c 'call void @llvm.aarch64.prefetch.*i32 0, i32 1, i32 0, i32 1)' "${after_ir}")" -ne 2 ]]; then
+  printf 'expected two L2 KEEP prefetches\n' >&2
+  exit 1
+fi
+if [[ "$(grep -c '= icmp ult i64 %prefetch.future.x' "${after_ir}")" -ne 3 ]]; then
+  printf 'expected one 2D and two 3D future-address guards\n' >&2
+  exit 1
+fi
+if [[ "$(grep -c 'prefetch.addr.* = getelementptr float' "${after_ir}")" -ne 8 ]]; then
+  printf 'expected eight non-inbounds future address GEPs\n' >&2
+  exit 1
+fi
+if grep -q 'prefetch.addr.* = getelementptr inbounds' "${after_ir}"; then
+  printf 'future prefetch addresses must not use inbounds GEP\n' >&2
   exit 1
 fi
 
@@ -109,6 +156,11 @@ fi
 grep -q 'function=stencil_vector_copy' "${negative_log}"
 if grep -q '^StencilAnalysis:' "${negative_log}"; then
   printf 'non-stencil negative test was incorrectly recognized\n' >&2
+  exit 1
+fi
+if grep -q '^StencilDecision:' "${negative_log}" ||
+   grep -q 'llvm\.aarch64\.prefetch' "${negative_after_ir}"; then
+  printf 'non-stencil negative test received a prefetch decision\n' >&2
   exit 1
 fi
 
@@ -136,6 +188,11 @@ if grep -q 'StencilAnalysis: function=stencil_2d5p_sme_f32' \
 fi
 grep -q 'StencilAnalysis: function=stencil_3d7p_sme_f32 kind=3D7P' \
   "${malformed_log}"
+if [[ "$(grep -c '^StencilDecision:' "${malformed_log}")" -ne 6 ]] ||
+   [[ "$(grep -c 'call void @llvm.aarch64.prefetch' "${malformed_after_ir}")" -ne 6 ]]; then
+  printf 'malformed input should retain only the six 3D decisions\n' >&2
+  exit 1
+fi
 
 plugin_name="$(basename "${plugin}")"
 llvm_version="$("${llvm_config}" --version)"
@@ -154,7 +211,7 @@ clang_version="$("${llvm_clang}" --version | head -n 1)"
   printf '2. Clang 通过 `-fpass-plugin` 成功加载插件。\n'
   printf '3. optimizer-early callback 对两个 stencil 函数运行。\n'
   printf '4. pass 成功获取五项方案要求的 LLVM analysis。\n'
-  printf '5. pass 返回 `PreservedAnalyses::all()`，本步骤不修改 IR。\n\n'
+  printf '5. 步骤 4 插入预取后返回 `PreservedAnalyses::none()`。\n\n'
   printf '## Pass 输出\n\n```text\n'
   grep 'StencilPrefetchPass:' "${pass_log}"
   printf '```\n\n'
@@ -186,6 +243,34 @@ clang_version="$("${llvm_clang}" --version | head -n 1)"
   printf '同一基址，因此没有被识别；同模块的 3D7P 仍被正确识别。\n'
 } > "${recognition_report}"
 
+{
+  printf '# 步骤 4 预取决策与安全地址测试报告\n\n'
+  printf -- '- 总体结果：**PASS**\n'
+  printf -- '- Profile：`generic-sme`\n'
+  printf -- '- 修改后 IR：`output/stencil_sme_kernels.after.ll`\n'
+  printf -- '- 正例决策数：8\n'
+  printf -- '- 非 stencil 负例决策数：0\n'
+  printf -- '- 结构负例决策数：6，仅保留 3D7P\n\n'
+  printf '## 默认决策\n\n'
+  printf '| 算子 | 物理流 | 距离 | 层级 | 策略 | 数量 |\n'
+  printf '|---|---|---:|---|---|---:|\n'
+  printf '| 2D5P | north/south row | 4 | L1 | KEEP | 2 |\n'
+  printf '| 3D7P | north/south row | 4 | L1 | KEEP | 2 |\n'
+  printf '| 3D7P | front/back plane near | 4 | L1 | STRM | 2 |\n'
+  printf '| 3D7P | front/back plane far | 10 | L2 | KEEP | 2 |\n\n'
+  printf '连续 current-row 默认关闭，避免与硬件连续流预取重复。\n\n'
+  printf '## 安全性与预算\n\n'
+  printf '1. 每个候选经过 cache 容量、独立流、指令数和字节预算检查。\n'
+  printf '2. 未来位置使用 `x + distance * cntsw()` 构造。\n'
+  printf '3. 按距离合并 guard，仅在 `future_x < interior_end` 时执行预取。\n'
+  printf '4. 未来地址使用非 `inbounds` GEP。\n'
+  printf '5. left/center/right 已合并，不生成重复 current-row 预取。\n\n'
+  printf '## 决策诊断\n\n```text\n'
+  grep '^StencilDecision:' "${pass_log}"
+  printf '```\n'
+} > "${decision_report}"
+
 printf 'Plugin: %s\n' "${plugin}"
 printf 'Report: %s\n' "${report}"
 printf 'Recognition report: %s\n' "${recognition_report}"
+printf 'Decision report: %s\n' "${decision_report}"

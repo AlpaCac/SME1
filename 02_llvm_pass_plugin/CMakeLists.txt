@@ -18,6 +18,7 @@ add_definitions(${LLVM_DEFINITIONS})
 
 add_llvm_pass_plugin(StencilPrefetchPass
   src/StencilAnalysis.cpp
+  src/StencilPrefetchDecision.cpp
   src/StencilPrefetchPass.cpp
 )
 

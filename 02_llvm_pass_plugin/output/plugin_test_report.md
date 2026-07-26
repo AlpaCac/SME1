@@ -13,7 +13,7 @@
 2. Clang 通过 `-fpass-plugin` 成功加载插件。
 3. optimizer-early callback 对两个 stencil 函数运行。
 4. pass 成功获取五项方案要求的 LLVM analysis。
-5. pass 返回 `PreservedAnalyses::all()`，本步骤不修改 IR。
+5. 步骤 4 插入预取后返回 `PreservedAnalyses::none()`。
 
 ## Pass 输出
 

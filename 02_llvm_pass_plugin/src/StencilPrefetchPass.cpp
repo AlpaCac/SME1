@@ -1,4 +1,5 @@
 #include "StencilAnalysis.h"
+#include "StencilPrefetchDecision.h"
 
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -50,8 +51,6 @@ public:
     for (const Loop *L : LI)
       summarizeLoop(*L, SE, Summary);
 
-    // The pass remains read-only through step 3. Later steps consume the
-    // recognized streams to make and insert prefetch decisions.
     (void)TTI;
     (void)AC;
     errs() << "StencilPrefetchPass: function=" << F.getName()
@@ -64,6 +63,9 @@ public:
 
     SmallVector<sme1::StencilInfo, 2> Stencils =
         sme1::analyzeStencilFunction(F, LI, SE, DT);
+    bool Changed = false;
+    const sme1::TargetPrefetchProfile &Profile =
+        sme1::getDefaultPrefetchProfile();
     for (const sme1::StencilInfo &Stencil : Stencils) {
       errs() << "StencilAnalysis: function=" << F.getName()
              << " kind=" << sme1::toString(Stencil.Kind)
@@ -78,9 +80,36 @@ public:
                << Stream.Loads.size();
       }
       errs() << "\n";
+
+      errs() << "StencilDecisionProfile: function=" << F.getName()
+             << " profile=" << Profile.Name
+             << " cache-line=" << Profile.CacheLineBytes
+             << " assumed-vl=" << Profile.AssumedStreamingVLBytes
+             << " row-bytes=" << Profile.ExpectedRowBytes
+             << " plane-or-tile-bytes="
+             << Profile.ExpectedPlaneOrTileBytes << "\n";
+
+      SmallVector<sme1::PrefetchDecision, 8> Decisions =
+          sme1::decidePrefetches(Stencil, SE, Profile);
+      for (const sme1::PrefetchDecision &Decision : Decisions) {
+        errs() << "StencilDecision: function=" << F.getName()
+               << " kind=" << sme1::toString(Stencil.Kind)
+               << " stream=" << sme1::toString(Decision.Stream->Kind)
+               << " enable=" << (Decision.Enable ? "yes" : "no")
+               << " distance=" << Decision.DistanceIterations
+               << " level=" << sme1::toString(Decision.Level)
+               << " policy=" << sme1::toString(Decision.Policy)
+               << " live-bytes=" << Decision.LiveBytes
+               << " reuse-count=" << Decision.ReuseCount
+               << " reuse-distance=" << Decision.ReuseDistanceBytes
+               << " reason=" << sme1::toString(Decision.Reason) << "\n";
+      }
+
+      Changed |= sme1::insertPrefetches(Stencil, Decisions, DT, LI);
     }
 
-    return PreservedAnalyses::all();
+    return Changed ? PreservedAnalyses::none()
+                   : PreservedAnalyses::all();
   }
 };
 
