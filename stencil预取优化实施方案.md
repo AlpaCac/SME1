@@ -678,18 +678,43 @@ struct PrefetchDecision {
 
 ```text
 cache_line_bytes
+  // 一个数据 cache line 的字节数，用于地址对齐、去重和流量估算
+
 L1_capacity_bytes
+  // 每个执行该 kernel 的核心可使用的 L1 data cache 标称容量，单位为 byte
+
 L2_capacity_bytes
+  // 目标核心或核心簇可用于该 kernel 的 L2 cache 标称容量，单位为 byte
+
 L1_prefetch_latency_cycles
+  // 从预期数据来源把一个 line 拉到 L1 所需的估计周期，用于计算 L1 提前距离
+
 L2_prefetch_latency_cycles
+  // 从预期数据来源把一个 line 拉到 L2 所需的估计周期，用于计算 L2 warming 距离
+
 memory_latency_cycles
+  // LLC miss 后从主存返回数据的估计周期；缺少分层实测时作为远距离上界
+
 max_prefetch_streams
+  // 允许同时启用的独立地址流数量，例如 north 和 south 计为两条流
+
 max_prefetch_instructions_per_iteration
+  // 每次最内层向量迭代允许增加的 PRFM 指令数上限
+
 max_prefetch_bytes_per_iteration
+  // 每次向量迭代允许由软件预取请求的 cache-line 字节数上限
+
 alpha1, alpha2
+  // L1/L2 标称容量的可用比例，用于给真实 load/store 和其他线程预留空间
+
 assumed_streaming_vl_bytes
+  // 容量和流量建模采用的 SME streaming vector length，单位为 byte
+
 expected_row_bytes
+  // W 为动态值时，workload profile 给出的代表性或保守行长度，单位为 byte
+
 expected_plane_or_tile_bytes
+  // H/W 或 tile 动态时，用于判断 L2 复用的代表性 plane/tile 字节数
 ```
 
 LLVM 的 TTI 不保证提供完整、准确的 cache 容量和内存延迟，因此不能假设这些值都能从后端查询。第一版在 pass 中维护按 CPU 名称选择的 C++ `TargetPrefetchProfile` 表；命令行参数可以覆盖 profile，便于实验扫描。该 profile 是目标机配置，不是分析结果，不使用 JSON，也不在分析和插入之间传递文件。
@@ -699,15 +724,32 @@ SME streaming vector length 在编译时可能是可伸缩值。距离以“向�
 当前循环属性由 `LoopInfo`、SCEV 和步骤 3 的流识别得到：
 
 ```text
-stencil_kind                 // 2D5P 或 3D7P
-inner_trip_count             // 可静态求值时使用
+stencil_kind
+  // 已识别的算子类型：2D5P 或 3D7P，决定流类别和准入优先级
+
+inner_trip_count
+  // 最内层 x 循环的向量迭代次数，不是元素数；用于限制最大预取距离
+
 row_bytes = W * sizeof(float)
-plane_bytes = H * row_bytes  // 仅 3D
+  // 一整行输入数据的字节数，用于估算跨行复用距离
+
+plane_bytes = H * row_bytes
+  // 一个完整输入平面的字节数，仅 3D 使用
+
 bytes_per_vector_iteration
+  // 一条物理流在一次 x 向量迭代中前进并被真实 load 消费的字节数
+
 useful_cycles_per_iteration
-stream kind
+  // 不计等待 cache miss 时，一次 x 向量迭代预计完成计算所需的周期
+
+stream_kind
+  // 当前物理流的类型，如 current-row、north-row、south-row、front-plane
+
 reuse_count
+  // 同一 cache line 在被逐出前预计还会被 stencil 访问的次数
+
 reuse_distance_bytes
+  // 从本次访问到下一次复用之间预计会访问的数据量，单位为 byte
 ```
 
 `useful_cycles_per_iteration` 第一版采用目标 profile 中的 2D/3D 基准值；后续可结合 TTI 对循环体 load、FMA 和 add 的吞吐量估算。不能直接用 IR 指令条数代替周期，因为 SME/SVE 指令吞吐和 load issue 宽度不同。

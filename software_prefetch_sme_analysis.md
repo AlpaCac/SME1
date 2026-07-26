@@ -23,60 +23,55 @@
 
 ## 2. 分析范围与当前项目状态
 
-本文覆盖：
+本文只讨论 stencil。当前仓库的具体实现对象是：
 
-1. 1D、2D 和 3D 规则 stencil
-2. 低阶和高阶 stencil
-3. 常系数和变系数 stencil
-4. 空间分块和时间分块
-5. 单核和多核下的软件预取策略
-6. `MLIR -> Arm SME -> LLVM -> AArch64 PRFM` 的实现路径
+1. 单时间步 2D 5-point stencil
+2. 单时间步 3D 7-point stencil
+3. `float32`、row-major、常系数
+4. SME streaming mode 与 SVE 谓词向量 load/store
+5. 数据读预取，不讨论写预取和指令预取
 
-当前 `SME1` 仓库已经具备可复用的预取后半段基础设施：
+高阶、变系数、空间分块和时间分块只作为后续可扩展方向，不属于当前 kernel 的已实现范围。
+
+当前主线为：
 
 ```text
-stencil 规范化与 vectorization
--> vector/scf 层边分析边插入 stencil.prefetch
--> Arm SME / LLVM lowering
--> llvm.aarch64.prefetch
--> 精确目标层级与 KEEP/STRM 的读预取
+stencil_sme_kernels.c
+-> Clang CodeGen
+-> LLVM IR
+   - 循环、归纳变量和 GEP
+   - llvm.masked.load
+   - AArch64 SVE/SME intrinsic
+-> StencilPrefetchPass
+   - 识别 stencil 物理流
+   - 边分析边决定距离、缓存层级和 KEEP/STRM
+   - 插入 llvm.aarch64.prefetch
+-> AArch64 后端
+-> SME/SVE 计算指令 + PRFM
 ```
 
-目前仓库已有 `stencil_sme_kernels.c` 中的 2D5P/3D7P kernel，但还没有完整的 stencil MLIR 语义分析、自定义预取 op 或集成注入 pass。因此本文中的编译器方案仍是后续实现目标。
+当前仓库已经包含 SME/SVE C kernel、预取原理分析和 LLVM pass 实施方案；`StencilPrefetchPass` 本身仍是后续开发目标。
 
 ## 3. 参考依据
 
-### 3.1 项目内可复用材料
+### 3.1 项目内材料
 
-本文参考当前仓库已有的预取分析和跨层 lowering 设计：
+项目内只保留 stencil 相关材料：
 
-1. `02_prefetch_cost_model/output/prefetch_analysis.md`
-2. `03_prefetch_injection/vector预取注入说明.md`
-3. `04_vector_arm_sme_llvm/prefetch参数映射说明.md`
-4. `README.md`
+1. `stencil_sme_kernels.c`：2D5P/3D7P ACLE kernel
+2. `stencil预取优化实施方案.md`：可执行的预取决策和 LLVM pass 步骤
+3. `software_prefetch_sme_analysis.md`：预取类别、原理和扩展方向
 
-现有 JSON cost-model 文件只作为早期实验背景，不再作为 stencil 分析与插入之间的信息通道。
+实现时应以 `stencil预取优化实施方案.md` 为准。分析与插入在同一个 LLVM pass 中完成，不通过 JSON 或其他外部文件传递决策。
 
-这些材料的主要复用价值是：
-
-1. 在 vector/scf IR 中识别 stencil 访存流
-2. 在同一个 pass 中立即决策、计算未来地址并插入 `stencil.prefetch`
-3. 通过自定义 op 无损保存目标缓存层级与 `KEEP/STRM`
-4. 直接降低到 AArch64 专用 `llvm.aarch64.prefetch`
-
-不应直接复用基于固定操作数身份或 rank-1 load 出现顺序的流分类方法。stencil 必须根据索引映射、维度和邻域偏移识别数据流。
-
-### 3.2 论文与官方资料
+### 3.2 论文与编译器依据
 
 Google Scholar 检索中，与本文最直接相关的是：
 
-1. *SMEStencil: Optimizing High-Order Stencils on ARM Multicore Using SME Unit*。检索摘要明确指出，软件预取被用于弥补 Arm 多核系统硬件预取能力的不足。
-2. SME、软件预取和高阶 stencil 相关工作共同提示高计算吞吐会把瓶颈推向数据供给，且预取效果强烈依赖距离、布局、缓存容量和并行配置。
+1. *SMEStencil: Optimizing High-Order Stencils on ARM Multicore Using SME Unit*。检索摘要指出，软件预取可用于缓解 Arm 多核系统中 stencil 的数据供给问题。
+2. SME、软件预取和高阶 stencil 相关工作共同表明，预取效果强烈依赖距离、布局、缓存容量、向量长度和并行配置。
+3. LLVM AArch64 `llvm.aarch64.prefetch` intrinsic 可以表达数据读预取、L1/L2/L3 目标以及 KEEP/STRM 策略，并由后端映射为 `PRFM` 提示。
 
-编译器层参考：
-
-1. MLIR 自定义 dialect 与 operation 定义机制
-2. LLVM AArch64 `llvm.aarch64.prefetch` intrinsic
 
 ## 4. 为什么 SME Stencil 需要软件预取
 
@@ -220,120 +215,89 @@ prefetch_address
 
 距离过短会导致预取过晚；距离过长会导致缓存污染、提前逐出或浪费带宽。不同邻域流应允许使用不同距离。
 
-## 7. 在当前编译链中的落地方式
+## 7. 在当前 Clang/LLVM 编译链中的落地方式
 
-### 7.1 新增 stencil 高层入口
+### 7.1 从原始 ACLE C 生成可分析的 LLVM IR
 
-输入 kernel 应显式保留：
+不要求把 C kernel 改写成结构化子集。Clang 正常编译 `stencil_sme_kernels.c`，LLVM IR 中保留：
 
-1. 维数
-2. 半径
-3. 邻域偏移
-4. 数据布局
-5. 边界条件
-6. 空间 tile
-7. 时间 tile
-8. 常系数或变系数模式
+1. 最内层 `x` 循环和归纳变量
+2. 行跨度 `W`、平面跨度 `H * W` 对应的 GEP/SCEV 地址
+3. SVE 谓词 load 对应的 `llvm.masked.load`
+4. `svcntsw()` 对应的可伸缩向量步长
+5. SME locally-streaming 函数属性
 
-可采用 `linalg.generic`、结构化 stencil 表达或带属性的 `scf/affine` 循环作为入口。关键要求是 vectorization 后仍能通过 indices、source tracing 或显式 offset attribute 恢复邻域语义。
+pass 应依赖 `LoopInfo`、ScalarEvolution 和 DominatorTree 识别结构，不能依赖 SSA 名称或固定基本块编号。
 
-### 7.2 在 vector/scf 层识别访存流
+### 7.2 识别并合并 stencil 物理流
 
-集成 pass 对每个 `vector.transfer_read` 回溯 base memref、`memref.subview` 和 index 表达式，识别：
+2D5P 的 5 个逻辑 load 合并为 3 条主要 cache-line 流：
 
-1. 中心流
-2. 最内层左右邻居
-3. 行邻居
-4. 平面邻居
-5. 系数流
+1. current row，合并 left/center/right
+2. north row
+3. south row
 
-随后按以下条件合并请求：
+3D7P 在此基础上增加 front/back plane，共 5 条主要流。地址差必须由 SCEV 证明为 `0`、`±1`、`±W` 和 3D 的 `±H*W`；无法证明时跳过，不能仅按 load 数量猜测。
 
-1. 相同底层 buffer
-2. 相同或等价邻域偏移
-3. 落在相同 cache line
-4. 使用时间窗口相近
+### 7.3 在同一个 pass 中做出决策
 
-### 7.3 在 pass 内即时形成决策
-
-不再把分析结果写入 JSON，也不再由另一个 pass 读取。每识别出一条流，就在当前 pass 的局部 `StreamInfo` / `PrefetchDecision` 中计算：
+每条流使用局部 `StreamInfo` 和 `PrefetchDecision`，依次确定：
 
 ```text
-kernel = stencil
-stream = center | row-neighbor | plane-neighbor | coefficient
-rw = read
-level = L1 | L2
+enable
+distance_iterations
+cache_level = L1 | L2 | L3
 policy = KEEP | STRM
-distance = 整数或符号表达式
-insertion_scope = vector | row | plane | tile | timestep
-dimension = 1D | 2D | 3D
-radius = 整数
-neighbor_offset = 索引向量
-guard = 边界合法性条件
 ```
 
-随后立即构造未来地址和边界 guard，并插入 `stencil.prefetch`。这些字段最终固化为 op attribute，供 lowering 使用，而不是作为分析与插入之间的传递格式。
+输入包括目标 cache profile、预计延迟、SME VL、循环 trip count、行/平面工作集、复用距离、最大流数量和预取带宽预算。pass 生成候选后按 2D/3D 不同优先级准入，随后立即插入，不序列化分析结果。
 
-距离、层级和策略通过 pass options 控制，例如：
+完整公式、动态 `W/H`、多 cache-line 向量和预算降级算法见 `stencil预取优化实施方案.md` 的步骤 4。
+
+### 7.4 构造安全的未来地址
+
+未来位置为：
 
 ```text
---stencil-prefetch-row-distance=2
---stencil-prefetch-plane-distance=3
---stencil-prefetch-row-level=L1
---stencil-prefetch-plane-level=L1
---stencil-prefetch-policy=KEEP
+future_x = x + distance_iterations * svcntsw()
 ```
 
-### 7.4 在同一 pass 中插入近距离预取
+不能盲目复制当前 `inbounds GEP` 后越过对象边界。优先把内层循环拆成可无条件预取的 main loop 和尾部；暂不做 loop versioning 时，使用合法范围 guard。
 
-在真实 `vector.transfer_read` 或等价向量 load 前若干迭代计算未来地址，并插入自定义 `stencil.prefetch`。
+同一未来 SME 向量跨多个 cache line 时，根据目标 VL profile 为每个 line 构造地址。left/center/right 已经合流，不能重复发出预取。
 
-不能使用标准 `memref.prefetch` 承载最终决策：它的 `locality<0..3>` 只是抽象局部性提示，不是精确的 `L1/L2/L3`，也没有独立的 `KEEP/STRM` 字段。
+### 7.5 插入 AArch64 intrinsic
 
-集成 pass 需要：
+pass 直接插入：
 
-1. 从向量 load 追踪到原始 stencil 流
-2. 根据向量迭代变量计算未来地址
-3. 对 cache line 去重
-4. 限制单次迭代的预取数量
-5. 为尾部和边界生成合法 guard
-
-### 7.5 在外层循环插入远距离预取
-
-行、平面和 tile 级 `L2` 预取不能只观察单个向量 load。集成 pass 需要访问外层循环上下文，在以下位置生成预取：
-
-1. 行循环内部的下一行前沿
-2. 平面循环内部的下一平面前沿
-3. 空间 tile 循环内部的下一 tile 前沿
-4. 时间 tile 切换点的下一批外部输入
-
-### 7.6 保留到 LLVM 和 AArch64
-
-预取主线应保持：
-
-```text
-stencil.prefetch
--> llvm.call_intrinsic "llvm.aarch64.prefetch"
--> 精确的目标层级与 KEEP/STRM 读预取
+```llvm
+call void @llvm.aarch64.prefetch(
+  ptr %future_address,
+  i32 0,
+  i32 target,
+  i32 stream,
+  i32 1)
 ```
 
-`stencil.prefetch` 至少包含 `level`、`policy`、`stream` 和 `distance_iterations` 属性。lowering 将其映射为：
+参数映射：
 
-1. `L1/L2/L3 -> target 0/1/2`
-2. `KEEP/STRM -> isStream 0/1`
-3. 数据读固定为 `isWrite = 0`、`isData = 1`
+1. `isWrite = 0`：数据读预取
+2. `target = 0/1/2`：L1/L2/L3
+3. `isStream = 0/1`：KEEP/STRM
+4. `isData = 1`：数据而非指令
 
-同时保留 metadata 或函数属性，以便回答：
+AArch64 后端通常生成 `PRFM PLDL1KEEP`、`PLDL1STRM`、`PLDL2KEEP` 等形式，不需要自定义中间 op 或额外 lowering。
 
-1. 预取对应哪个 stencil 流
-2. 目标是 L1 还是 L2
-3. 使用 KEEP 还是 STRM
-4. 距离由哪个循环维度和公式计算
-5. 对应哪个邻域偏移
+### 7.6 扩展到外层空间预热
+
+next-row、next-plane 和 next-tile 不能只观察单个内层 load。后续实现需要访问外层循环，在当前空间块接近结束时维护预取 frontier。
+
+第一版只实现 B 类跨行和 3D C 类近距离跨平面预取；外层 D 类预热必须在近距离方案经 PMU 证明有效后再加入。
+
 
 ## 8. 边界、尾部和正确性
 
-stencil 预取地址必须位于合法对象内。即使目标 CPU 将 `PRFM` 视为非故障 hint，MLIR/C 语义也不应构造越界地址。
+stencil 预取地址必须位于合法对象内。即使目标 CPU 将 `PRFM` 视为非故障 hint，C/LLVM IR 语义也不应构造越界或 poison 地址。
 
 建议把 kernel 拆为：
 
@@ -474,5 +438,5 @@ stencil 预取地址必须位于合法对象内。即使目标 CPU 将 `PRFM` �
 1. [Google Scholar: ARM SME software prefetch stencil](https://scholar.google.com/scholar?q=%22ARM+SME%22+software+prefetch+stencil)
 2. [Google Scholar: SME high-order stencil prefetch](https://scholar.google.com/scholar?q=SME+high-order+stencil+prefetch)
 3. [SMEStencil: Optimizing High-Order Stencils on ARM Multicore Using SME Unit](https://ieeexplore.ieee.org/abstract/document/11328920/)
-4. [MLIR 自定义 Dialect 文档](https://mlir.llvm.org/docs/DefiningDialects/)
+4. [LLVM New Pass Manager 文档](https://llvm.org/docs/NewPassManager.html)
 5. [LLVM AArch64 intrinsic 定义](https://github.com/llvm/llvm-project/blob/main/llvm/include/llvm/IR/IntrinsicsAArch64.td)

@@ -1,157 +1,83 @@
-# 方案整理
+# SME Stencil 软件预取
 
-## 1. 研究目标
+本仓库研究如何在不改写原始 SME/SVE ACLE C kernel 的前提下，通过 Clang/LLVM 编译流程为 stencil 计算插入 AArch64 数据读预取。
 
-本实验的总体目标是：
+当前只包含两个单时间步、常系数 stencil：
 
-针对现有预取优化主要依赖后端启发式、高层计算语义在传统编译链中快速丢失、预取语义在跨层 lowering 时容易丢失的问题，
+1. 2D 5-point（2D5P）
+2. 3D 7-point（3D7P）
 
-采用“C kernel + 自定义提升器 + 高层 MLIR 语义分析 + 预取语义注入 + LLVM lowering + LX2 验证”的方法，
+## 当前文件
 
-实现一套面向 GEMM 的高层 IR 驱动预取优化链路，
+| 文件 | 说明 |
+|---|---|
+| `stencil_sme_kernels.c` | 使用 `arm_sme.h` 和 `arm_sve.h` 实现的 2D5P、3D7P kernel |
+| `stencil预取优化实施方案.md` | 计算模型、预取类别、决策算法和 Clang/LLVM pass 实施步骤 |
+| `software_prefetch_sme_analysis.md` | SME stencil 软件读预取的背景与原理分析 |
 
-并期望在 LX2 实机上获得优于无预取 baseline 的性能结果。
+## Kernel
 
-## 2. 研究问题
+`stencil_sme_kernels.c` 提供：
 
-### 2.1 现有预取优化主要依赖后端启发式，缺少高层语义支撑
+```c
+void stencil_2d5p_sme_f32(...);
+void stencil_3d7p_sme_f32(...);
+```
 
-现有预取优化通常出现在 LLVM 或目标后端，主要依赖：
+两个函数均：
 
-- 局部访存模式
-- 静态启发式规则
-- 硬件自动预取器的假设
+1. 使用 `__arm_locally_streaming` 进入 SME streaming mode。
+2. 以 `x` 为最内层连续维。
+3. 使用 SVE 谓词处理尾部。
+4. 只计算内部点，边界由调用者负责。
+5. 输入和输出使用不同数组。
 
-这种方式缺少计算语义的支撑，对于 SME 场景下的大规模分块矩阵计算，单纯依赖后端启发式未必能得到最优效果。
+语法检查示例：
 
-### 2.2 高层计算语义在传统编译链中快速丢失
+```bash
+clang -target arm64-apple-macos15 \
+  -march=armv9.2-a+sme+sve2 \
+  -fsyntax-only stencil_sme_kernels.c
+```
 
-对于面向 ARM SME 的矩阵计算程序，若直接采用传统的：
+生成 LLVM IR：
+
+```bash
+clang -target arm64-apple-macos15 \
+  -march=armv9.2-a+sme+sve2 \
+  -O1 -S -emit-llvm stencil_sme_kernels.c \
+  -o stencil_sme_kernels.ll
+```
+
+## 预取实现主线
 
 ```text
-C/C++ -> Clang -> LLVM IR
+原始 SME/SVE ACLE C
+-> Clang CodeGen
+-> LLVM IR
+   - 循环与归纳变量
+   - getelementptr
+   - llvm.masked.load
+   - SVE/SME intrinsic
+-> StencilPrefetchPass
+   - 识别 2D5P/3D7P 物理流
+   - 决定距离、L1/L2/L3 和 KEEP/STRM
+   - 插入 llvm.aarch64.prefetch
+-> AArch64 后端
+-> SME/SVE 计算指令 + PRFM
 ```
 
-编译流程，则源程序中的很多高层信息会很快退化为低层指针、load/store 和标量算术，很多计算语义难以继续保留，这使得后续很难在编译中端阶段针对 SME 场景进行结构化优化。
+分析与插入在同一个 LLVM pass 中完成，不使用 JSON 传递决策，也不依赖高层 MLIR 或自定义预取 op。
 
-### 2.3 预取语义在跨层 lowering 时容易丢失
+## 预取范围
 
-即使在高层 IR 中做出了合理的预取决策，仍然存在一个关键难点：如何将预取语义从 `linalg / affine / scf / vector` 一直保留到 `arm_sme` / LLVM IR，并最终映射成编译器能够识别的目标预取形式。
+方案只讨论数据读预取，候选包括：
 
-## 3. 研究方案
+1. 连续 `x` 维前向预取。
+2. north/south 跨行预取。
+3. 3D front/back 跨平面预取。
+4. next-row、next-plane 或 next-tile 预热。
 
-### 3.1 总体技术路线
+2D5P 通常合并为 3 条主要 cache-line 流，3D7P 通常合并为 5 条。两者共享 LLVM 分析框架，但分别进行距离、层级、KEEP/STRM 和流准入决策。
 
-```
-C kernel
--> linalg（通过自定义提升器将 C 语言转换成 linalg）
-    -> 转换成 affine 层并进行高层语义分析
-    -> 转换成 vector 层并进行预取语义注入
--> ArmSME lowering
--> LLVM IR / Target-specific intrinsics
--> 实机验证
-```
-
-### 3.2 C kernel 输入
-
-输入程序选取为规则分块的 GEMM kernel，参考国防科大论文的实现方案，体现 `mc / nc / kc / mr / nr` 分块结构，避免显式 SME intrinsic、汇编、复杂指针技巧和运行时机制。这样做的目的是让自定义前端更方便把输入程序转换到高层 MLIR。
-
-形成的产出：一个适合自动分析和提升的 C kernel
-
-第一步的目标是跑通实验流程，所以对输入程序进行了简化：仅包含单个 kernel 函数、规则的 `for` 循环、固定格式的语义标注注释，并且只保留 `C = A * B` 语义。
-
-### 3.3 将 C kernel 转换为高层 MLIR
-
-起始条件：已有 C kernel
-
-采用的技术：使用自定义提升器识别循环结构和矩阵乘模式，将 C 程序提升到 `linalg` 层，显式恢复矩阵乘语义。
-
-形成的产出：`linalg` 层 MLIR
-
-### 3.4 转换成 affine 层并进行高层语义分析
-
-高层语义分析应主要在 `linalg` 和 `affine/scf` 层开展。
-
-起始条件：已得到高层 MLIR，已在 `linalg` 和 `affine/scf` 层保留算子、循环、tile 和访存结构
-
-采用的技术：
-
-- 在 `linalg` 层分析整体数据流性质
-- 在 `affine/scf` 层分析：
-  - stride
-  - reuse distance
-  - working set
-  - cache line / 跨行 / 跨块特征
-- 构建 Cost Module，给出预取决策
-
-形成的产出：
-
-- 一份结构化的预取决策结果，包括：
-  - 是否预取
-  - 读 / 写预取
-  - 预取距离
-  - 目标缓存层级
-  - `KEEP / STRM`
-
-与研究目标的对应关系：
-
-- 对应“高层表示目标”中的语义理解部分
-- 也是“优化落地目标”里预取策略生成的起点
-- 直接回应“现有预取优化主要依赖后端启发式”的问题
-
-### 3.5 转换成 vector 层并进行预取语义表示与 IR 注入
-
-起始条件：已有 `linalg` 层 MLIR、已有 Cost Module 输出的预取决策结果
-
-采用的技术：
-
-首先将 `linalg` 层 MLIR 转换成 `vector` 层 MLIR。
-
-对于 `vector` 层 MLIR，根据语义分析的结果插入预取语义。
-
-将预取语义作为单独的中间表示来设计，通过**自定义 MLIR pass**实现注入；Transform Dialect 可作为后续描述调度和匹配策略的补充方案。
-
-预取决策要考虑 CPU、SVE、SME 并行的情况。SME 一般用于计算完整的分块，SVE 一般用于计算矩阵边界，CPU 负责其他计算。
-
-形成的产出：带预取语义的 `vector` 层 MLIR
-
-与研究目标的对应关系：对应“优化落地目标”中的预取语义注入部分，直接应对“预取语义在跨层 lowering 时容易丢失”的问题
-
-### 3.6 Vector / ArmSME / LLVM 降级
-
-起始条件：已得到带预取语义的 `vector` 层 MLIR
-
-采用的技术：
-
-预取注入后的 MLIR 需要继续完成 lowering，最终降级到 LLVM 层，并且需要保留上层注入的预取语义，需要编写 pass 实现。
-
-```
-vector
--> arm_sme
--> llvm
-```
-
-形成的产出：带目标相关预取形式的 LLVM IR
-
-与研究目标的对应关系：对应“优化落地目标”中的跨层 lowering 部分，解决“预取语义从高层 IR 到 LLVM IR 的传递问题”
-
-## 4. 实验验证
-
-功能性验证：
-
-1. 毕昇是否接受生成的 LLVM IR
-2. 目标预取 intrinsic 是否被识别
-3. 预取语义是否保留
-4. 最终汇编中是否出现目标预取指令
-
-性能验证：
-
-实验一：利用毕昇编译器编译三个版本并在 LX2 上运行，配合 ARM PMU 计数器（如 `perf stat -e r0004` 等硬件事件）抓取 L2D 缺失率：
-
-1. **Baseline 1 (No Prefetch)**：原始代码，纯靠硬件自动预取。
-2. **Baseline 2 (BiSheng Native Prefetch)**：开启毕昇编译器自研的软件预取优化。
-3. **Proposed (MLIR 高层语义 Cost Model + BiSheng)**：关闭毕昇自带预取，由高层语义 Cost Model 控制预取发射。
-
-实验二：不规则控制流下的带宽与吞吐表现（FlagGEMM）
-
-在不同的 Flag 稀疏度（0.1 到 0.9）下，对比性能（GFLOPS）
+完整设计与实现顺序见 `stencil预取优化实施方案.md`。
