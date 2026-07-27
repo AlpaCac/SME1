@@ -6,6 +6,7 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 build_dir="${script_dir}/build"
 output_dir="${script_dir}/output"
 runtime_clang="${RUNTIME_CLANG:-/usr/bin/clang}"
+runtime_profile="${SME_RUNTIME_PROFILE:-generic-sme}"
 
 FORCE_SME_RUN="${FORCE_SME_RUN:-0}" \
   "${script_dir}/build_and_run.sh" >/dev/null
@@ -38,6 +39,10 @@ fi
 
 if [[ "${run_enabled}" != "1" ]]; then
   printf 'Benchmark binaries built; SME execution was not enabled.\n'
+  exit 0
+fi
+if [[ "${STENCIL_BUILD_ONLY:-0}" == "1" ]]; then
+  printf 'Benchmark binaries built.\n'
   exit 0
 fi
 
@@ -105,6 +110,7 @@ speedup_3d="$(awk -v p="${gups_3d_prefetch}" -v b="${gups_3d_baseline}" \
   printf '# 步骤 5 初始性能结果\n\n'
   printf -- '- 平台：`%s %s`（Apple M5，SME/SME2）\n' \
     "$(uname -s)" "$(uname -m)"
+  printf -- '- 预取 Profile：`%s`\n' "${runtime_profile}"
   printf -- '- 重复次数/样本数：`%s / %s`，报告样本中位数\n' \
     "${repetitions}" "${samples}"
   printf -- '- 可比性：基线/预取来自同一 LLVM 18 IR 与 `-O1` 管线，'

@@ -99,11 +99,21 @@ clang -target arm64-apple-macos15 \
 2. 步骤 2：LLVM new-pass-manager 插件，已完成。
 3. 步骤 3：识别 2D5P/3D7P 循环和物理流，已完成。
 4. 步骤 4：预取决策、插入、AArch64 lowering、原始 C 直编和幂等检查，已完成。
-5. 步骤 5：Apple M5 数值正确性已通过；同进程配对测试为 2D
-   `1.007x`、3D `1.010x`。2D 基本中性，3D 有约 1% 正向趋势但尚不足以
-   固化 Profile；类别消融显示 3D 的 row-only 约 `0.92x`，不能单独启用。
+5. 步骤 5：Apple M5 数值正确性和跨尺寸距离扫描已完成。命名的
+   `apple-m5` Profile 对 2D 不插入预取，对 3D 只插入两条 distance-1
+   plane-L1 STRM；配对结果为 2D `1.004x`、3D `1.028x`。自定义
+   Instruments 模板的三轮 PMU 对比也已完成：PL2 access/load miss
+   分别约增至 `12.25x/50.85x`，L1D 事件波动较大。独立网格的
+   1/2/4/8 线程配对结果分别为 `1.043x/1.107x/1.114x/1.095x`。
 
 Apple M5 支持 SME/SME2，但不支持普通 SVE。运行时验证把 SME kernel 与
 普通 arm64 测试驱动分开编译，kernel 使用 `+nosve+sme`；不能把
 `+sve2` 全局应用到可执行程序。上面的 `+sme+sve2` 命令仅用于 LLVM 18
 前端的 IR/汇编验证。
+
+Apple M5 编译时显式选择：
+
+```bash
+SME_PREFETCH_PROFILE=apple-m5 clang \
+  -fpass-plugin=./StencilPrefetchPass.dylib ...
+```

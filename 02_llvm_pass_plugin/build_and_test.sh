@@ -4,8 +4,11 @@ set -euo pipefail
 # Keep the regression baseline deterministic even when the caller previously
 # exported an experiment profile.
 unset SME_PREFETCH_MAX_STREAMS
+unset SME_PREFETCH_PROFILE
 unset SME_PREFETCH_MAX_INSTRUCTIONS
 unset SME_PREFETCH_MAX_BYTES
+unset SME_PREFETCH_L1_CAPACITY_BYTES
+unset SME_PREFETCH_L2_CAPACITY_BYTES
 unset SME_PREFETCH_USEFUL_CYCLES_2D
 unset SME_PREFETCH_USEFUL_CYCLES_3D
 unset SME_PREFETCH_ENABLE_ROW_L1
@@ -86,6 +89,12 @@ direct_log="${output_dir}/direct_compile.log"
 idempotency_log="${output_dir}/idempotency_run.log"
 budget_reject_ir="${build_dir}/budget_reject.after.ll"
 budget_reject_log="${output_dir}/budget_reject_run.log"
+apple_m5_ir="${build_dir}/apple_m5.after.ll"
+apple_m5_log="${output_dir}/apple_m5_profile_run.log"
+apple_m5_assembly="${output_dir}/stencil_sme_kernels.apple-m5.s"
+short_trip_ir="${build_dir}/short_trip_2d.ll"
+short_trip_after_ir="${build_dir}/short_trip_2d.after.ll"
+short_trip_log="${output_dir}/short_trip_run.log"
 
 # Apple Clang 21 emits two textual IR additions that LLVM 18 cannot parse.
 # Removing them changes neither the pointer data flow nor the loop structure.
@@ -315,6 +324,81 @@ if grep -q 'call void @llvm.aarch64.prefetch' "${budget_reject_ir}"; then
   exit 1
 fi
 
+run_rejection_test() {
+  name="$1"
+  expected_reason="$2"
+  shift 2
+  reject_ir="${build_dir}/${name}.after.ll"
+  reject_log="${output_dir}/${name}_run.log"
+  env "$@" "${llvm_clang}" \
+    -x ir -O1 -S -emit-llvm -Wno-override-module \
+    -fpass-plugin="${plugin}" \
+    "${compat_ir}" \
+    -o "${reject_ir}" \
+    2> "${reject_log}"
+  [[ "$(grep -c '^StencilDecision:' "${reject_log}")" -eq 8 ]]
+  [[ "$(grep -c 'enable=no' "${reject_log}")" -eq 8 ]]
+  [[ "$(grep -c "reason=${expected_reason}" "${reject_log}")" -eq 8 ]]
+  if grep -q 'call void @llvm.aarch64.prefetch' "${reject_ir}"; then
+    printf '%s unexpectedly inserted prefetches\n' "${name}" >&2
+    exit 1
+  fi
+}
+
+run_rejection_test capacity_reject CapacityReject \
+  SME_PREFETCH_L1_CAPACITY_BYTES=0 \
+  SME_PREFETCH_L2_CAPACITY_BYTES=0
+run_rejection_test instruction_budget_reject InstructionBudgetReject \
+  SME_PREFETCH_MAX_INSTRUCTIONS=0
+run_rejection_test bandwidth_reject BandwidthReject \
+  SME_PREFETCH_MAX_BYTES=0
+
+# Keep the real 2D stencil structure but specialize its inner upper bound to
+# 32. With the 64-byte assumed VL this is two vector iterations, too short for
+# the default distance-four prefetch.
+sed 's/%12 = add i64 %1, -1/%12 = add i64 33, -1/' \
+  "${compat_ir}" > "${short_trip_ir}"
+if cmp -s "${compat_ir}" "${short_trip_ir}"; then
+  printf 'failed to create short-trip stencil fixture\n' >&2
+  exit 1
+fi
+"${llvm_clang}" \
+  -x ir -O1 -S -emit-llvm -Wno-override-module \
+  -fpass-plugin="${plugin}" \
+  "${short_trip_ir}" \
+  -o "${short_trip_after_ir}" \
+  2> "${short_trip_log}"
+[[ "$(grep -c 'kind=2D5P.*enable=no.*reason=ShortTripCount' \
+  "${short_trip_log}")" -eq 2 ]]
+[[ "$(grep -c 'call void @llvm.aarch64.prefetch' \
+  "${short_trip_after_ir}")" -eq 6 ]]
+
+SME_PREFETCH_PROFILE=apple-m5 "${llvm_clang}" \
+  -x ir -O1 -S -emit-llvm -Wno-override-module \
+  -fpass-plugin="${plugin}" \
+  "${compat_ir}" \
+  -o "${apple_m5_ir}" \
+  2> "${apple_m5_log}"
+
+[[ "$(grep -c 'profile=apple-m5' "${apple_m5_log}")" -eq 2 ]]
+[[ "$(grep -c '^StencilDecision:' "${apple_m5_log}")" -eq 2 ]]
+[[ "$(grep -c 'kind=3D7P stream=.*plane enable=yes distance=1 level=L1 policy=STRM' \
+  "${apple_m5_log}")" -eq 2 ]]
+[[ "$(grep -c 'call void @llvm.aarch64.prefetch' "${apple_m5_ir}")" -eq 2 ]]
+if grep -q 'kind=2D5P.*enable=yes' "${apple_m5_log}" ||
+   grep -q 'level=L2' "${apple_m5_log}"; then
+  printf 'apple-m5 profile enabled an unexpected candidate\n' >&2
+  exit 1
+fi
+
+"${llvm_clang}" \
+  -x ir -O1 -S -Wno-override-module \
+  "${apple_m5_ir}" \
+  -o "${apple_m5_assembly}"
+[[ "$(grep -Ec '^[[:space:]]*prf(m|um)[[:space:]]' \
+  "${apple_m5_assembly}")" -eq 2 ]]
+[[ "$(grep -c 'pldl1strm' "${apple_m5_assembly}")" -eq 2 ]]
+
 plugin_name="$(basename "${plugin}")"
 llvm_version="$("${llvm_config}" --version)"
 clang_version="$("${llvm_clang}" --version | sed -n '1p')"
@@ -388,6 +472,13 @@ clang_version="$("${llvm_clang}" --version | sed -n '1p')"
   printf '5. left/center/right 已合并，不生成重复 current-row 预取。\n\n'
   printf '6. `SME_PREFETCH_MAX_STREAMS=0` 时 8 个候选均以'
   printf ' `StreamBudgetReject` 拒绝，且不插入 intrinsic。\n\n'
+  printf '7. `apple-m5` Profile 只保留 2 条 3D plane-L1 STRM，'
+  printf '距离为 1；2D、row 和 plane-L2 均关闭。\n\n'
+  printf '8. 零容量、零指令预算和零字节预算分别覆盖'
+  printf ' `CapacityReject`、`InstructionBudgetReject` 和'
+  printf ' `BandwidthReject`，均不插入 intrinsic。\n\n'
+  printf '9. 固定短 width 的真实 2D stencil 以 assumed VL 估算为'
+  printf ' 2 次向量迭代，两条候选均以 `ShortTripCount` 拒绝。\n\n'
   printf '## 端到端编译\n\n'
   printf '1. 修改后 IR 成功降为 8 条 `PRFM/PRFUM`：'
   printf '4 条 L1 KEEP、2 条 L1 STRM、2 条 L2 KEEP。\n'
@@ -405,5 +496,6 @@ printf 'Report: %s\n' "${report}"
 printf 'Recognition report: %s\n' "${recognition_report}"
 printf 'Decision report: %s\n' "${decision_report}"
 printf 'Assembly: %s\n' "${lowered_assembly}"
+printf 'Apple M5 assembly: %s\n' "${apple_m5_assembly}"
 printf 'Matched IR baseline assembly: %s\n' "${ir_baseline_assembly}"
 printf 'Direct C assembly: %s\n' "${direct_assembly}"

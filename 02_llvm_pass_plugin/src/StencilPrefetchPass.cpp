@@ -54,7 +54,17 @@ bool applyUnsignedEnvironmentOverride(const char *Name, T &Value) {
 }
 
 sme1::TargetPrefetchProfile getActiveProfile() {
-  sme1::TargetPrefetchProfile Profile = sme1::getDefaultPrefetchProfile();
+  const char *RequestedProfile = std::getenv("SME_PREFETCH_PROFILE");
+  sme1::TargetPrefetchProfile Profile;
+  if (!RequestedProfile || StringRef(RequestedProfile) == "generic-sme") {
+    Profile = sme1::getDefaultPrefetchProfile();
+  } else if (StringRef(RequestedProfile) == "apple-m5") {
+    Profile = sme1::getAppleM5PrefetchProfile();
+  } else {
+    errs() << "StencilPrefetchProfile: unknown SME_PREFETCH_PROFILE="
+           << RequestedProfile << ", using generic-sme\n";
+    Profile = sme1::getDefaultPrefetchProfile();
+  }
   bool Overridden = false;
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_MAX_STREAMS", Profile.MaxPrefetchStreams);
@@ -63,6 +73,10 @@ sme1::TargetPrefetchProfile getActiveProfile() {
       Profile.MaxPrefetchInstructionsPerIteration);
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_MAX_BYTES", Profile.MaxPrefetchBytesPerIteration);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_L1_CAPACITY_BYTES", Profile.L1CapacityBytes);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_L2_CAPACITY_BYTES", Profile.L2CapacityBytes);
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_USEFUL_CYCLES_2D", Profile.UsefulCycles2D);
   Overridden |= applyUnsignedEnvironmentOverride(

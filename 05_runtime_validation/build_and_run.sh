@@ -7,6 +7,7 @@ build_dir="${script_dir}/build"
 output_dir="${script_dir}/output"
 
 runtime_clang="${RUNTIME_CLANG:-/usr/bin/clang}"
+runtime_profile="${SME_RUNTIME_PROFILE:-generic-sme}"
 
 mkdir -p "${build_dir}" "${output_dir}"
 "${repo_root}/02_llvm_pass_plugin/build_and_test.sh" >/dev/null
@@ -26,13 +27,30 @@ fi
   -c "${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.ir-baseline.s" \
   -o "${build_dir}/stencil_kernels.baseline.o"
 
+case "${runtime_profile}" in
+  generic-sme)
+    prefetch_assembly="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.s"
+    ;;
+  apple-m5)
+    prefetch_assembly="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.apple-m5.s"
+    ;;
+  *)
+    printf 'unsupported SME_RUNTIME_PROFILE: %s\n' "${runtime_profile}" >&2
+    exit 2
+    ;;
+esac
+
 "${runtime_clang}" "${kernel_assembly_flags[@]}" \
-  -c "${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.s" \
+  -c "${prefetch_assembly}" \
   -o "${build_dir}/stencil_kernels.prefetch.o"
 
 "${runtime_clang}" "${host_flags[@]}" \
   -c "${script_dir}/stencil_correctness.c" \
   -o "${build_dir}/stencil_correctness.o"
+
+"${runtime_clang}" "${kernel_assembly_flags[@]}" \
+  "${script_dir}/sme_runtime_info.c" \
+  -o "${build_dir}/sme_runtime_info"
 
 "${runtime_clang}" "${host_flags[@]}" \
   "${build_dir}/stencil_kernels.baseline.o" \
@@ -54,6 +72,14 @@ elif [[ "$(sysctl -n hw.optional.arm.FEAT_SME 2>/dev/null || true)" == "1" ]]; t
 fi
 
 if [[ "${run_enabled}" == "1" ]]; then
+  "${build_dir}/sme_runtime_info" \
+    > "${output_dir}/runtime_info.log"
+  actual_streaming_vl="$(sed -n \
+    's/^streaming_vl_bytes=//p' "${output_dir}/runtime_info.log")"
+  if [[ -z "${actual_streaming_vl}" ]]; then
+    printf 'failed to read streaming VL\n' >&2
+    exit 1
+  fi
   "${build_dir}/stencil_correctness.baseline" \
     > "${output_dir}/baseline_run.log"
   "${build_dir}/stencil_correctness.prefetch" \
@@ -63,6 +89,7 @@ if [[ "${run_enabled}" == "1" ]]; then
 else
   result="BUILD_ONLY"
   detail="host has no detected SME execution support; run on SME hardware"
+  actual_streaming_vl="not-executed"
 fi
 
 {
@@ -73,11 +100,14 @@ fi
   printf -- '- 运行平台：`%s %s`（Apple M5，SME/SME2）\n' \
     "$(uname -s)" "$(uname -m)"
   printf -- '- 运行编译器：`%s`\n' "${runtime_clang_version}"
+  printf -- '- 实际 streaming VL：`%s` B\n' "${actual_streaming_vl}"
+  printf -- '- 预取 Profile：`%s`\n' "${runtime_profile}"
   printf -- '- 基线 kernel：步骤 4 同输入/同优化管线生成的无插件汇编\n'
-  printf -- '- 预取 kernel：步骤 4 生成的 `stencil_sme_kernels.s`\n'
+  printf -- '- 预取 kernel：`%s`\n' "$(basename "${prefetch_assembly}")"
   printf -- '- 基线二进制：`../build/stencil_correctness.baseline`\n'
   printf -- '- 预取二进制：`../build/stencil_correctness.prefetch`\n\n'
-  printf '测试覆盖 2D/3D 空内部区域、最小合法尺寸、非规则宽度和较大尾部 case。'
+  printf '测试覆盖 2D/3D 空内部区域、最小合法尺寸、非规则宽度、尾部和'
+  printf '首尾 guard page。'
   printf '在 SME 机器上运行时，两个二进制都必须与标量参考逐元素一致。\n'
 } > "${output_dir}/correctness_report.md"
 

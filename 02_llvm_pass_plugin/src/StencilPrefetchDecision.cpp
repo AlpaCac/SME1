@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 
 using namespace llvm;
 
@@ -73,6 +74,32 @@ unsigned usefulCycles(const TargetPrefetchProfile &Profile,
                                           : Profile.UsefulCycles3D;
 }
 
+unsigned estimatedTripCount(const StencilInfo &Stencil, ScalarEvolution &SE,
+                            const TargetPrefetchProfile &Profile) {
+  unsigned TripCount = SE.getSmallConstantTripCount(Stencil.InnerLoop);
+  if (TripCount != 0)
+    return TripCount;
+
+  auto *WhileLo = dyn_cast<CallBase>(Stencil.Predicate);
+  auto *Induction = dyn_cast<PHINode>(Stencil.Induction);
+  BasicBlock *Preheader = Stencil.InnerLoop->getLoopPreheader();
+  if (!WhileLo || WhileLo->arg_size() < 2 || !Induction || !Preheader)
+    return 0;
+
+  auto *Upper = dyn_cast<ConstantInt>(WhileLo->getArgOperand(1));
+  auto *Start =
+      dyn_cast<ConstantInt>(Induction->getIncomingValueForBlock(Preheader));
+  if (!Upper || !Start || Upper->getValue().ule(Start->getValue()))
+    return 0;
+
+  uint64_t ElementsPerVector =
+      std::max<uint64_t>(1, Profile.AssumedStreamingVLBytes / sizeof(float));
+  uint64_t Span = Upper->getZExtValue() - Start->getZExtValue();
+  uint64_t Estimated = divideCeil(Span, ElementsPerVector);
+  return static_cast<unsigned>(
+      std::min<uint64_t>(Estimated, std::numeric_limits<unsigned>::max()));
+}
+
 PrefetchDecision makeDecision(const StencilInfo &Stencil,
                               const StreamInfo &Stream, CacheLevel Level,
                               ScalarEvolution &SE,
@@ -83,7 +110,7 @@ PrefetchDecision makeDecision(const StencilInfo &Stencil,
 
   unsigned Cycles = std::max(1U, usefulCycles(Profile, Stencil.Kind));
   unsigned RawDistance = divideCeil(latencyFor(Profile, Level), Cycles);
-  unsigned TripCount = SE.getSmallConstantTripCount(Stencil.InnerLoop);
+  unsigned TripCount = estimatedTripCount(Stencil, SE, Profile);
   if (TripCount != 0 && TripCount <= 2 * RawDistance) {
     Decision.Reason = DecisionReason::ShortTripCount;
     return Decision;
@@ -138,6 +165,19 @@ CallBase *findFirstLoad(const StencilInfo &Stencil) {
 
 const TargetPrefetchProfile &getDefaultPrefetchProfile() {
   static const TargetPrefetchProfile Profile;
+  return Profile;
+}
+
+const TargetPrefetchProfile &getAppleM5PrefetchProfile() {
+  static const TargetPrefetchProfile Profile = [] {
+    TargetPrefetchProfile Result;
+    Result.Name = "apple-m5";
+    Result.UsefulCycles3D = 32;
+    Result.EnableRowL1 = false;
+    Result.EnablePlaneL1 = true;
+    Result.EnablePlaneL2 = false;
+    return Result;
+  }();
   return Profile;
 }
 

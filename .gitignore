@@ -11,3 +11,5 @@ __pycache__/
 /stencil_sme_kernels.s
 /stencil_benchmark
 /05_runtime_validation/output/pmu_*/
+/05_runtime_validation/output/profile_sweep_*.log
+/05_runtime_validation/output/threaded_*.log

@@ -6,6 +6,7 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 build_dir="${script_dir}/build"
 output_dir="${script_dir}/output"
 runtime_clang="${RUNTIME_CLANG:-/usr/bin/clang}"
+runtime_profile="${SME_RUNTIME_PROFILE:-generic-sme}"
 
 FORCE_SME_RUN="${FORCE_SME_RUN:-0}" \
   "${script_dir}/build_and_run.sh" >/dev/null
@@ -24,7 +25,18 @@ if [[ "${run_enabled}" != "1" ]]; then
 fi
 
 baseline_source="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.ir-baseline.s"
-prefetch_source="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.s"
+case "${runtime_profile}" in
+  generic-sme)
+    prefetch_source="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.s"
+    ;;
+  apple-m5)
+    prefetch_source="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.apple-m5.s"
+    ;;
+  *)
+    printf 'unsupported SME_RUNTIME_PROFILE: %s\n' "${runtime_profile}" >&2
+    exit 2
+    ;;
+esac
 baseline_renamed="${build_dir}/stencil_kernels.baseline-renamed.s"
 prefetch_renamed="${build_dir}/stencil_kernels.prefetch-renamed.s"
 
@@ -135,6 +147,7 @@ range_3d="$(range "${speedups_3d[@]}")"
   printf -- '- 平台：`%s %s`（Apple M5，SME/SME2）\n' \
     "$(uname -s)" "$(uname -m)"
   printf -- '- 方法：同一进程链接基线/预取函数，奇偶样本交换执行顺序\n'
+  printf -- '- 预取 Profile：`%s`\n' "${runtime_profile}"
   printf -- '- 重复次数/样本数/外层轮数：`%s / %s / %s`\n' \
     "${repetitions}" "${samples}" "${rounds}"
   printf -- '- 2D 配对加速比：中位数 `%sx`，轮间范围 `%sx`\n' \

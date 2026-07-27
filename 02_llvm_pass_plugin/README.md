@@ -103,6 +103,8 @@ current-row 默认关闭，避免与硬件连续流预取重复。候选依次�
 | `SME_PREFETCH_MAX_STREAMS` | 独立预取流预算 |
 | `SME_PREFETCH_MAX_INSTRUCTIONS` | 每次最内层迭代的预取指令预算 |
 | `SME_PREFETCH_MAX_BYTES` | 每次最内层迭代的预取字节预算 |
+| `SME_PREFETCH_L1_CAPACITY_BYTES` | L1 容量模型输入 |
+| `SME_PREFETCH_L2_CAPACITY_BYTES` | L2 容量模型输入 |
 | `SME_PREFETCH_USEFUL_CYCLES_2D` | 2D 距离模型的单次迭代有效周期 |
 | `SME_PREFETCH_USEFUL_CYCLES_3D` | 3D 距离模型的单次迭代有效周期 |
 | `SME_PREFETCH_ENABLE_ROW_L1` | 是否生成跨行 L1 候选 |
@@ -115,6 +117,21 @@ current-row 默认关闭，避免与硬件连续流预取重复。候选依次�
 `StreamBudgetReject` 拒绝，且 IR 中不产生预取 call。
 `build_and_test.sh` 会先清理调用者环境中的覆盖，保证默认回归可复现；
 内置拒绝用例只对单个 Clang 进程设置零预算。
+自动回归分别覆盖 `StreamBudgetReject`、`CapacityReject`、
+`InstructionBudgetReject`、`BandwidthReject` 和 `ShortTripCount`。
+由于 `cntsw` 是运行时值，短循环测试在上界为常量时使用 Profile 的
+assumed streaming VL 估算向量迭代数，而不要求 SCEV 推导动态 VL。
+
+Apple M5 的稳定候选已固化为命名 Profile：
+
+```bash
+SME_PREFETCH_PROFILE=apple-m5 clang \
+  -fpass-plugin=./StencilPrefetchPass.dylib ...
+```
+
+该 Profile 关闭 2D/3D row-L1 和 3D plane-L2，只保留两条 3D
+plane-L1 STRM，距离为 1。`generic-sme` 仍是默认值，避免 LLVM 18
+无法准确识别 M5 时把 M5 参数静默用于其他 SME CPU。
 
 步骤 4 的自动测试还会把 intrinsic 降为 AArch64 汇编，从原始 C 直接
 加载插件编译，并对已插入 IR 再运行一次 pass。当前验收结果为 8 条

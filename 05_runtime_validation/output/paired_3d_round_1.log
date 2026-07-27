@@ -1,1 +1,1 @@
-kernel=3d elements=16777216 samples=9 baseline_gups=1.485810 prefetch_gups=1.523677 paired_speedup=1.030648 baseline_checksum=1.289062500 prefetch_checksum=1.289062500
+kernel=3d elements=16777216 samples=9 baseline_gups=1.142731 prefetch_gups=1.170915 paired_speedup=1.028268 baseline_checksum=1.289062500 prefetch_checksum=1.289062500

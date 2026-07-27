@@ -1160,6 +1160,8 @@ Apple M5 的 `hw.optional.arm.FEAT_SME` 和 `FEAT_SME2` 均为 1，但机器
 因此步骤 5 的预取版本直接组装步骤 4 已验证的
 `stencil_sme_kernels.s`，基线则由支持该组合的系统 Clang 编译。这样
 实际执行的是 pass 插入预取后的汇编，同时不把普通 SVE 引入调用者。
+locally-streaming `svcntb()` 探针实测 M5 streaming VL 为 64 B，与
+`apple-m5` Profile 的 `AssumedStreamingVLBytes=64` 一致。
 
 #### 5.3 数值和地址安全验证
 
@@ -1178,8 +1180,11 @@ Apple M5 的 `hw.optional.arm.FEAT_SME` 和 `FEAT_SME2` 均为 1，但机器
 
 当前 `05_runtime_validation/build_and_run.sh` 已在 Apple M5 上完成标量
 参考逐元素比较、空内部区域、最小尺寸、非规则宽度和尾部验证；无预取
-基线与步骤 4 生成的预取版本均通过。guard page 和 sanitizer 仍待补充。
-当前结果只证明已覆盖 case 的语义与地址安全，不代表预取已有性能收益。
+基线与步骤 4 生成的预取版本均通过。输入、输出和标量参考缓冲区分别
+贴近前后 `PROT_NONE` guard page 执行，真实 load/store 未越界。
+AArch64 `PRFM` 通常是非故障型提示，因此 guard page 和 ASan 不能代替
+IR 中未来地址 guard、非 `inbounds` GEP 与 verifier 检查。当前结果只
+证明已覆盖 case 的语义与计算访存安全，不代表预取已有性能收益。
 
 #### 5.4 分层性能实验
 
@@ -1217,17 +1222,23 @@ row 流策略。每次更新 Profile 后重新运行步骤 4 的结构与编译�
 并用 `SME_PREFETCH_ENABLE_ROW_L1`、`SME_PREFETCH_ENABLE_PLANE_L1`
 和 `SME_PREFETCH_ENABLE_PLANE_L2` 独立消融候选类别；预算也可通过
 `SME_PREFETCH_MAX_STREAMS/MAX_INSTRUCTIONS/MAX_BYTES` 覆盖。环境变量
-只服务于步骤 5 的离线实验，最终选定值应回写为命名的 Apple M5 Profile，
-不能依赖部署环境临时决定。
+只服务于步骤 5 的离线实验。选定参数已经回写为命名的 `apple-m5`
+Profile：关闭 row-L1 和 plane-L2，仅保留 3D front/back plane-L1
+STRM，距离为 1。LLVM 18 不能从当前函数的 `target-cpu=apple-m1`
+准确识别 M5，因此编译时通过 `SME_PREFETCH_PROFILE=apple-m5` 显式选择；
+该变量只选择固定 Profile，不在编译时重新训练或调参。
 
-当前 Apple M5、约 64 MiB 输入的同进程配对测试使用 9 个交替顺序样本和
-3 个外层轮次：2D5P 配对加速比中位数 `1.007x`，轮间范围
-`0.991-1.009x`；3D7P 中位数 `1.010x`，范围 `1.004-1.031x`。基线与
-预取版本来自同一 LLVM 18 输入 IR 和 `-O1` 管线，唯一变量是是否运行
-预取 pass。2D 应视为中性，3D 有约 1% 正向趋势但仍不足以宣称稳定优化。
-后续 Profile 搜索必须将 2D 与 3D 分开：2D 验证关闭或调整两条跨行 L1
-KEEP；3D 分别消融跨行 L1、跨平面 L1 STRM 和跨平面 L2 KEEP，并结合
-PMU 判断时机、cache 污染和额外指令开销。
+距离与跨尺寸扫描表明，2D row-L1 对 row 大小敏感：1 KiB row 没有收益，
+16 KiB row 才出现约 2% 正向结果，而当前 kernel 的 width 是运行时参数，
+无法安全选择单一静态距离，因此 `apple-m5` Profile 暂时关闭 2D 软件
+预取。3D plane-L1 STRM distance 1 在 64/128/256 KiB plane 上分别约为
+`1.026x/1.026x/1.021x`，是当前最稳定的组合。
+
+命名 Profile 的最终同进程配对测试使用 9 个交替顺序样本和 3 个外层
+轮次：2D5P 中位数 `1.004x`，视为无预取噪声；3D7P 中位数 `1.028x`，
+轮间范围 `1.017-1.031x`。基线与预取版本来自同一 LLVM 18 输入 IR 和
+`-O1` 管线，唯一变量是是否运行 `apple-m5` 预取决策。该结果已跨三种
+plane 大小复现，但仍需 PMU 判断 cache miss、带宽和额外指令变化。
 
 首轮类别消融中，3D 的 `row-only` 和 `no-plane-L1` 约为
 `0.92x/0.91x`，而默认、`no-row`、`no-plane-L2` 均约为 `1.00x`。
@@ -1239,7 +1250,30 @@ PMU 判断时机、cache 污染和额外指令开销。
 Apple M5 上已验证 Xcode `CPU Counters` 能对 SME 基准成功生成 trace，
 且导出表包含 SME streaming 和 L1D miss sampling 的计数模式。默认
 `CPU Counters` 模板实际导出的是 processing/delivery/discarded 等模型化
-瓶颈采样，不是可直接相减的 L1D/L2 miss 总数。因此仓库提供
-`collect_cpu_counters.sh` 保存 trace 与 XML，但最终 cache-miss 归因仍需
-在 Instruments 中配置原始事件并保存自定义模板，再对基线与预取版本使用
-完全相同模板采集。
+瓶颈采样，不是可直接相减的 L1D/L2 miss 总数。现已在 Instruments 中建立
+`SME Stencil Cache Counters` 手动模板，包含
+`ARM_L1D_CACHE_RD`、`ARM_L1D_CACHE_LMISS_RD`、`PL2_CACHE_ACCESS` 和
+`PL2_CACHE_MISS_LD`。`collect_cpu_counters.sh` 导出 `counters-profile`
+并解析 XML 引用，只累加目标进程的四个事件；`run_cpu_counter_comparison.sh`
+以奇偶轮交换顺序采集基线和预取版本，生成 PMU 对比报告。
+
+这里得到的是 1 ms 归因采样增量，不是精确的全程序架构计数。它会受到
+线程迁核、采样窗口和 PMU 复用影响，因此只能在模板、问题规模和重复参数
+完全相同时用于相对归因，并与同进程配对墙钟结果共同判断。
+
+当前 3D 三轮采集中，预取/基线的 PL2 access 中位数比值为 `12.25x`
+（逐轮 `8.59-16.27x`），PL2 load miss 为 `50.85x`
+（逐轮 `30.09-55.65x`），增长方向稳定。L1D read 和 long-latency miss
+中位数比值约为 `0.91x/0.89x`，但逐轮范围分别为
+`0.40-1.89x/0.42-1.78x`，不能据此断言 L1 miss 已稳定下降。结合
+3D 配对墙钟 `1.028x`，当前 Profile 的含义是以显著增加 PL2 请求为代价
+换取小幅单核收益；在多线程、共享缓存或带宽已饱和场景中，它可能转为
+负收益，因此进入这些场景前不能把 `apple-m5` Profile 视为普适最优解。
+
+为验证这一风险，`run_threaded_benchmark.sh` 使用 1/2/4/8 个线程分别
+处理独立的 `256x32x1024` 网格，每轮在同一进程中交替执行基线和预取。
+8 次重复、9 个样本、3 个外层轮次得到的配对中位数依次为
+`1.043x/1.107x/1.114x/1.095x`，各轮范围均高于 `1.0`。这说明当前
+Apple M5 上，额外 PL2 流量在最多 8 个独立 stencil 工作线程下尚未抵消
+收益。不过该测试没有 halo 交换、NUMA、线程亲和性控制或多算子竞争，
+因此只消除了“简单并发一定负收益”的疑虑，不能替代真实应用验证。

@@ -28,6 +28,12 @@
 
 6. `SME_PREFETCH_MAX_STREAMS=0` 时 8 个候选均以 `StreamBudgetReject` 拒绝，且不插入 intrinsic。
 
+7. `apple-m5` Profile 只保留 2 条 3D plane-L1 STRM，距离为 1；2D、row 和 plane-L2 均关闭。
+
+8. 零容量、零指令预算和零字节预算分别覆盖 `CapacityReject`、`InstructionBudgetReject` 和 `BandwidthReject`，均不插入 intrinsic。
+
+9. 固定短 width 的真实 2D stencil 以 assumed VL 估算为 2 次向量迭代，两条候选均以 `ShortTripCount` 拒绝。
+
 ## 端到端编译
 
 1. 修改后 IR 成功降为 8 条 `PRFM/PRFUM`：4 条 L1 KEEP、2 条 L1 STRM、2 条 L2 KEEP。

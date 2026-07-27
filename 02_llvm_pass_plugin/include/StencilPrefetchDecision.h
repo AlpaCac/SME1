@@ -73,6 +73,7 @@ struct PrefetchDecision {
 };
 
 const TargetPrefetchProfile &getDefaultPrefetchProfile();
+const TargetPrefetchProfile &getAppleM5PrefetchProfile();
 
 llvm::SmallVector<PrefetchDecision, 8>
 decidePrefetches(const StencilInfo &Stencil, llvm::ScalarEvolution &SE,
