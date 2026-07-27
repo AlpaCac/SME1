@@ -1,5 +1,45 @@
 # 步骤 5：运行时正确性与性能验证
 
+## 目录结构与文件说明
+
+### 顶层文件
+
+| 文件 | 作用 |
+|---|---|
+| `README.md` | 说明步骤 5 的验证目标、运行方法、文件结构和当前实验结论。 |
+| `build_and_run.sh` | 正确性验证主入口。组装步骤 4 生成的基线/预取汇编，构建测试程序，探测 SME 和 streaming VL，并运行 2D5P/3D7P 正确性测试。 |
+| `run_benchmark.sh` | 分别启动基线和预取可执行文件，建立初始独立进程墙钟性能基线。 |
+| `run_paired_benchmark.sh` | 将基线与预取 kernel 链接到同一进程，交替执行并计算配对加速比，降低启动、温度和调度漂移。 |
+| `run_profile_sweep.sh` | 扫描 2D row-L1 和 3D plane-L1 的预取距离，并跨 row/plane 大小复测候选参数。 |
+| `run_ablation.sh` | 分别关闭或只保留 row、plane-L1、plane-L2 预取，判断每一类预取的独立贡献。 |
+| `collect_cpu_counters.sh` | 使用 Xcode `xctrace` 对一个基线或预取程序采集 CPU Counters，导出 XML 并累加目标进程事件。 |
+| `run_cpu_counter_comparison.sh` | 交替采集基线和预取版本的 L1D/PL2 事件，汇总多轮 PMU 相对变化。 |
+| `run_threaded_benchmark.sh` | 运行 1/2/4/8 个独立 3D7P 网格的多线程配对测试，检查共享 cache 和内存带宽竞争下的预取收益。 |
+| `stencil_correctness.c` | 标量参考与正确性驱动，覆盖空内部区域、最小尺寸、不规则宽度、谓词尾部和前后 guard page。 |
+| `stencil_benchmark.c` | 独立进程 2D5P/3D7P 墙钟基准驱动，输出中位时间、GUP/s 和 checksum。 |
+| `stencil_paired_benchmark.c` | 同一进程内的基线/预取配对驱动，奇偶样本交换执行顺序。 |
+| `stencil_threaded_benchmark.c` | pthread 多线程 3D7P 配对驱动，每个线程使用独立输入输出网格。 |
+| `sme_runtime_info.c` | 在 locally-streaming 函数中调用 `svcntb()`，读取目标机实际 SME streaming vector length。 |
+
+### 生成目录与报告
+
+| 路径 | 作用 |
+|---|---|
+| `build/` | 本地构建目录，包含对象文件、重命名汇编、LLVM IR 和测试可执行文件；由脚本重新生成，不提交到仓库。 |
+| `output/correctness_report.md` | Apple M5 数值正确性、编译器、Profile、streaming VL 和 guard-page 覆盖结果。 |
+| `output/benchmark_report.md` | 独立进程初始墙钟性能结果。 |
+| `output/paired_benchmark_report.md` | 单进程配对性能中位数和轮间范围，是当前单线程性能判断的主要依据。 |
+| `output/profile_sweep_report.md` | 2D/3D 距离扫描和跨尺寸复测结果。 |
+| `output/ablation_report.md` | row、plane-L1、plane-L2 类别消融结果。 |
+| `output/pmu_comparison_report.md` | Apple M5 L1D/PL2 原始归因采样的基线/预取对比。 |
+| `output/threaded_benchmark_report.md` | 1/2/4/8 线程独立网格的配对性能结果。 |
+| `output/runtime_info.log` | 目标机 SME feature 和实际 streaming VL 探测结果。 |
+| `output/*.log` | 各次正确性、性能和消融运行的原始文本输出；汇总报告由这些日志生成。 |
+| `output/pmu_*/` | Instruments trace、TOC、原始 XML 和计数器累加值；文件较大，仅保存在本地，不提交到仓库。 |
+
+除 README 外，顶层 `.sh` 文件是实验入口，顶层 `.c` 文件是对应的测试
+驱动。通常不应手工修改 `build/` 内容；重新运行相应脚本即可重建。
+
 步骤 4 已完成预取 pass。本目录提供真实 SME 机器上的数值正确性入口：
 
 ```bash
