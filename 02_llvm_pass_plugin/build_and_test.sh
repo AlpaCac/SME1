@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep the regression baseline deterministic even when the caller previously
+# exported an experiment profile.
+unset SME_PREFETCH_MAX_STREAMS
+unset SME_PREFETCH_MAX_INSTRUCTIONS
+unset SME_PREFETCH_MAX_BYTES
+unset SME_PREFETCH_USEFUL_CYCLES_2D
+unset SME_PREFETCH_USEFUL_CYCLES_3D
+unset SME_PREFETCH_ENABLE_ROW_L1
+unset SME_PREFETCH_ENABLE_PLANE_L1
+unset SME_PREFETCH_ENABLE_PLANE_L2
+
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 workspace_root="$(cd "${repo_root}/.." && pwd)"
@@ -64,6 +75,17 @@ malformed_after_ir="${build_dir}/malformed_2d.after.ll"
 malformed_log="${output_dir}/malformed_run.log"
 recognition_report="${output_dir}/stencil_recognition_report.md"
 decision_report="${output_dir}/stencil_prefetch_decision_report.md"
+lowered_assembly="${output_dir}/stencil_sme_kernels.s"
+ir_baseline="${build_dir}/stencil_sme_kernels.baseline.ll"
+ir_baseline_assembly="${output_dir}/stencil_sme_kernels.ir-baseline.s"
+direct_assembly="${output_dir}/stencil_sme_kernels.direct.s"
+baseline_assembly="${output_dir}/stencil_sme_kernels.baseline.s"
+direct_ir="${build_dir}/stencil_sme_kernels.direct.ll"
+idempotent_ir="${build_dir}/stencil_sme_kernels.idempotent.ll"
+direct_log="${output_dir}/direct_compile.log"
+idempotency_log="${output_dir}/idempotency_run.log"
+budget_reject_ir="${build_dir}/budget_reject.after.ll"
+budget_reject_log="${output_dir}/budget_reject_run.log"
 
 # Apple Clang 21 emits two textual IR additions that LLVM 18 cannot parse.
 # Removing them changes neither the pointer data flow nor the loop structure.
@@ -194,9 +216,108 @@ if [[ "$(grep -c '^StencilDecision:' "${malformed_log}")" -ne 6 ]] ||
   exit 1
 fi
 
+# Step 4 ends with backend and direct-Clang integration checks. First verify
+# that the inserted intrinsic survives IR round-trip and lowers as expected.
+"${llvm_clang}" \
+  -x ir -O1 -S -emit-llvm -Wno-override-module \
+  "${compat_ir}" \
+  -o "${ir_baseline}"
+
+"${llvm_clang}" \
+  -x ir -O1 -S -Wno-override-module \
+  "${ir_baseline}" \
+  -o "${ir_baseline_assembly}"
+
+"${llvm_clang}" \
+  -x ir -O1 -S -Wno-override-module \
+  "${after_ir}" \
+  -o "${lowered_assembly}"
+
+if grep -Eq '^[[:space:]]*prf(m|um)[[:space:]]' "${ir_baseline_assembly}"; then
+  printf 'IR baseline unexpectedly contains software prefetch\n' >&2
+  exit 1
+fi
+[[ "$(grep -Ec '^[[:space:]]*prf(m|um)[[:space:]]' "${lowered_assembly}")" -eq 8 ]]
+[[ "$(grep -c 'pldl1keep' "${lowered_assembly}")" -eq 4 ]]
+[[ "$(grep -c 'pldl1strm' "${lowered_assembly}")" -eq 2 ]]
+[[ "$(grep -c 'pldl2keep' "${lowered_assembly}")" -eq 2 ]]
+if grep -Eq 'pldl2strm|pldl3(keep|strm)' "${lowered_assembly}"; then
+  printf 'unexpected prefetch level or policy in lowered assembly\n' >&2
+  exit 1
+fi
+[[ "$(grep -Ec '^[[:space:]]*smstart[[:space:]]+sm' "${lowered_assembly}")" -eq 2 ]]
+[[ "$(grep -Ec '^[[:space:]]*smstop[[:space:]]+sm' "${lowered_assembly}")" -eq 2 ]]
+grep -q 'whilelo' "${lowered_assembly}"
+grep -q 'ld1w' "${lowered_assembly}"
+grep -q 'st1w' "${lowered_assembly}"
+
+# LLVM 18 still uses the draft SME resource-header name. The test-only include
+# redirects <arm_sme.h> without changing the original C kernel.
+direct_flags=(
+  -O1
+  -march=armv9.2-a+sme+sve2
+  -I "${script_dir}/tests/include"
+)
+
+"${llvm_clang}" "${direct_flags[@]}" \
+  -fpass-plugin="${plugin}" \
+  -S -emit-llvm "${repo_root}/stencil_sme_kernels.c" \
+  -o "${direct_ir}" \
+  2> "${build_dir}/direct_ir.log"
+
+"${llvm_clang}" "${direct_flags[@]}" \
+  -fpass-plugin="${plugin}" \
+  -S "${repo_root}/stencil_sme_kernels.c" \
+  -o "${direct_assembly}" \
+  2> "${direct_log}"
+
+"${llvm_clang}" "${direct_flags[@]}" \
+  -S "${repo_root}/stencil_sme_kernels.c" \
+  -o "${baseline_assembly}"
+
+[[ "$(grep -c 'call void @llvm.aarch64.prefetch' "${direct_ir}")" -eq 8 ]]
+[[ "$(grep -Ec 'pldl[123](keep|strm)' "${direct_assembly}")" -eq 8 ]]
+if grep -Eq 'pldl[123](keep|strm)' "${baseline_assembly}"; then
+  printf 'plugin-off baseline unexpectedly contains software prefetch\n' >&2
+  exit 1
+fi
+[[ "$(grep -c '^StencilDecision:' "${direct_log}")" -eq 8 ]]
+
+# Re-running the plugin must leave the existing eight calls unchanged.
+"${llvm_clang}" \
+  -x ir -O1 -S -emit-llvm -Wno-override-module \
+  -fpass-plugin="${plugin}" \
+  "${direct_ir}" \
+  -o "${idempotent_ir}" \
+  2> "${idempotency_log}"
+
+[[ "$(grep -c 'call void @llvm.aarch64.prefetch' "${idempotent_ir}")" -eq 8 ]]
+[[ "$(grep -c 'status=AlreadyPrefetched' "${idempotency_log}")" -eq 2 ]]
+if grep -q '^StencilDecision:' "${idempotency_log}"; then
+  printf 'idempotency run made new prefetch decisions\n' >&2
+  exit 1
+fi
+
+# A zero stream budget must reject every otherwise valid candidate and insert
+# no intrinsic. This exercises a decision-model rejection, not recognition.
+SME_PREFETCH_MAX_STREAMS=0 "${llvm_clang}" \
+  -x ir -O1 -S -emit-llvm -Wno-override-module \
+  -fpass-plugin="${plugin}" \
+  "${compat_ir}" \
+  -o "${budget_reject_ir}" \
+  2> "${budget_reject_log}"
+
+[[ "$(grep -c '^StencilDecision:' "${budget_reject_log}")" -eq 8 ]]
+[[ "$(grep -c 'enable=no' "${budget_reject_log}")" -eq 8 ]]
+[[ "$(grep -c 'reason=StreamBudgetReject' "${budget_reject_log}")" -eq 8 ]]
+if grep -q 'call void @llvm.aarch64.prefetch' "${budget_reject_ir}"; then
+  printf 'zero stream budget unexpectedly inserted prefetches\n' >&2
+  exit 1
+fi
+
 plugin_name="$(basename "${plugin}")"
 llvm_version="$("${llvm_config}" --version)"
-clang_version="$("${llvm_clang}" --version | head -n 1)"
+clang_version="$("${llvm_clang}" --version | sed -n '1p')"
 
 {
   printf '# 步骤 2 LLVM pass 插件测试报告\n\n'
@@ -265,6 +386,15 @@ clang_version="$("${llvm_clang}" --version | head -n 1)"
   printf '3. 按距离合并 guard，仅在 `future_x < interior_end` 时执行预取。\n'
   printf '4. 未来地址使用非 `inbounds` GEP。\n'
   printf '5. left/center/right 已合并，不生成重复 current-row 预取。\n\n'
+  printf '6. `SME_PREFETCH_MAX_STREAMS=0` 时 8 个候选均以'
+  printf ' `StreamBudgetReject` 拒绝，且不插入 intrinsic。\n\n'
+  printf '## 端到端编译\n\n'
+  printf '1. 修改后 IR 成功降为 8 条 `PRFM/PRFUM`：'
+  printf '4 条 L1 KEEP、2 条 L1 STRM、2 条 L2 KEEP。\n'
+  printf '2. 原始 C 通过 `-fpass-plugin` 直接生成带预取汇编。\n'
+  printf '3. 不加载插件的基线汇编不含软件预取。\n'
+  printf '4. 对已插入 IR 再次运行插件仍为 8 条，两个函数报告'
+  printf ' `AlreadyPrefetched`。\n\n'
   printf '## 决策诊断\n\n```text\n'
   grep '^StencilDecision:' "${pass_log}"
   printf '```\n'
@@ -274,3 +404,6 @@ printf 'Plugin: %s\n' "${plugin}"
 printf 'Report: %s\n' "${report}"
 printf 'Recognition report: %s\n' "${recognition_report}"
 printf 'Decision report: %s\n' "${decision_report}"
+printf 'Assembly: %s\n' "${lowered_assembly}"
+printf 'Matched IR baseline assembly: %s\n' "${ir_baseline_assembly}"
+printf 'Direct C assembly: %s\n' "${direct_assembly}"

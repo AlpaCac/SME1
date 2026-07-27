@@ -1,0 +1,1 @@
+kernel=3d elements=16777216 samples=9 baseline_gups=1.586642 prefetch_gups=1.597466 paired_speedup=1.003892 baseline_checksum=1.289062500 prefetch_checksum=1.289062500

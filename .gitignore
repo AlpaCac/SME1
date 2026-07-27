@@ -6,6 +6,8 @@
 __pycache__/
 /build/
 /02_llvm_pass_plugin/build/
+/05_runtime_validation/build/
 /stencil_sme_kernels.ll
 /stencil_sme_kernels.s
 /stencil_benchmark
+/05_runtime_validation/output/pmu_*/

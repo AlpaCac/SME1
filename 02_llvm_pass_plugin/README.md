@@ -21,27 +21,28 @@
 | `output/negative_run.log` | 非 stencil 负例的 pass 输出 |
 | `output/malformed_run.log` | 保留 load 数但破坏 row stride 配对的负例输出 |
 | `output/stencil_sme_kernels.after.ll` | 插件插入预取后的 LLVM IR |
+| `output/stencil_sme_kernels.s` | 步骤 4 IR 经 AArch64 后端生成的汇编 |
+| `output/stencil_sme_kernels.direct.s` | 原始 C 直接加载插件生成的汇编 |
+| `output/stencil_sme_kernels.baseline.s` | 原始 C 不加载插件的汇编基线 |
+| `output/direct_compile.log` | 原始 C 直接编译时的决策诊断 |
+| `output/idempotency_run.log` | 对已插入 IR 再次运行 pass 的诊断 |
 | `tests/non_stencil.ll` | 名称以 `stencil_` 开头但不应被识别的负例 |
+| `tests/include/arm_sme.h` | LLVM 18 正式 SME 头文件名的测试转接 |
 
 ## Pass 边界
 
 `StencilPrefetchPass` 当前执行：
 
 1. 只处理名称以 `stencil_` 开头的非声明函数。
-2. 获取 `LoopAnalysis`。
-3. 获取 `ScalarEvolutionAnalysis`。
-4. 获取 `DominatorTreeAnalysis`。
-5. 获取 `TargetIRAnalysis`。
-6. 获取 `AssumptionAnalysis`。
-7. 在最内层循环中验证共同 `whilelo` 谓词、5/7 个 masked load 和 masked store。
-8. 验证 `x` PHI 按 `cntsw` 递增。
-9. 合并 left/center/right，并用相反 SCEV stride 分类 row/plane 流。
-10. 输出 2D5P/3D7P 与 3/5 条物理流。
-11. 按 `generic-sme` Profile 计算距离、层级、KEEP/STRM 和预算准入。
-12. 默认关闭 current-row，2D 预取 row 流，3D 预取 row 与 plane 流。
-13. 用 `future_x = x + distance * cntsw()` 构造非 `inbounds` GEP。
-14. 按距离合并条件保护，仅在 `future_x < interior_end` 时插入预取。
-15. 修改 IR 后返回 `PreservedAnalyses::none()`。
+2. 已存在 AArch64 预取时报告 `AlreadyPrefetched` 并保持 IR 不变。
+3. 获取 LoopInfo、ScalarEvolution、DominatorTree、TargetIR 和 AssumptionCache。
+4. 验证共同 `whilelo` 谓词、5/7 个 masked load、masked store 和 `cntsw` 步长。
+5. 合并 left/center/right，并用 SCEV 相反数分类 row/plane 流。
+6. 按 `generic-sme` Profile 计算距离、层级、KEEP/STRM 和预算准入。
+7. 默认关闭 current-row，2D 预取 row 流，3D 预取 row 与 plane 流。
+8. 用 `future_x = x + distance * cntsw()` 构造非 `inbounds` GEP。
+9. 按距离合并条件保护，仅在 `future_x < interior_end` 时插入预取。
+10. 修改 IR 后返回 `PreservedAnalyses::none()`。
 
 函数名前缀只用于限制 pass 处理范围，不参与 2D/3D 判断。真正的 stencil 类型由循环、谓词、load 数量、GEP 基址和 stride 关系共同决定。
 
@@ -94,6 +95,31 @@ current-row 默认关闭，避免与硬件连续流预取重复。候选依次�
 容量、独立流数量、每迭代指令数和预取字节预算；诊断输出包含每条流的
 输入、决策和拒绝原因。
 
+为步骤 5 的可复现实验提供以下环境变量覆盖；未设置时仍使用
+`generic-sme`，设置后诊断中的 Profile 名称变为 `environment-override`：
+
+| 变量 | 作用 |
+|---|---|
+| `SME_PREFETCH_MAX_STREAMS` | 独立预取流预算 |
+| `SME_PREFETCH_MAX_INSTRUCTIONS` | 每次最内层迭代的预取指令预算 |
+| `SME_PREFETCH_MAX_BYTES` | 每次最内层迭代的预取字节预算 |
+| `SME_PREFETCH_USEFUL_CYCLES_2D` | 2D 距离模型的单次迭代有效周期 |
+| `SME_PREFETCH_USEFUL_CYCLES_3D` | 3D 距离模型的单次迭代有效周期 |
+| `SME_PREFETCH_ENABLE_ROW_L1` | 是否生成跨行 L1 候选 |
+| `SME_PREFETCH_ENABLE_PLANE_L1` | 是否生成跨平面 L1 候选 |
+| `SME_PREFETCH_ENABLE_PLANE_L2` | 是否生成跨平面 L2 候选 |
+
+布尔开关以 `0` 表示关闭、非零表示开启。这些覆盖用于离线消融和回归，
+最终稳定参数仍应固化为目标 CPU Profile。自动测试以
+`SME_PREFETCH_MAX_STREAMS=0` 验证 8 个候选全部被
+`StreamBudgetReject` 拒绝，且 IR 中不产生预取 call。
+`build_and_test.sh` 会先清理调用者环境中的覆盖，保证默认回归可复现；
+内置拒绝用例只对单个 Clang 进程设置零预算。
+
+步骤 4 的自动测试还会把 intrinsic 降为 AArch64 汇编，从原始 C 直接
+加载插件编译，并对已插入 IR 再运行一次 pass。当前验收结果为 8 条
+`PRFM/PRFUM`，语义分布与默认决策一致，二次运行不会增加 call。
+
 ## 两种注册方式
 
 显式 pipeline：
@@ -143,3 +169,8 @@ LLVM_CLANG=/path/to/llvm-compatible/clang \
 2. `getelementptr inbounds nuw` 中的 GEP `nuw`
 
 测试脚本在 `build/` 中生成临时兼容 IR，只移除这两个文本属性，不改变循环、GEP 地址、masked load 或 SVE/SME intrinsic。正式环境应优先使用同一 LLVM 版本生成 IR、构建插件和加载插件。
+
+LLVM 18 的 SME ACLE 资源头仍使用
+`arm_sme_draft_spec_subject_to_change.h`。为了测试原始 C 直接编译，
+`tests/include/arm_sme.h` 只做文件名转接，不实现 builtin，也不修改
+kernel。升级到自带正式 `arm_sme.h` 的工具链后可删除该测试转接。

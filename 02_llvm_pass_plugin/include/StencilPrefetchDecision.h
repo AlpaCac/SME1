@@ -55,6 +55,9 @@ struct TargetPrefetchProfile {
   unsigned UsefulCycles2D = 8;
   unsigned UsefulCycles3D = 10;
   unsigned MaxDistance = 32;
+  bool EnableRowL1 = true;
+  bool EnablePlaneL1 = true;
+  bool EnablePlaneL2 = true;
 };
 
 struct PrefetchDecision {

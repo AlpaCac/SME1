@@ -15,7 +15,8 @@
 | `stencil预取优化实施方案.md` | 计算模型、预取类别、决策算法和 Clang/LLVM pass 实施步骤 |
 | `software_prefetch_sme_analysis.md` | SME stencil 软件读预取的背景与原理分析 |
 | `01_llvm_ir_analysis/` | 步骤 1：生成 LLVM IR 并自动验证循环、地址和向量访存结构 |
-| `02_llvm_pass_plugin/` | 步骤 2-3：LLVM 插件，以及 2D5P/3D7P 循环和物理流识别 |
+| `02_llvm_pass_plugin/` | 步骤 2-4：插件、stencil 识别、预取插入和端到端编译检查 |
+| `05_runtime_validation/` | 步骤 5：Apple M5 上的 SME 数值正确性与后续性能验证 |
 
 ## Kernel
 
@@ -97,7 +98,12 @@ clang -target arm64-apple-macos15 \
 1. 步骤 1：Clang LLVM IR 生成与可分析性检查，已完成。
 2. 步骤 2：LLVM new-pass-manager 插件，已完成。
 3. 步骤 3：识别 2D5P/3D7P 循环和物理流，已完成。
-4. 步骤 4：预取决策与安全地址构造，已完成。
-5. 步骤 5：intrinsic 参数与 AArch64 lowering 自动验收，尚未完成。
-6. 步骤 6：`-fpass-plugin` 基础接入已完成；幂等性和目标 Profile 接口尚未完成。
-7. 步骤 7：IR 正负例已有基础覆盖；数值与性能验收尚未完成。
+4. 步骤 4：预取决策、插入、AArch64 lowering、原始 C 直编和幂等检查，已完成。
+5. 步骤 5：Apple M5 数值正确性已通过；同进程配对测试为 2D
+   `1.007x`、3D `1.010x`。2D 基本中性，3D 有约 1% 正向趋势但尚不足以
+   固化 Profile；类别消融显示 3D 的 row-only 约 `0.92x`，不能单独启用。
+
+Apple M5 支持 SME/SME2，但不支持普通 SVE。运行时验证把 SME kernel 与
+普通 arm64 测试驱动分开编译，kernel 使用 `+nosve+sme`；不能把
+`+sve2` 全局应用到可执行程序。上面的 `+sme+sve2` 命令仅用于 LLVM 18
+前端的 IR/汇编验证。

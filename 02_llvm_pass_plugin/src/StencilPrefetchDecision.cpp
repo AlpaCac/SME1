@@ -156,9 +156,11 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
       Candidates.push_back(C);
     };
 
-    AddCandidate(CacheLevel::L1);
+    if ((isRowStream(Stream.Kind) && Profile.EnableRowL1) ||
+        (isPlaneStream(Stream.Kind) && Profile.EnablePlaneL1))
+      AddCandidate(CacheLevel::L1);
     if (Stencil.Kind == StencilKind::Stencil3D7P &&
-        isPlaneStream(Stream.Kind))
+        isPlaneStream(Stream.Kind) && Profile.EnablePlaneL2)
       AddCandidate(CacheLevel::L2);
   }
 

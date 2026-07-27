@@ -26,6 +26,15 @@
 4. 未来地址使用非 `inbounds` GEP。
 5. left/center/right 已合并，不生成重复 current-row 预取。
 
+6. `SME_PREFETCH_MAX_STREAMS=0` 时 8 个候选均以 `StreamBudgetReject` 拒绝，且不插入 intrinsic。
+
+## 端到端编译
+
+1. 修改后 IR 成功降为 8 条 `PRFM/PRFUM`：4 条 L1 KEEP、2 条 L1 STRM、2 条 L2 KEEP。
+2. 原始 C 通过 `-fpass-plugin` 直接生成带预取汇编。
+3. 不加载插件的基线汇编不含软件预取。
+4. 对已插入 IR 再次运行插件仍为 8 条，两个函数报告 `AlreadyPrefetched`。
+
 ## 决策诊断
 
 ```text
