@@ -1,4 +1,5 @@
 #include "StencilAnalysis.h"
+#include "StencilPrefetchDecision.h"
 
 #include "llvm/Analysis/AssumptionCache.h"
 #include "llvm/Analysis/LoopInfo.h"
@@ -12,6 +13,8 @@
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <cstdlib>
+
 using namespace llvm;
 
 namespace {
@@ -21,6 +24,85 @@ struct LoopSummary {
   unsigned Innermost = 0;
   unsigned ComputableTripCounts = 0;
 };
+
+bool hasAArch64Prefetch(const Function &F) {
+  for (const BasicBlock &BB : F) {
+    for (const Instruction &I : BB) {
+      const auto *Call = dyn_cast<CallBase>(&I);
+      const Function *Callee = Call ? Call->getCalledFunction() : nullptr;
+      if (Callee && Callee->getName() == "llvm.aarch64.prefetch")
+        return true;
+    }
+  }
+  return false;
+}
+
+template <typename T>
+bool applyUnsignedEnvironmentOverride(const char *Name, T &Value) {
+  const char *Raw = std::getenv(Name);
+  if (!Raw)
+    return false;
+
+  T Parsed = 0;
+  if (StringRef(Raw).getAsInteger(10, Parsed)) {
+    errs() << "StencilPrefetchProfile: invalid " << Name << "=" << Raw
+           << "\n";
+    return false;
+  }
+  Value = Parsed;
+  return true;
+}
+
+sme1::TargetPrefetchProfile getActiveProfile() {
+  const char *RequestedProfile = std::getenv("SME_PREFETCH_PROFILE");
+  sme1::TargetPrefetchProfile Profile;
+  if (!RequestedProfile || StringRef(RequestedProfile) == "generic-sme") {
+    Profile = sme1::getDefaultPrefetchProfile();
+  } else if (StringRef(RequestedProfile) == "apple-m5") {
+    Profile = sme1::getAppleM5PrefetchProfile();
+  } else {
+    errs() << "StencilPrefetchProfile: unknown SME_PREFETCH_PROFILE="
+           << RequestedProfile << ", using generic-sme\n";
+    Profile = sme1::getDefaultPrefetchProfile();
+  }
+  bool Overridden = false;
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MAX_STREAMS", Profile.MaxPrefetchStreams);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MAX_INSTRUCTIONS",
+      Profile.MaxPrefetchInstructionsPerIteration);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MAX_BYTES", Profile.MaxPrefetchBytesPerIteration);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_L1_CAPACITY_BYTES", Profile.L1CapacityBytes);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_L2_CAPACITY_BYTES", Profile.L2CapacityBytes);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_USEFUL_CYCLES_2D", Profile.UsefulCycles2D);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_USEFUL_CYCLES_3D", Profile.UsefulCycles3D);
+
+  unsigned Toggle = Profile.EnableRowL1;
+  if (applyUnsignedEnvironmentOverride("SME_PREFETCH_ENABLE_ROW_L1", Toggle)) {
+    Profile.EnableRowL1 = Toggle != 0;
+    Overridden = true;
+  }
+  Toggle = Profile.EnablePlaneL1;
+  if (applyUnsignedEnvironmentOverride("SME_PREFETCH_ENABLE_PLANE_L1",
+                                       Toggle)) {
+    Profile.EnablePlaneL1 = Toggle != 0;
+    Overridden = true;
+  }
+  Toggle = Profile.EnablePlaneL2;
+  if (applyUnsignedEnvironmentOverride("SME_PREFETCH_ENABLE_PLANE_L2",
+                                       Toggle)) {
+    Profile.EnablePlaneL2 = Toggle != 0;
+    Overridden = true;
+  }
+  if (Overridden)
+    Profile.Name = "environment-override";
+  return Profile;
+}
 
 void summarizeLoop(const Loop &L, ScalarEvolution &SE, LoopSummary &Summary) {
   ++Summary.Total;
@@ -39,6 +121,11 @@ public:
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM) {
     if (F.isDeclaration() || !F.getName().starts_with("stencil_"))
       return PreservedAnalyses::all();
+    if (hasAArch64Prefetch(F)) {
+      errs() << "StencilPrefetchPass: function=" << F.getName()
+             << " status=AlreadyPrefetched\n";
+      return PreservedAnalyses::all();
+    }
 
     LoopInfo &LI = FAM.getResult<LoopAnalysis>(F);
     ScalarEvolution &SE = FAM.getResult<ScalarEvolutionAnalysis>(F);
@@ -50,8 +137,6 @@ public:
     for (const Loop *L : LI)
       summarizeLoop(*L, SE, Summary);
 
-    // The pass remains read-only through step 3. Later steps consume the
-    // recognized streams to make and insert prefetch decisions.
     (void)TTI;
     (void)AC;
     errs() << "StencilPrefetchPass: function=" << F.getName()
@@ -64,6 +149,8 @@ public:
 
     SmallVector<sme1::StencilInfo, 2> Stencils =
         sme1::analyzeStencilFunction(F, LI, SE, DT);
+    bool Changed = false;
+    const sme1::TargetPrefetchProfile Profile = getActiveProfile();
     for (const sme1::StencilInfo &Stencil : Stencils) {
       errs() << "StencilAnalysis: function=" << F.getName()
              << " kind=" << sme1::toString(Stencil.Kind)
@@ -78,9 +165,41 @@ public:
                << Stream.Loads.size();
       }
       errs() << "\n";
+
+      errs() << "StencilDecisionProfile: function=" << F.getName()
+             << " profile=" << Profile.Name
+             << " cache-line=" << Profile.CacheLineBytes
+             << " assumed-vl=" << Profile.AssumedStreamingVLBytes
+             << " row-bytes=" << Profile.ExpectedRowBytes
+             << " plane-or-tile-bytes="
+             << Profile.ExpectedPlaneOrTileBytes
+             << " max-streams=" << Profile.MaxPrefetchStreams
+             << " row-l1=" << (Profile.EnableRowL1 ? "on" : "off")
+             << " plane-l1=" << (Profile.EnablePlaneL1 ? "on" : "off")
+             << " plane-l2=" << (Profile.EnablePlaneL2 ? "on" : "off")
+             << "\n";
+
+      SmallVector<sme1::PrefetchDecision, 8> Decisions =
+          sme1::decidePrefetches(Stencil, SE, Profile);
+      for (const sme1::PrefetchDecision &Decision : Decisions) {
+        errs() << "StencilDecision: function=" << F.getName()
+               << " kind=" << sme1::toString(Stencil.Kind)
+               << " stream=" << sme1::toString(Decision.Stream->Kind)
+               << " enable=" << (Decision.Enable ? "yes" : "no")
+               << " distance=" << Decision.DistanceIterations
+               << " level=" << sme1::toString(Decision.Level)
+               << " policy=" << sme1::toString(Decision.Policy)
+               << " live-bytes=" << Decision.LiveBytes
+               << " reuse-count=" << Decision.ReuseCount
+               << " reuse-distance=" << Decision.ReuseDistanceBytes
+               << " reason=" << sme1::toString(Decision.Reason) << "\n";
+      }
+
+      Changed |= sme1::insertPrefetches(Stencil, Decisions, DT, LI);
     }
 
-    return PreservedAnalyses::all();
+    return Changed ? PreservedAnalyses::none()
+                   : PreservedAnalyses::all();
   }
 };
 

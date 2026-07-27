@@ -1,8 +1,8 @@
 StencilPrefetchPass: function=stencil_2d5p_sme_f32 loops=2 innermost-loops=1 computable-trip-counts=1 dom-tree-root=yes analyses=LoopInfo,ScalarEvolution,DominatorTree,TargetIR,AssumptionCache
 StencilAnalysis: function=stencil_2d5p_sme_f32 kind=2D5P logical-loads=5 physical-streams=3 vector-step=cntsw streams=current-row:3,north-row:1,south-row:1
 StencilDecisionProfile: function=stencil_2d5p_sme_f32 profile=generic-sme cache-line=64 assumed-vl=64 row-bytes=4096 plane-or-tile-bytes=131072 max-streams=5 row-l1=on plane-l1=on plane-l2=on
-StencilDecision: function=stencil_2d5p_sme_f32 kind=2D5P stream=north-row enable=yes distance=4 level=L1 policy=KEEP live-bytes=256 reuse-count=3 reuse-distance=12288 reason=Admitted
-StencilDecision: function=stencil_2d5p_sme_f32 kind=2D5P stream=south-row enable=yes distance=4 level=L1 policy=KEEP live-bytes=256 reuse-count=3 reuse-distance=12288 reason=Admitted
+StencilDecision: function=stencil_2d5p_sme_f32 kind=2D5P stream=north-row enable=no distance=0 level=L1 policy=STRM live-bytes=0 reuse-count=0 reuse-distance=0 reason=ShortTripCount
+StencilDecision: function=stencil_2d5p_sme_f32 kind=2D5P stream=south-row enable=no distance=0 level=L1 policy=STRM live-bytes=0 reuse-count=0 reuse-distance=0 reason=ShortTripCount
 StencilPrefetchPass: function=stencil_3d7p_sme_f32 loops=3 innermost-loops=1 computable-trip-counts=2 dom-tree-root=yes analyses=LoopInfo,ScalarEvolution,DominatorTree,TargetIR,AssumptionCache
 StencilAnalysis: function=stencil_3d7p_sme_f32 kind=3D7P logical-loads=7 physical-streams=5 vector-step=cntsw streams=current-row:3,north-row:1,south-row:1,front-plane:1,back-plane:1
 StencilDecisionProfile: function=stencil_3d7p_sme_f32 profile=generic-sme cache-line=64 assumed-vl=64 row-bytes=4096 plane-or-tile-bytes=131072 max-streams=5 row-l1=on plane-l1=on plane-l2=on

@@ -1064,160 +1064,218 @@ vector_step = svcntsw()
 
 当静态情况下无法得到精确 cache-line 编号时，可按代表地址的 `Base + SCEV offset` 等价类去重；left/center/right 必须先合流。
 
-### 步骤 5：插入 AArch64 预取 intrinsic
+#### 4.9 验证 intrinsic 和 AArch64 lowering
 
-最终插入的 LLVM intrinsic 形式为：
+步骤 4 的实现以 `llvm.aarch64.prefetch` 插入成功为主体，同时在同一测试
+脚本中完成必要的后端验收，不再拆成独立实施步骤。
+
+intrinsic 参数为：
 
 ```llvm
-declare void @llvm.aarch64.prefetch(
-  ptr,
-  i32 immarg,
-  i32 immarg,
-  i32 immarg,
-  i32 immarg)
-
 call void @llvm.aarch64.prefetch(
   ptr %future_address,
-  i32 0,
-  i32 TARGET,
-  i32 STREAM,
-  i32 1)
+  i32 0,       ; read
+  i32 TARGET,  ; L1/L2/L3 = 0/1/2
+  i32 STREAM,  ; KEEP/STRM = 0/1
+  i32 1)       ; data
 ```
 
-参数映射：
+修改后的 IR 必须通过 LLVM verifier，并降为与决策一致的语义提示：
 
-| 参数 | 本方案取值 | 含义 |
-|---|---:|---|
-| `isWrite` | `0` | 数据读预取 |
-| `target` | `0/1/2` | 分别对应 L1/L2/L3 |
-| `isStream` | `0/1` | 分别对应 KEEP/STRM |
-| `isData` | `1` | 预取数据而非指令 |
-
-典型映射为：
-
-| 决策 | 典型 AArch64 汇编提示 |
+| 决策 | 预期语义提示 |
 |---|---|
-| L1 + KEEP | `prfm pldl1keep, [address]` |
-| L1 + STRM | `prfm pldl1strm, [address]` |
-| L2 + KEEP | `prfm pldl2keep, [address]` |
-| L2 + STRM | `prfm pldl2strm, [address]` |
-| L3 + KEEP | `prfm pldl3keep, [address]` |
-| L3 + STRM | `prfm pldl3strm, [address]` |
+| L1 + KEEP | `pldl1keep` |
+| L1 + STRM | `pldl1strm` |
+| L2 + KEEP | `pldl2keep` |
+| L2 + STRM | `pldl2strm` |
+| L3 + KEEP | `pldl3keep` |
+| L3 + STRM | `pldl3strm` |
 
-最终一般表现为 `PRFM`，但具体地址模式也可能使后端选择等价的 `PRFUM`。方案应检查语义提示 `PLDLxKEEP/STRM`，不能只检查助记符名称。
+地址模式可能使后端选择 `PRFM` 或等价的 `PRFUM`，因此检查
+`PLDLxKEEP/STRM` 的类型和数量，不只检查助记符。还要确认原有
+`smstart/smstop`、SVE 谓词 load/store 和向量浮点计算没有丢失。
 
-pass 直接构造 `Intrinsic::aarch64_prefetch` declaration 和 call，不需要自定义 op，也不需要额外的 MLIR lowering。
+#### 4.10 验证原始 C 直接编译和幂等性
 
-### 步骤 6：接入原始 Clang 编译流程
+最终使用方式必须从原始 `stencil_sme_kernels.c` 直接加载插件：
 
-目标是让用户继续编译原始 `stencil_sme_kernels.c`，而非维护第二份结构化 kernel。
-
-建议分两个阶段接入：
-
-1. **独立验证阶段**：使用 `clang -emit-llvm` 和 `opt -passes='function(stencil-prefetch)'`，便于查看 pass 前后 IR。
-2. **Clang 插件阶段**：使用 `-fpass-plugin` 加载插件，并在 `PassBuilder` 的 optimizer extension point 注册。
-
-注册点需要位于循环和 GEP 已经规范化、但地址关系尚未被过度改写的阶段。推荐先在显式 `-O2/-O3` pipeline 中通过 callback 插入，并用测试确认 pass 前已有 `LoopSimplify`/LCSSA。若 optimizer-early 时 IR 尚未规范化，可改用 pipeline parsing callback 或更靠后的 scalar optimizer callback，而不是把规则绑定到固定 LLVM pass 序号。
-
-示意注册代码：
-
-```cpp
-extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo
-llvmGetPassPluginInfo() {
-  return {
-    LLVM_PLUGIN_API_VERSION,
-    "StencilPrefetchPass",
-    LLVM_VERSION_STRING,
-    [](PassBuilder &PB) {
-      PB.registerPipelineParsingCallback(
-        [](StringRef Name, FunctionPassManager &FPM,
-           ArrayRef<PassBuilder::PipelineElement>) {
-          if (Name != "stencil-prefetch")
-            return false;
-          FPM.addPass(StencilPrefetchPass());
-          return true;
-        });
-
-      PB.registerOptimizerEarlyEPCallback(
-        [](ModulePassManager &MPM, OptimizationLevel) {
-          FunctionPassManager FPM;
-          FPM.addPass(StencilPrefetchPass());
-          MPM.addPass(createModuleToFunctionPassAdaptor(
-              std::move(FPM)));
-        });
-    }
-  };
-}
+```bash
+clang -O1 -march=armv9.2-a+sme+sve2 \
+  -fpass-plugin=./StencilPrefetchPass.so \
+  stencil_sme_kernels.c -S -o stencil_sme_kernels.s
 ```
 
-实际开发时只保留一个经过测试的自动注册点，避免同一编译中重复运行并重复插入预取。pass 还应给已插入的 call 加 metadata，或在运行前检查已有 `llvm.aarch64.prefetch`，保证幂等。
+同一测试脚本还生成不加载插件的汇编基线，并检查：
 
-### 步骤 7：验证正确性、汇编和性能
+1. 带插件版本的 `PRFM/PRFUM` 数量与已准入决策一致。
+2. 基线版本不包含软件预取。
+3. 插件、Clang 和 LLVM 使用 ABI 兼容版本。
+4. 对已插入 IR 再次运行 pass 时报告 `AlreadyPrefetched`，call 数量不变。
+5. 相同 IR 和 `TargetPrefetchProfile` 始终得到相同决策。
 
-#### 7.1 LLVM IR 验证
+因此步骤 4 的完整输出不是一个单独的分析文件，而是已经通过 IR、汇编和
+原始 C 编译检查的预取 pass。后续只剩数值正确性和性能调优。
 
-对 pass 前后 IR 使用 `FileCheck`：
+### 步骤 5：验证正确性和性能
+
+步骤 5 使用步骤 4 固定的编译流程和 Profile 做最终验收。验证顺序必须是
+结构正确、数值正确、再评估性能；前一层失败时不能继续根据性能结果调参。
+
+#### 5.1 结构与负例验证
+
+对 pass 前后 IR 做自动检查：
 
 ```text
 2D5P:
-  识别 3 条主要流
+  识别 3 条物理流
   不为 left/center/right 重复预取
-  不出现 plane 预取
+  不产生 plane 预取
 
 3D7P:
-  识别 5 条主要流
-  包含 front/back plane 决策
-  L1/L2 和 KEEP/STRM 参数与配置一致
+  识别 5 条物理流
+  front/back 的 near/far 决策符合 Profile
 
 通用:
-  llvm.aarch64.prefetch 参数均为合法立即数
-  尾部未来地址不会形成 poison
-  再次运行 pass 不增加重复 call
+  intrinsic 参数合法
+  未来地址为非 inbounds GEP 并受范围 guard 支配
+  预取数量满足流、指令和带宽预算
+  再次运行 pass 不增加 call
 ```
 
-还要加入负例：普通向量拷贝、不规则 gather、无法证明偏移关系的循环都不应被识别为 stencil。
+负例至少包括普通向量拷贝、不规则 gather、load 数正确但 `±row` 或
+`±plane` 关系错误的循环。负例不能产生 `StencilInfo`、决策或预取 call。
 
-#### 7.2 汇编验证
+#### 5.2 汇编与执行环境验证
 
-```bash
-clang -O3 -march=armv9.2-a+sme+sve2 \
-  -fpass-plugin=./libStencilPrefetchPass.so \
-  stencil_sme_kernels.c -S -o stencil_sme_kernels.s
+检查最终汇编中的 `PLDLxKEEP/STRM` 数量和类型，同时确认原有 SME/SVE
+计算与 streaming-mode 边界仍存在。测试记录必须包含 CPU、缓存拓扑、
+实际 streaming VL、编译器版本和线程绑定方式，避免不同环境的数据直接
+比较。
 
-rg -n 'prfm|prfum|pldl[123](keep|strm)' stencil_sme_kernels.s
-```
+Apple M5 的 `hw.optional.arm.FEAT_SME` 和 `FEAT_SME2` 均为 1，但机器
+不提供普通（non-streaming）SVE。可执行验证不能对整个程序使用
+`+sme+sve2`，否则编译器可能在 `smstart` 之前生成 `addvl/cntd` 并触发
+`SIGILL`。应将测试驱动按普通 arm64 编译，将 locally-streaming kernel
+按 `-march=armv9.2-a+nosve+sme` 单独编译后链接。
 
-同时确认原有 SME/SVE 指令和 streaming-mode 边界仍然存在，例如 `smstart/smstop`、谓词 load/store 和向量浮点运算。
+当前 LLVM 18 前端在 `+nosve+sme` 下仍拒绝 C 源码中的 SVE ACLE 类型，
+因此步骤 5 的预取版本直接组装步骤 4 已验证的
+`stencil_sme_kernels.s`，基线则由支持该组合的系统 Clang 编译。这样
+实际执行的是 pass 插入预取后的汇编，同时不把普通 SVE 引入调用者。
+locally-streaming `svcntb()` 探针实测 M5 streaming VL 为 64 B，与
+`apple-m5` Profile 的 `AssumedStreamingVLBytes=64` 一致。
 
-#### 7.3 数值正确性
+#### 5.3 数值和地址安全验证
 
-预取不应改变计算结果，但地址构造错误仍可能破坏 IR 或触发 sanitizer/guard-page 问题。至少覆盖：
+预取开启和关闭版本使用相同输入，逐元素比较输出。至少覆盖：
 
-1. 最小合法尺寸。
-2. 宽度不是 streaming vector length 整数倍。
-3. 很短的 row 和很浅的 plane。
-4. 2D/3D 边界附近的尾部。
-5. pass 开启与关闭时输出逐元素一致。
+1. 最小合法尺寸和空内部区域。
+2. 宽度不是 streaming VL 整数倍。
+3. 距离大于短循环稳定区间的情况。
+4. 很长的 row、很浅或很大的 plane。
 
-#### 7.4 性能验证
+5. 2D/3D 尾部和边界附近。
+6. guard page、ASan 或等价内存检查环境。
 
-2D 和 3D 分开扫描：
+所有 case 必须与无预取基线结果一致，且不能出现越界、poison、sanitizer
+报告或非法地址。未通过这一层的 Profile 不进入性能测试。
+
+当前 `05_runtime_validation/build_and_run.sh` 已在 Apple M5 上完成标量
+参考逐元素比较、空内部区域、最小尺寸、非规则宽度和尾部验证；无预取
+基线与步骤 4 生成的预取版本均通过。输入、输出和标量参考缓冲区分别
+贴近前后 `PROT_NONE` guard page 执行，真实 load/store 未越界。
+AArch64 `PRFM` 通常是非故障型提示，因此 guard page 和 ASan 不能代替
+IR 中未来地址 guard、非 `inbounds` GEP 与 verifier 检查。当前结果只
+证明已覆盖 case 的语义与计算访存安全，不代表预取已有性能收益。
+
+#### 5.4 分层性能实验
+
+2D5P 和 3D7P 分开扫描，先单核后多核。每次只改变一个决策维度：
 
 ```text
-distance
-x cache_level
-x KEEP/STRM
-x enabled_stream_set
-x problem_size
-x thread_count
+无软件预取基线
+-> 固定流集合，扫描 distance
+-> 固定 distance，比较 L1/L2
+-> 固定层级，比较 KEEP/STRM
+-> 增减物理流和 3D 两级接力
+-> 扫描 problem size 和 thread count
 ```
 
 至少记录：
 
-1. 总运行时间与有效 stencil 更新率。
-2. L1/L2/LLC miss。
-3. cache refill、TLB walk 和内存带宽。
-4. 软件预取指令数。
-5. pass 关闭、仅 A 类、B 类、B+C 类和两级接力的对照。
+1. 总运行时间、方差和有效 stencil 更新率。
+2. L1/L2/LLC miss 与 cache refill。
+3. TLB walk、内存带宽和软件预取指令数。
+4. 预取有用率；硬件支持时记录无用或过晚预取。
+5. 代码尺寸和额外分支开销。
 
-最终参数必须分别为 2D5P 和 3D7P 保存。3D 的 plane 流不能沿用 2D 的距离和策略。
+每个配置进行预热和多次重复，使用中位数或置信区间判断差异。只有在数值
+正确、多个问题规模上稳定受益且没有不可接受的带宽回归时，才把参数写入
+目标 CPU Profile。
+
+#### 5.5 Profile 回写与回归
+
+PMU 和时间数据只用于离线更新 Profile，不在一次编译过程中训练或改变
+pass 决策。最终分别保存 2D5P 和 3D7P 参数；3D plane 流不能沿用 2D
+row 流策略。每次更新 Profile 后重新运行步骤 4 的结构与编译检查，以及
+步骤 5 的正确性和性能回归。
+
+当前实现可用 `SME_PREFETCH_USEFUL_CYCLES_2D/3D` 覆盖距离模型输入，
+并用 `SME_PREFETCH_ENABLE_ROW_L1`、`SME_PREFETCH_ENABLE_PLANE_L1`
+和 `SME_PREFETCH_ENABLE_PLANE_L2` 独立消融候选类别；预算也可通过
+`SME_PREFETCH_MAX_STREAMS/MAX_INSTRUCTIONS/MAX_BYTES` 覆盖。环境变量
+只服务于步骤 5 的离线实验。选定参数已经回写为命名的 `apple-m5`
+Profile：关闭 row-L1 和 plane-L2，仅保留 3D front/back plane-L1
+STRM，距离为 1。LLVM 18 不能从当前函数的 `target-cpu=apple-m1`
+准确识别 M5，因此编译时通过 `SME_PREFETCH_PROFILE=apple-m5` 显式选择；
+该变量只选择固定 Profile，不在编译时重新训练或调参。
+
+距离与跨尺寸扫描表明，2D row-L1 对 row 大小敏感：1 KiB row 没有收益，
+16 KiB row 才出现约 2% 正向结果，而当前 kernel 的 width 是运行时参数，
+无法安全选择单一静态距离，因此 `apple-m5` Profile 暂时关闭 2D 软件
+预取。3D plane-L1 STRM distance 1 在 64/128/256 KiB plane 上分别约为
+`1.026x/1.026x/1.021x`，是当前最稳定的组合。
+
+命名 Profile 的最终同进程配对测试使用 9 个交替顺序样本和 3 个外层
+轮次：2D5P 中位数 `1.004x`，视为无预取噪声；3D7P 中位数 `1.028x`，
+轮间范围 `1.017-1.031x`。基线与预取版本来自同一 LLVM 18 输入 IR 和
+`-O1` 管线，唯一变量是是否运行 `apple-m5` 预取决策。该结果已跨三种
+plane 大小复现，但仍需 PMU 判断 cache miss、带宽和额外指令变化。
+
+首轮类别消融中，3D 的 `row-only` 和 `no-plane-L1` 约为
+`0.92x/0.91x`，而默认、`no-row`、`no-plane-L2` 均约为 `1.00x`。
+这说明当前规模下跨行 L1 KEEP 不应单独启用，plane-L1 STRM 对组合结果
+较关键；plane-L2 尚未显示稳定贡献。2D 的 `no-row` 与无预取基线理论上
+等价，但跨进程结果仍可相差约 2%，因此几个百分点以内的差异必须通过
+交错顺序、更多重复和置信区间确认。
+
+Apple M5 上已验证 Xcode `CPU Counters` 能对 SME 基准成功生成 trace，
+且导出表包含 SME streaming 和 L1D miss sampling 的计数模式。默认
+`CPU Counters` 模板实际导出的是 processing/delivery/discarded 等模型化
+瓶颈采样，不是可直接相减的 L1D/L2 miss 总数。现已在 Instruments 中建立
+`SME Stencil Cache Counters` 手动模板，包含
+`ARM_L1D_CACHE_RD`、`ARM_L1D_CACHE_LMISS_RD`、`PL2_CACHE_ACCESS` 和
+`PL2_CACHE_MISS_LD`。`collect_cpu_counters.sh` 导出 `counters-profile`
+并解析 XML 引用，只累加目标进程的四个事件；`run_cpu_counter_comparison.sh`
+以奇偶轮交换顺序采集基线和预取版本，生成 PMU 对比报告。
+
+这里得到的是 1 ms 归因采样增量，不是精确的全程序架构计数。它会受到
+线程迁核、采样窗口和 PMU 复用影响，因此只能在模板、问题规模和重复参数
+完全相同时用于相对归因，并与同进程配对墙钟结果共同判断。
+
+当前 3D 三轮采集中，预取/基线的 PL2 access 中位数比值为 `12.25x`
+（逐轮 `8.59-16.27x`），PL2 load miss 为 `50.85x`
+（逐轮 `30.09-55.65x`），增长方向稳定。L1D read 和 long-latency miss
+中位数比值约为 `0.91x/0.89x`，但逐轮范围分别为
+`0.40-1.89x/0.42-1.78x`，不能据此断言 L1 miss 已稳定下降。结合
+3D 配对墙钟 `1.028x`，当前 Profile 的含义是以显著增加 PL2 请求为代价
+换取小幅单核收益；在多线程、共享缓存或带宽已饱和场景中，它可能转为
+负收益，因此进入这些场景前不能把 `apple-m5` Profile 视为普适最优解。
+
+为验证这一风险，`run_threaded_benchmark.sh` 使用 1/2/4/8 个线程分别
+处理独立的 `256x32x1024` 网格，每轮在同一进程中交替执行基线和预取。
+8 次重复、9 个样本、3 个外层轮次得到的配对中位数依次为
+`1.043x/1.107x/1.114x/1.095x`，各轮范围均高于 `1.0`。这说明当前
+Apple M5 上，额外 PL2 流量在最多 8 个独立 stencil 工作线程下尚未抵消
+收益。不过该测试没有 halo 交换、NUMA、线程亲和性控制或多算子竞争，
+因此只消除了“简单并发一定负收益”的疑虑，不能替代真实应用验证。
