@@ -6,6 +6,7 @@
 
 | 文件 | 说明 |
 |---|---|
+| `步骤2至4实现说明.md` | 按源码说明插件建立、stencil 识别、预取决策与安全插入流程 |
 | `CMakeLists.txt` | 使用 LLVM 官方 `add_llvm_pass_plugin` 构建插件 |
 | `src/StencilPrefetchPass.cpp` | function pass、显式 pipeline 和 Clang extension-point 注册 |
 | `include/StencilAnalysis.h` | `StencilInfo`、`StreamInfo` 和识别接口 |
