@@ -98,4 +98,6 @@ clang -target arm64-apple-macos15 \
 2. 步骤 2：LLVM new-pass-manager 插件，已完成。
 3. 步骤 3：识别 2D5P/3D7P 循环和物理流，已完成。
 4. 步骤 4：预取决策与安全地址构造，已完成。
-5. 步骤 5：AArch64 intrinsic 参数与 `PRFM/PRFUM` 端到端验收，尚未实现。
+5. 步骤 5：intrinsic 参数与 AArch64 lowering 自动验收，尚未完成。
+6. 步骤 6：`-fpass-plugin` 基础接入已完成；幂等性和目标 Profile 接口尚未完成。
+7. 步骤 7：IR 正负例已有基础覆盖；数值与性能验收尚未完成。

@@ -1062,18 +1062,35 @@ vector_step = svcntsw()
 
 当静态情况下无法得到精确 cache-line 编号时，可按代表地址的 `Base + SCEV offset` 等价类去重；left/center/right 必须先合流。
 
-### 步骤 5：插入 AArch64 预取 intrinsic
+### 步骤 5：验证 intrinsic 参数和 AArch64 后端 lowering
 
-最终插入的 LLVM intrinsic 形式为：
+步骤 4 已经完成 `llvm.aarch64.prefetch` 的插入。步骤 5 不再修改预取
+决策或重复插入 call，只验证步骤 4 的输出能否被 LLVM verifier 和
+AArch64 后端正确接受。
+
+步骤 4 至步骤 7 的依赖关系为：
+
+| 步骤 | 输入 | 核心工作 | 输出 |
+|---|---|---|---|
+| 4 | 已识别的 stencil 物理流 | 决策、安全地址、插入 intrinsic | 修改后的 LLVM IR |
+| 5 | 修改后的 LLVM IR | verifier 与后端 lowering 检查 | 已验证的 AArch64 汇编 |
+| 6 | 已验证的插件和工具链 | 接入原始 C 编译流程 | 可复现的一条命令构建 |
+| 7 | 固定编译流程和 Profile | 正确性、PMU 和性能实验 | 可发布的目标 Profile |
+
+本步骤的输入和输出为：
+
+```text
+输入：步骤 4 修改后的 LLVM IR
+  -> 检查 intrinsic 参数
+  -> AArch64 instruction selection
+输出：包含正确 PLDLxKEEP/STRM 的汇编
+```
+
+#### 5.1 验证 intrinsic 参数
+
+步骤 4 插入的形式为：
 
 ```llvm
-declare void @llvm.aarch64.prefetch(
-  ptr,
-  i32 immarg,
-  i32 immarg,
-  i32 immarg,
-  i32 immarg)
-
 call void @llvm.aarch64.prefetch(
   ptr %future_address,
   i32 0,
@@ -1082,140 +1099,200 @@ call void @llvm.aarch64.prefetch(
   i32 1)
 ```
 
-参数映射：
+参数必须是合法立即数：
 
-| 参数 | 本方案取值 | 含义 |
+| 参数 | 合法值 | 本方案含义 |
 |---|---:|---|
-| `isWrite` | `0` | 数据读预取 |
-| `target` | `0/1/2` | 分别对应 L1/L2/L3 |
-| `isStream` | `0/1` | 分别对应 KEEP/STRM |
-| `isData` | `1` | 预取数据而非指令 |
+| `isWrite` | `0` | 只做数据读预取 |
+| `target` | `0/1/2` | L1/L2/L3 |
+| `isStream` | `0/1` | KEEP/STRM |
+| `isData` | `1` | 数据而非指令 |
+
+步骤 5 首先对修改后的模块运行 LLVM verifier，并检查：
+
+1. 每个参数都是 `i32 immarg`。
+2. `target` 和 `isStream` 与 `PrefetchDecision` 一致。
+3. call 数量等于已准入候选展开后的指令数。
+4. 未准入流和已关闭的 current-row 不产生 call。
+5. 未来地址仍受步骤 4 的范围 guard 支配。
+
+#### 5.2 验证后端映射
 
 典型映射为：
 
-| 决策 | 典型 AArch64 汇编提示 |
+| 决策 | 预期语义提示 |
 |---|---|
-| L1 + KEEP | `prfm pldl1keep, [address]` |
-| L1 + STRM | `prfm pldl1strm, [address]` |
-| L2 + KEEP | `prfm pldl2keep, [address]` |
-| L2 + STRM | `prfm pldl2strm, [address]` |
-| L3 + KEEP | `prfm pldl3keep, [address]` |
-| L3 + STRM | `prfm pldl3strm, [address]` |
+| L1 + KEEP | `pldl1keep` |
+| L1 + STRM | `pldl1strm` |
+| L2 + KEEP | `pldl2keep` |
+| L2 + STRM | `pldl2strm` |
+| L3 + KEEP | `pldl3keep` |
+| L3 + STRM | `pldl3strm` |
 
-最终一般表现为 `PRFM`，但具体地址模式也可能使后端选择等价的 `PRFUM`。方案应检查语义提示 `PLDLxKEEP/STRM`，不能只检查助记符名称。
+地址模式可能使后端选择 `PRFM` 或等价的 `PRFUM`，因此验收应检查
+`PLDLxKEEP/STRM` 语义和数量，不能只检查助记符名称。
 
-pass 直接构造 `Intrinsic::aarch64_prefetch` declaration 和 call，不需要自定义 op，也不需要额外的 MLIR lowering。
+示例命令：
+
+```bash
+clang -x ir -O3 -S stencil_sme_kernels.after.ll \
+  -o stencil_sme_kernels.s
+
+rg -n 'prfm|prfum|pldl[123](keep|strm)' \
+  stencil_sme_kernels.s
+```
+
+步骤 5 的通过条件是：LLVM verifier 无错误、每条已准入决策都有且只有
+一个预期汇编提示、层级和 KEEP/STRM 未在 lowering 中丢失。该步骤不需要
+自定义 op 或额外 MLIR lowering。
 
 ### 步骤 6：接入原始 Clang 编译流程
 
-目标是让用户继续编译原始 `stencil_sme_kernels.c`，而非维护第二份结构化 kernel。
+步骤 5 证明 pass 输出能够正确降到汇编后，步骤 6 再把插件接入原始
+`stencil_sme_kernels.c` 的正常编译流程。用户只维护 C kernel，不维护
+手写 LLVM IR 或另一份结构化 kernel。
 
-建议分两个阶段接入：
+#### 6.1 固定工具链边界
 
-1. **独立验证阶段**：使用 `clang -emit-llvm` 和 `opt -passes='function(stencil-prefetch)'`，便于查看 pass 前后 IR。
-2. **Clang 插件阶段**：使用 `-fpass-plugin` 加载插件，并在 `PassBuilder` 的 optimizer extension point 注册。
-
-注册点需要位于循环和 GEP 已经规范化、但地址关系尚未被过度改写的阶段。推荐先在显式 `-O2/-O3` pipeline 中通过 callback 插入，并用测试确认 pass 前已有 `LoopSimplify`/LCSSA。若 optimizer-early 时 IR 尚未规范化，可改用 pipeline parsing callback 或更靠后的 scalar optimizer callback，而不是把规则绑定到固定 LLVM pass 序号。
-
-示意注册代码：
-
-```cpp
-extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo
-llvmGetPassPluginInfo() {
-  return {
-    LLVM_PLUGIN_API_VERSION,
-    "StencilPrefetchPass",
-    LLVM_VERSION_STRING,
-    [](PassBuilder &PB) {
-      PB.registerPipelineParsingCallback(
-        [](StringRef Name, FunctionPassManager &FPM,
-           ArrayRef<PassBuilder::PipelineElement>) {
-          if (Name != "stencil-prefetch")
-            return false;
-          FPM.addPass(StencilPrefetchPass());
-          return true;
-        });
-
-      PB.registerOptimizerEarlyEPCallback(
-        [](ModulePassManager &MPM, OptimizationLevel) {
-          FunctionPassManager FPM;
-          FPM.addPass(StencilPrefetchPass());
-          MPM.addPass(createModuleToFunctionPassAdaptor(
-              std::move(FPM)));
-        });
-    }
-  };
-}
-```
-
-实际开发时只保留一个经过测试的自动注册点，避免同一编译中重复运行并重复插入预取。pass 还应给已插入的 call 加 metadata，或在运行前检查已有 `llvm.aarch64.prefetch`，保证幂等。
-
-### 步骤 7：验证正确性、汇编和性能
-
-#### 7.1 LLVM IR 验证
-
-对 pass 前后 IR 使用 `FileCheck`：
+生成 IR、构建插件和加载插件必须使用 ABI 兼容的 LLVM/Clang 版本。
+正式流程不应依赖测试脚本对新版文本 IR 的兼容替换。接入前固定：
 
 ```text
-2D5P:
-  识别 3 条主要流
-  不为 left/center/right 重复预取
-  不出现 plane 预取
-
-3D7P:
-  识别 5 条主要流
-  包含 front/back plane 决策
-  L1/L2 和 KEEP/STRM 参数与配置一致
-
-通用:
-  llvm.aarch64.prefetch 参数均为合法立即数
-  尾部未来地址不会形成 poison
-  再次运行 pass 不增加重复 call
+LLVM_VERSION
+target triple
+-march/-mcpu
+SME/SVE feature set
+streaming vector length profile
 ```
 
-还要加入负例：普通向量拷贝、不规则 gather、无法证明偏移关系的循环都不应被识别为 stencil。
+#### 6.2 保留两条使用路径
 
-#### 7.2 汇编验证
+独立调试路径用于观察中间结果：
+
+```text
+C -> clang -emit-llvm -> 显式运行 stencil-prefetch
+  -> 检查 before/after IR -> 生成汇编
+```
+
+生产路径直接从原始 C 编译：
 
 ```bash
 clang -O3 -march=armv9.2-a+sme+sve2 \
-  -fpass-plugin=./libStencilPrefetchPass.so \
+  -fpass-plugin=./StencilPrefetchPass.so \
   stencil_sme_kernels.c -S -o stencil_sme_kernels.s
-
-rg -n 'prfm|prfum|pldl[123](keep|strm)' stencil_sme_kernels.s
 ```
 
-同时确认原有 SME/SVE 指令和 streaming-mode 边界仍然存在，例如 `smstart/smstop`、谓词 load/store 和向量浮点运算。
+两条路径必须调用同一个 `StencilPrefetchPass`，并对相同 IR 和 Profile
+产生相同决策。
 
-#### 7.3 数值正确性
+#### 6.3 确定唯一自动注册点
 
-预取不应改变计算结果，但地址构造错误仍可能破坏 IR 或触发 sanitizer/guard-page 问题。至少覆盖：
+插件可以保留显式 pipeline callback 供调试，但生产编译只启用一个经过
+测试的 optimizer extension point。注册点应满足：
 
-1. 最小合法尺寸。
-2. 宽度不是 streaming vector length 整数倍。
-3. 很短的 row 和很浅的 plane。
-4. 2D/3D 边界附近的尾部。
-5. pass 开启与关闭时输出逐元素一致。
+1. `LoopInfo`、SCEV 和 GEP 关系已经足以识别 stencil。
+2. 插入位置不能晚到 masked load 和地址关系已被不可逆改写。
+3. 同一次编译不会通过显式 pipeline 和自动 callback 运行两次。
 
-#### 7.4 性能验证
+pass 还必须具备幂等性：运行前检查循环中是否已有本 pass 插入的
+`llvm.aarch64.prefetch`，或给 call 添加专用 metadata。再次运行时应输出
+`AlreadyPrefetched` 诊断并保持 IR 不变。
 
-2D 和 3D 分开扫描：
+#### 6.4 提供可复现实验配置
+
+`generic-sme` 只作为保守默认值。生产接入需要根据 `-mcpu` 选择
+`TargetPrefetchProfile`，并允许命令行覆盖延迟、容量、代表尺寸、VL 和
+流量预算。每次构建应在诊断或构建产物中记录：
 
 ```text
-distance
-x cache_level
-x KEEP/STRM
-x enabled_stream_set
-x problem_size
-x thread_count
+CPU/Profile 名称
+关键 Profile 参数
+2D/3D 最终决策
+pass 和 LLVM 版本
+```
+
+步骤 6 的通过条件是：一条 Clang 命令可以从原始 C 生成带预取的汇编，
+插件只运行一次，重复编译得到相同决策，并且关闭插件时仍能生成原始
+无软件预取版本作为基线。
+
+### 步骤 7：验证正确性和性能
+
+步骤 7 使用步骤 6 固定的编译流程和 Profile 做最终验收。验证顺序必须是
+结构正确、数值正确、再评估性能；前一层失败时不能继续根据性能结果调参。
+
+#### 7.1 结构与负例验证
+
+对 pass 前后 IR 做自动检查：
+
+```text
+2D5P:
+  识别 3 条物理流
+  不为 left/center/right 重复预取
+  不产生 plane 预取
+
+3D7P:
+  识别 5 条物理流
+  front/back 的 near/far 决策符合 Profile
+
+通用:
+  intrinsic 参数合法
+  未来地址为非 inbounds GEP 并受范围 guard 支配
+  预取数量满足流、指令和带宽预算
+  再次运行 pass 不增加 call
+```
+
+负例至少包括普通向量拷贝、不规则 gather、load 数正确但 `±row` 或
+`±plane` 关系错误的循环。负例不能产生 `StencilInfo`、决策或预取 call。
+
+#### 7.2 汇编与执行环境验证
+
+检查最终汇编中的 `PLDLxKEEP/STRM` 数量和类型，同时确认原有 SME/SVE
+计算与 streaming-mode 边界仍存在。测试记录必须包含 CPU、缓存拓扑、
+实际 streaming VL、编译器版本和线程绑定方式，避免不同环境的数据直接
+比较。
+
+#### 7.3 数值和地址安全验证
+
+预取开启和关闭版本使用相同输入，逐元素比较输出。至少覆盖：
+
+1. 最小合法尺寸和空内部区域。
+2. 宽度不是 streaming VL 整数倍。
+3. 距离大于短循环稳定区间的情况。
+4. 很长的 row、很浅或很大的 plane。
+5. 2D/3D 尾部和边界附近。
+6. guard page、ASan 或等价内存检查环境。
+
+所有 case 必须与无预取基线结果一致，且不能出现越界、poison、sanitizer
+报告或非法地址。未通过这一层的 Profile 不进入性能测试。
+
+#### 7.4 分层性能实验
+
+2D5P 和 3D7P 分开扫描，先单核后多核。每次只改变一个决策维度：
+
+```text
+无软件预取基线
+-> 固定流集合，扫描 distance
+-> 固定 distance，比较 L1/L2
+-> 固定层级，比较 KEEP/STRM
+-> 增减物理流和 3D 两级接力
+-> 扫描 problem size 和 thread count
 ```
 
 至少记录：
 
-1. 总运行时间与有效 stencil 更新率。
-2. L1/L2/LLC miss。
-3. cache refill、TLB walk 和内存带宽。
-4. 软件预取指令数。
-5. pass 关闭、仅 A 类、B 类、B+C 类和两级接力的对照。
+1. 总运行时间、方差和有效 stencil 更新率。
+2. L1/L2/LLC miss 与 cache refill。
+3. TLB walk、内存带宽和软件预取指令数。
+4. 预取有用率；硬件支持时记录无用或过晚预取。
+5. 代码尺寸和额外分支开销。
 
-最终参数必须分别为 2D5P 和 3D7P 保存。3D 的 plane 流不能沿用 2D 的距离和策略。
+每个配置进行预热和多次重复，使用中位数或置信区间判断差异。只有在数值
+正确、多个问题规模上稳定受益且没有不可接受的带宽回归时，才把参数写入
+目标 CPU Profile。
+
+#### 7.5 Profile 回写与回归
+
+PMU 和时间数据只用于离线更新 Profile，不在一次编译过程中训练或改变
+pass 决策。最终分别保存 2D5P 和 3D7P 参数；3D plane 流不能沿用 2D
+row 流策略。每次更新 Profile 后重新运行步骤 5、6 和步骤 7 的全部结构、
+正确性和性能回归。
