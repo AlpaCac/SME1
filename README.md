@@ -12,11 +12,47 @@
 | 文件 | 说明 |
 |---|---|
 | `stencil_sme_kernels.c` | 使用 `arm_sme.h` 和 `arm_sve.h` 实现的 2D5P、3D7P kernel |
+| `项目代码运行顺序.md` | 从生成 LLVM IR、构建 pass、插入预取到 Apple M5 验证的完整命令顺序 |
 | `stencil预取优化实施方案.md` | 计算模型、预取类别、决策算法和 Clang/LLVM pass 实施步骤 |
 | `software_prefetch_sme_analysis.md` | SME stencil 软件读预取的背景与原理分析 |
 | `01_llvm_ir_analysis/` | 步骤 1：生成 LLVM IR 并自动验证循环、地址和向量访存结构 |
 | `02_llvm_pass_plugin/` | 步骤 2-4：插件、stencil 识别、预取插入和端到端编译检查 |
 | `05_runtime_validation/` | 步骤 5：Apple M5 上的 SME 数值正确性与后续性能验证 |
+
+## 执行流程
+
+所有命令均从仓库根目录 `SME1` 执行。最小完整流程为：
+
+```bash
+# 1. 从 C kernel 生成 LLVM IR 并检查其可分析性
+./01_llvm_ir_analysis/generate_and_check.sh
+
+# 2. 构建 LLVM pass，完成 stencil 识别、预取插入和汇编检查
+./02_llvm_pass_plugin/build_and_test.sh
+
+# 3. 在 Apple M5 上运行命名 Profile 的数值正确性测试
+SME_RUNTIME_PROFILE=apple-m5 FORCE_SME_RUN=1 \
+  ./05_runtime_validation/build_and_run.sh
+
+# 4. 运行当前主要的单进程配对性能测试
+SME_RUNTIME_PROFILE=apple-m5 FORCE_SME_RUN=1 \
+  ./05_runtime_validation/run_paired_benchmark.sh
+```
+
+代码依赖顺序为：
+
+```text
+stencil_sme_kernels.c
+→ 01_llvm_ir_analysis/output/stencil_sme_kernels.ll
+→ StencilPrefetchPass
+→ 02_llvm_pass_plugin/output/stencil_sme_kernels.apple-m5.s
+→ 05_runtime_validation 正确性与性能驱动
+→ output 中的验证报告
+```
+
+距离扫描、类别消融、PMU 和多线程测试属于步骤 5 的扩展验证，不是生成
+预取汇编的必经步骤。完整命令、输入输出和验收条件见
+`项目代码运行顺序.md`。
 
 ## Kernel
 
