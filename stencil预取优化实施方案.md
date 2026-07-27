@@ -41,6 +41,8 @@ input[y, x-1] - input[y, x] - input[y, x+1]
               input[y+1, x]
 ```
 
+![image-20260726211552452](C:\Users\AlpaCa\AppData\Roaming\Typora\typora-user-images\image-20260726211552452.png)
+
 计算公式为：
 
 ```text
