@@ -13,12 +13,28 @@ find_tool() {
 llvm_config="${LLVM_CONFIG:-$(find_tool llvm-config)}"
 cmake_bin="${CMAKE:-$(find_tool cmake)}"
 ninja_bin="${NINJA:-$(find_tool ninja)}"
-for tool in "${llvm_config}" "${cmake_bin}" "${ninja_bin}"; do
+cmake_generator="${CMAKE_GENERATOR:-}"
+for tool in "${llvm_config}" "${cmake_bin}"; do
   if [[ -z "${tool}" || ! -x "${tool}" ]]; then
     printf 'missing required tool: %s\n' "${tool:-<unset>}" >&2
     exit 1
   fi
 done
+if [[ -z "${cmake_generator}" ]]; then
+  if [[ -n "${ninja_bin}" && -x "${ninja_bin}" ]]; then
+    cmake_generator="Ninja"
+  else
+    cmake_generator="Unix Makefiles"
+  fi
+fi
+if [[ "${cmake_generator}" == "Ninja" && ( -z "${ninja_bin}" || ! -x "${ninja_bin}" ) ]]; then
+  printf 'CMAKE_GENERATOR=Ninja requires ninja; install it or use Unix Makefiles.\n' >&2
+  exit 1
+fi
+if [[ "${cmake_generator}" == "Unix Makefiles" && -z "$(find_tool make)" ]]; then
+  printf 'Unix Makefiles requires make; install make or ninja.\n' >&2
+  exit 1
+fi
 
 llvm_dir="$("${llvm_config}" --cmakedir)"
 llvm_bindir="$("${llvm_config}" --bindir)"
@@ -41,15 +57,19 @@ if [[ ! -f "${kernel_ir}" ]]; then
 fi
 
 mkdir -p "${build_dir}" "${output_dir}"
-"${cmake_bin}" \
+cmake_args=(
   -S "${script_dir}" \
   -B "${build_dir}" \
-  -G Ninja \
+  -G "${cmake_generator}" \
   -DLLVM_DIR:PATH="${llvm_dir}" \
-  -DCMAKE_MAKE_PROGRAM="${ninja_bin}" \
   -DCMAKE_C_COMPILER="${plugin_cc}" \
   -DCMAKE_CXX_COMPILER="${plugin_cxx}" \
   -DCMAKE_BUILD_TYPE=Release
+)
+if [[ "${cmake_generator}" == "Ninja" ]]; then
+  cmake_args+=("-DCMAKE_MAKE_PROGRAM=${ninja_bin}")
+fi
+"${cmake_bin}" "${cmake_args[@]}"
 "${cmake_bin}" --build "${build_dir}"
 
 plugin="${build_dir}/StencilPrefetchPass.so"

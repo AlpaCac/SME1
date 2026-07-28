@@ -27,12 +27,12 @@ SME_PREFETCH_ENABLE_CURRENT_L1=1
 
 步骤 1 成功后：
 
-若服务器 PATH 中有同一 LLVM 安装的 `llvm-config`、`clang`、`clang++`、CMake 和
-Ninja，脚本会从 `llvm-config` 自动定位 Clang 与 LLVM CMake 配置，不需要设置
+若服务器 PATH 中有同一 LLVM 安装的 `llvm-config`、`clang`、`clang++` 和 CMake，
+脚本会从 `llvm-config` 自动定位 Clang 与 LLVM CMake 配置，不需要设置
 `LLVM_HOME`：
 
 ```bash
-command -v clang clang++ llvm-config cmake ninja
+command -v clang clang++ llvm-config cmake
 llvm-config --version
 llvm-config --bindir
 llvm-config --cmakedir
@@ -40,6 +40,9 @@ test -f "$(llvm-config --cmakedir)/LLVMConfig.cmake" && echo 'LLVM CMake config:
 
 ./02_llvm_pass_plugin/build_and_test.sh
 ```
+
+检测到 Ninja 时脚本使用 Ninja；未安装时自动回退到 CMake `Unix Makefiles`，只需
+系统提供 `make`。也可用 `CMAKE_GENERATOR` 显式指定生成器。
 
 `llvm-config --version` 应与 `clang --version` 的 LLVM 主版本一致。若
 `llvm-config` 不在 PATH，先通过其绝对路径推导 LLVM 安装前缀：

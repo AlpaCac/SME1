@@ -183,7 +183,7 @@ ldd /opt/llvm-18/bin/clang
 
 ```text
 CMake >= 3.20
-Ninja
+make（或可选的 Ninja）
 Python 3
 Bash
 GNU grep、sed、awk、sort、cmp
@@ -318,7 +318,7 @@ python3 --version
 Clang 与 LLVM CMake 配置。服务器先执行：
 
 ```bash
-command -v clang clang++ llvm-config cmake ninja
+command -v clang clang++ llvm-config cmake
 clang --version
 llvm-config --version
 llvm-config --bindir
@@ -331,6 +331,9 @@ test -f "$(llvm-config --cmakedir)/LLVMConfig.cmake" && echo 'LLVM CMake config:
 ```bash
 ./02_llvm_pass_plugin/build_and_test.sh
 ```
+
+脚本检测到 Ninja 时优先使用它；未安装 Ninja 时自动回退到 CMake `Unix Makefiles`，
+因此只要系统有 `make` 就可继续。
 
 若 `llvm-config` 不在 PATH，使用其绝对路径推导安装前缀：
 
