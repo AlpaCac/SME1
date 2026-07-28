@@ -14,6 +14,7 @@
 | `stencil_sme_kernels.c` | 使用 `arm_sme.h` 和 `arm_sve.h` 实现的 2D5P、3D7P kernel |
 | `项目代码运行顺序.md` | 从生成 LLVM IR、构建 pass、插入预取到 Apple M5 验证的完整命令顺序 |
 | `断网AArch64服务器迁移指南.md` | 准备离线工具链、迁移源码、适配 AArch64 Linux、重新生成产物并验证性能 |
+| `毕昇Clang19_LLVM环境安装指南.md` | 在联网 AArch64 服务器上配置毕昇 5.1.0.2 配套或独立 LLVM 19.1.7 开发环境 |
 | `stencil预取优化实施方案.md` | 计算模型、预取类别、决策算法和 Clang/LLVM pass 实施步骤 |
 | `software_prefetch_sme_analysis.md` | SME stencil 软件读预取的背景与原理分析 |
 | `01_llvm_ir_analysis/` | 步骤 1：生成 LLVM IR 并自动验证循环、地址和向量访存结构 |
