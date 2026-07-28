@@ -23,10 +23,14 @@ STENCIL_SOURCE=/data/stencil_all_sme.cpp \
   ./01_llvm_ir_analysis/generate_and_check.sh
 ```
 
-默认提取源码名以 `stencil_` 或 `stencil` 后紧接数字开头的函数。脚本会同时
-匹配 LLVM 原始符号和解修饰后的 C++ 名称，因此可自动识别
-`stencil1D_3point_sme()`。它优先使用同一 LLVM 安装中的 `llvm-cxxfilt`，缺失时
-回退到系统的 `c++filt`。若使用其他命名规则，可显式给出逗号分隔的 IR 函数名：
+默认提取源码名以 `stencil_` 或 `stencil` 后紧接数字开头的函数，支持命名空间和
+类作用域，例如 `stencil1D_3point_sme()`、`kernels::stencil1D_3point_sme()`。
+脚本会同时匹配 LLVM 原始符号和解修饰后的 C++ 名称；优先使用同一 LLVM 安装中的
+`llvm-cxxfilt`，缺失时回退到系统的 `c++filt`。若使用其他命名规则，可显式给出
+逗号分隔的 IR 函数名：
+
+生成 IR 时脚本使用 `-O1 -fno-inline`。这会保留被 `main` 或测试代码调用的
+`static` stencil 函数的独立 `define`，否则它们可能在函数发现前已被内联移除。
 
 ```bash
 STENCIL_KERNEL_FUNCTIONS='stencil_1d3p_sme_f32,stencil_2d9p_sme_f32,stencil_3d27p_sme_f32' \
@@ -36,8 +40,12 @@ STENCIL_KERNEL_FUNCTIONS='stencil_1d3p_sme_f32,stencil_2d9p_sme_f32,stencil_3d27
 也可以覆盖自动发现正则。例如以下规则匹配全部以 `stencil` 开头的函数：
 
 ```bash
-STENCIL_KERNEL_PATTERN='^stencil' ./01_llvm_ir_analysis/generate_and_check.sh
+STENCIL_KERNEL_PATTERN='stencil' ./01_llvm_ir_analysis/generate_and_check.sh
 ```
+
+自动发现失败时，脚本会打印 IR 原始符号与对应的解修饰名称。根据该输出可设置
+`STENCIL_KERNEL_PATTERN`，或用 `STENCIL_KERNEL_FUNCTIONS` 精确指定需要提取的
+IR 符号。
 
 运行时驱动通过 C 符号链接 kernel，因此计算函数应使用 `extern "C"` 导出，
 或在 C++ 源中提供同名 C ABI 包装函数。`main` 和 test 函数不要加入
