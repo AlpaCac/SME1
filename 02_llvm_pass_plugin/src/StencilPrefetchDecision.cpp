@@ -101,7 +101,8 @@ unsigned estimatedTripCount(const StencilInfo &Stencil, ScalarEvolution &SE,
     return 0;
 
   uint64_t ElementsPerVector =
-      std::max<uint64_t>(1, Profile.AssumedStreamingVLBytes / sizeof(float));
+      std::max<uint64_t>(1, Profile.AssumedStreamingVLBytes /
+                                 std::max(1U, Stencil.ElementBytes));
   uint64_t Span = Upper->getZExtValue() - Start->getZExtValue();
   uint64_t Estimated = divideCeil(Span, ElementsPerVector);
   return static_cast<unsigned>(
@@ -311,7 +312,10 @@ bool insertPrefetches(const StencilInfo &Stencil,
   Function *Prefetch =
       Intrinsic::getDeclaration(M, Intrinsic::aarch64_prefetch);
   Type *IndexType = Stencil.Induction->getType();
-  Type *FloatType = Type::getFloatTy(M->getContext());
+  auto *LoadVectorType = dyn_cast<VectorType>(FirstLoad->getType());
+  if (!LoadVectorType)
+    return false;
+  Type *ElementType = LoadVectorType->getElementType();
 
   for (unsigned Distance : Distances) {
     IRBuilder<> HeadBuilder(FirstLoad);
@@ -332,7 +336,7 @@ bool insertPrefetches(const StencilInfo &Stencil,
         continue;
 
       Value *Address = PrefetchBuilder.CreateGEP(
-          FloatType, Decision.Stream->Base, FutureX, "prefetch.addr");
+          ElementType, Decision.Stream->Base, FutureX, "prefetch.addr");
       PrefetchBuilder.CreateCall(
           Prefetch,
           {Address, PrefetchBuilder.getInt32(0),

@@ -165,7 +165,9 @@ public:
              << " kind=" << sme1::toString(Stencil.Kind)
              << " logical-loads=" << Stencil.LogicalLoadCount
              << " physical-streams=" << Stencil.Streams.size()
-             << " vector-step=cntsw streams=";
+             << " vector-step="
+             << cast<CallBase>(Stencil.VectorStep)->getCalledFunction()->getName()
+             << " element-bytes=" << Stencil.ElementBytes << " streams=";
       for (unsigned I = 0; I < Stencil.Streams.size(); ++I) {
         if (I != 0)
           errs() << ",";

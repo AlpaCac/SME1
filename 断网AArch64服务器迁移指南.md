@@ -323,7 +323,7 @@ arm64-apple-macos15
 
 ```bash
 export TARGET=aarch64-unknown-linux-gnu
-export MARCH=armv9.2-a+sme+sve2
+export MARCH=armv9.2-a+sme+sve2+sme-f64f64
 ```
 
 然后运行：
@@ -331,7 +331,7 @@ export MARCH=armv9.2-a+sme+sve2
 ```bash
 CLANG="${LLVM_HOME}/bin/clang" \
 TARGET=aarch64-unknown-linux-gnu \
-MARCH=armv9.2-a+sme+sve2 \
+MARCH=armv9.2-a+sme+sve2+sme-f64f64 \
   ./01_llvm_ir_analysis/generate_and_check.sh
 ```
 
@@ -416,7 +416,7 @@ rm -rf 05_runtime_validation/build
 ```bash
 CLANG="${LLVM_HOME}/bin/clang" \
 TARGET=aarch64-unknown-linux-gnu \
-MARCH=armv9.2-a+sme+sve2 \
+MARCH=armv9.2-a+sme+sve2+sme-f64f64 \
   ./01_llvm_ir_analysis/generate_and_check.sh
 ```
 

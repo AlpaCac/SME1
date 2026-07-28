@@ -10,7 +10,7 @@ source_file="${STENCIL_SOURCE:-${repo_root}/stencil_all_sme.cpp}"
 kernel_prefix="${STENCIL_KERNEL_PREFIX:-stencil_}"
 kernel_functions="${STENCIL_KERNEL_FUNCTIONS:-}"
 target="${TARGET:-aarch64-unknown-linux-gnu}"
-march="${MARCH:-armv9.2-a+sme+sve2}"
+march="${MARCH:-armv9.2-a+sme+sve2+sme-f64f64}"
 
 if [[ ! -f "${source_file}" ]]; then
   printf 'missing stencil source: %s\n' "${source_file}" >&2

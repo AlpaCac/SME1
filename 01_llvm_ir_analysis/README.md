@@ -12,6 +12,10 @@
 ./01_llvm_ir_analysis/generate_and_check.sh
 ```
 
+默认 `MARCH` 包含 `+sme-f64f64`，以支持 `svmopa_za64_f64_m` 等双精度
+SME 外积 intrinsic。若服务器源只使用单精度且目标 CPU 不支持该可选扩展，
+可显式覆盖 `MARCH=armv9.2-a+sme+sve2`。
+
 若源文件位于其他目录，指定绝对路径：
 
 ```bash
@@ -50,6 +54,6 @@ IR 报告可以记录任意被提取的函数。当前 pass 识别并可插入�
 2. 2D5P、2D9P
 3. 3D7P、3D13P、3D25P、3D27P
 
-识别要求最内层为 `cntsw()` 步长的 predicated SVE 循环，并且各 load/store
+识别要求最内层为 `cntsw()`（f32）或 `cntsd()`（f64）步长的 predicated SVE 循环，并且各 load/store
 共享 `whilelo` 谓词。其他算子会保留在 kernel-only IR 中，但不会被错误地
 插入预取。

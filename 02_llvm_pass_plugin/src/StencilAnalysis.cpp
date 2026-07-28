@@ -137,7 +137,17 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   auto *StepUnknown = dyn_cast<SCEVUnknown>(AddRec->getStepRecurrence(SE));
   auto *StepCall = StepUnknown ? dyn_cast<CallBase>(StepUnknown->getValue())
                                : nullptr;
-  if (!StepCall || !hasNamePrefix(*StepCall, "llvm.aarch64.sme.cntsw"))
+  if (!StepCall ||
+      (!hasNamePrefix(*StepCall, "llvm.aarch64.sme.cntsw") &&
+       !hasNamePrefix(*StepCall, "llvm.aarch64.sme.cntsd")))
+    return std::nullopt;
+
+  auto *LoadVectorType = dyn_cast<VectorType>(MaskedLoads.front()->getType());
+  if (!LoadVectorType)
+    return std::nullopt;
+  unsigned ElementBytes =
+      LoadVectorType->getElementType()->getScalarSizeInBits() / 8;
+  if (ElementBytes == 0)
     return std::nullopt;
 
   const DataLayout &DL = F.getParent()->getDataLayout();
@@ -234,6 +244,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   Result.Predicate = Predicate;
   Result.VectorStep = StepCall;
   Result.LogicalLoadCount = MaskedLoads.size();
+  Result.ElementBytes = ElementBytes;
   Result.Streams = std::move(Streams);
   return Result;
 }

@@ -14,7 +14,7 @@ mkdir -p "${build_dir}" "${output_dir}"
 
 kernel_assembly_flags=(
   -O3
-  -march=armv9.2-a+nosve+sme
+  -march=armv9.2-a+nosve+sme+sme-f64f64
 )
 host_flags=(-O3)
 if [[ "$(uname -s)" == "Darwin" ]]; then

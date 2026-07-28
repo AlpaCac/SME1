@@ -36,7 +36,7 @@ sed \
   -e 's/stencil_3d7p_sme_f32/prefetch_stencil_3d7p_sme_f32/g' \
   "${prefetch_source}" > "${prefetch_renamed}"
 
-assembly_flags=(-O3 -march=armv9.2-a+nosve+sme)
+assembly_flags=(-O3 -march=armv9.2-a+nosve+sme+sme-f64f64)
 host_flags=(-O3 -pthread)
 if [[ "$(uname -s)" == "Darwin" ]]; then
   macos_sdk="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"

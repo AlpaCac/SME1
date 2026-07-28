@@ -64,7 +64,7 @@ def metrics_for(ir: str, name: str) -> tuple[list[tuple[str, str, bool]], dict[s
     }
     checks = [
         ("streaming-mode attribute", "`aarch64_pstate_sm_body`", has_streaming_attribute(ir, header)),
-        ("streaming vector length", "`llvm.aarch64.sme.cntsw`", "llvm.aarch64.sme.cntsw" in body),
+        ("streaming vector length", "`llvm.aarch64.sme.cntsw` or `cntsd`", "llvm.aarch64.sme.cntsw" in body or "llvm.aarch64.sme.cntsd" in body),
         ("logical masked loads", ">= 1", metrics["masked_loads"] >= 1),
         ("masked store", ">= 1", metrics["masked_stores"] >= 1),
         ("loop induction PHIs", ">= 1", metrics["phi_i64"] >= 1),

@@ -48,6 +48,7 @@ struct StencilInfo {
   llvm::Value *Predicate = nullptr;
   llvm::Value *VectorStep = nullptr;
   unsigned LogicalLoadCount = 0;
+  unsigned ElementBytes = 0;
   llvm::SmallVector<StreamInfo, 27> Streams;
 };
 

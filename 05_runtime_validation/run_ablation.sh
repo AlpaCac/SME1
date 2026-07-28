@@ -27,7 +27,7 @@ if [[ "${run_enabled}" != "1" ]]; then
   exit 0
 fi
 
-assembly_flags=(-O3 -march=armv9.2-a+nosve+sme)
+assembly_flags=(-O3 -march=armv9.2-a+nosve+sme+sme-f64f64)
 host_flags=(-O3)
 if [[ "$(uname -s)" == "Darwin" ]]; then
   macos_sdk="$(/usr/bin/xcrun --sdk macosx --show-sdk-path)"
