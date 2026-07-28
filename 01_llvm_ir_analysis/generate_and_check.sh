@@ -70,7 +70,7 @@ else
     if [[ "${function}" =~ ${kernel_pattern} || "${demangled}" =~ ${kernel_pattern} ]]; then
       selected_functions+=("${function}")
     fi
-  done < <(sed -n 's/^define .* @\\([^ (]*\\)(.*/\\1/p' "${full_ir}")
+  done < <(sed -n 's/^define .* @\([^ (]*\)(.*/\1/p' "${full_ir}")
 fi
 if [[ "${#selected_functions[@]}" -eq 0 ]]; then
   printf 'no kernel functions found with pattern: %s\n' "${kernel_pattern}" >&2
