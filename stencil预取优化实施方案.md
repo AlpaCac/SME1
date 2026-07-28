@@ -1255,9 +1255,10 @@ Apple M5 上已验证 Xcode `CPU Counters` 能对 SME 基准成功生成 trace�
 瓶颈采样，不是可直接相减的 L1D/L2 miss 总数。现已在 Instruments 中建立
 `SME Stencil Cache Counters` 手动模板，包含
 `ARM_L1D_CACHE_RD`、`ARM_L1D_CACHE_LMISS_RD`、`PL2_CACHE_ACCESS` 和
-`PL2_CACHE_MISS_LD`。`collect_cpu_counters.sh` 导出 `counters-profile`
-并解析 XML 引用，只累加目标进程的四个事件；`run_cpu_counter_comparison.sh`
-以奇偶轮交换顺序采集基线和预取版本，生成 PMU 对比报告。
+`PL2_CACHE_MISS_LD`。原开发分支曾使用 `collect_cpu_counters.sh` 导出
+`counters-profile` 并解析 XML 引用，再通过
+`run_cpu_counter_comparison.sh` 交替采集两种版本。上述 macOS 专用脚本
+不纳入 AArch64 Linux 迁移分支；服务器侧改用 `perf` 或厂商 PMU 工具。
 
 这里得到的是 1 ms 归因采样增量，不是精确的全程序架构计数。它会受到
 线程迁核、采样窗口和 PMU 复用影响，因此只能在模板、问题规模和重复参数

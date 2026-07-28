@@ -1,1 +1,0 @@
-StencilPrefetchPass: function=stencil_vector_copy loops=1 innermost-loops=1 computable-trip-counts=1 dom-tree-root=yes analyses=LoopInfo,ScalarEvolution,DominatorTree,TargetIR,AssumptionCache

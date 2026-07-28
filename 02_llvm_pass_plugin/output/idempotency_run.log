@@ -1,2 +1,0 @@
-StencilPrefetchPass: function=stencil_2d5p_sme_f32 status=AlreadyPrefetched
-StencilPrefetchPass: function=stencil_3d7p_sme_f32 status=AlreadyPrefetched

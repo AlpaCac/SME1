@@ -534,7 +534,8 @@ PMU cache miss 和带宽变化
 
 ## 七、Linux PMU 替代方案
 
-以下脚本不能迁移到 Linux：
+原分支中的以下脚本依赖 macOS，不能迁移到 Linux，因此本迁移分支不再
+保留：
 
 ```text
 05_runtime_validation/collect_cpu_counters.sh
