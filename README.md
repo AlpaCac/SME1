@@ -23,6 +23,7 @@
 | `05_runtime_validation/` | 正确性、配对性能、距离扫描、消融和多线程测试 |
 | `stencil预取优化实施方案.md` | 预取模型、决策算法和 LLVM 实施步骤 |
 | `断网AArch64服务器迁移指南.md` | 离线工具链准备、服务器适配与验收方法 |
+| `独立LLVM预取Pass部署教程.md` | 用独立 LLVM `opt` 改写 IR、再交回 BiSheng 编译的服务器流程 |
 
 `01_llvm_ir_analysis/output/`、`02_llvm_pass_plugin/output/`、
 `05_runtime_validation/output/` 和各级 `build/` 均由脚本创建，并已加入
@@ -45,14 +46,14 @@ stencil_all_sme.cpp
 
 ## 迁移顺序
 
-1. 按 `断网AArch64服务器迁移指南.md` 准备可离线安装的 Clang/LLVM、
-   CMake、Ninja 和系统依赖。
+1. 按 `独立LLVM预取Pass部署教程.md` 准备 upstream LLVM 19.1.7 开发工具链、
+   CMake、make 和系统依赖；BiSheng 发布包不承担 pass 开发环境角色。
 2. 将步骤 1、2、5 的目标三元组、工具路径、动态库后缀和 CPU Profile
    适配到服务器。
 3. 将服务器私有的 `stencil_all_sme.cpp` 放在仓库根目录或设置
    `STENCIL_SOURCE`，运行 `./01_llvm_ir_analysis/generate_and_check.sh`。
-4. 运行 `./02_llvm_pass_plugin/build_and_test.sh` 构建 pass，并检查 IR
-   中的预取 intrinsic 和汇编中的 `prfm`。
+4. 用独立 LLVM 构建 pass 并通过 `opt` 改写完整 IR，再由 BiSheng 生成汇编；
+   检查 IR 中的预取 intrinsic 和汇编中的 `prfm`。
 5. 运行 `./05_runtime_validation/build_and_run.sh` 验证数值正确性。
 6. 依次运行配对基准、距离扫描、类别消融和多线程测试，建立服务器专用
    Profile。
