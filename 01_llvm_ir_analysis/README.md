@@ -48,9 +48,10 @@ STENCIL_KERNEL_PATTERN='stencil' ./01_llvm_ir_analysis/generate_and_check.sh
 IR 符号。
 
 `analysis_report.md` 的检查项用于描述 IR 特征而非拒绝输入。不同 Clang 版本可将
-等价循环降低为 `i32` PHI、`whilelt`（有符号尾掩码）或 SVE `cnt*`，这些形式都会
-被报告识别。某项为 `FAIL` 只表示未观察到该特征，步骤 1 仍会成功生成 kernel-only
-IR；步骤 2 的预取 pass 会独立应用更严格的可插入判定。
+等价循环降低为 `i32` PHI、`whilelt`（有符号尾掩码）、SVE `cnt*` 或通用的
+`llvm.vscale`，这些形式都会被报告识别。某项为 `FAIL` 只表示未观察到该特征，
+步骤 1 仍会成功生成 kernel-only IR；步骤 2 的预取 pass 会独立应用更严格的
+可插入判定。
 
 运行时驱动通过 C 符号链接 kernel，因此计算函数应使用 `extern "C"` 导出，
 或在 C++ 源中提供同名 C ABI 包装函数。`main` 和 test 函数不要加入

@@ -67,6 +67,7 @@ def metrics_for(ir: str, name: str) -> tuple[list[tuple[str, str, bool]], dict[s
         + body.count("llvm.aarch64.sme.cntsd"),
         "sve_vector_lengths": body.count("llvm.aarch64.sve.cntw")
         + body.count("llvm.aarch64.sve.cntd"),
+        "vscale_vector_lengths": body.count("llvm.vscale."),
         "phi_i32": body.count("phi i32"),
         "phi_i64": body.count("phi i64"),
         "geps": body.count("getelementptr"),
@@ -86,8 +87,11 @@ def metrics_for(ir: str, name: str) -> tuple[list[tuple[str, str, bool]], dict[s
         ),
         (
             "scalable vector length",
-            "SME `cnts*` or SVE `cnt*`",
-            metrics["sme_vector_lengths"] + metrics["sve_vector_lengths"] >= 1,
+            "SME/SVE `cnt*` or `llvm.vscale`",
+            metrics["sme_vector_lengths"]
+            + metrics["sve_vector_lengths"]
+            + metrics["vscale_vector_lengths"]
+            >= 1,
         ),
         ("logical masked loads", ">= 1", metrics["masked_loads"] >= 1),
         ("masked store", ">= 1", metrics["masked_stores"] >= 1),
