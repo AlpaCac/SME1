@@ -3,13 +3,13 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-workspace_root="$(cd "${repo_root}/.." && pwd)"
 build_dir="${script_dir}/build"
 output_dir="${script_dir}/output"
-llvm_clang="${LLVM_CLANG:-${workspace_root}/external/Polygeist/build/bin/clang}"
-runtime_clang="${RUNTIME_CLANG:-/usr/bin/clang}"
-plugin="${repo_root}/02_llvm_pass_plugin/build/StencilPrefetchPass.dylib"
-compat_ir="${repo_root}/02_llvm_pass_plugin/build/stencil_sme_kernels.llvm18.ll"
+llvm_clang="${LLVM_CLANG:-$(command -v clang)}"
+runtime_clang="${RUNTIME_CLANG:-${llvm_clang}}"
+plugin="${repo_root}/02_llvm_pass_plugin/build/StencilPrefetchPass.so"
+if [[ ! -f "${plugin}" ]]; then plugin="${repo_root}/02_llvm_pass_plugin/build/StencilPrefetchPass.dylib"; fi
+kernel_ir="${STENCIL_KERNEL_IR:-${repo_root}/01_llvm_ir_analysis/output/stencil_all_sme.kernels.ll}"
 
 FORCE_SME_RUN="${FORCE_SME_RUN:-0}" \
   "${script_dir}/run_benchmark.sh" >/dev/null
@@ -45,7 +45,7 @@ generate_variant() {
   env "$@" "${llvm_clang}" \
     -x ir -O1 -S -emit-llvm -Wno-override-module \
     -fpass-plugin="${plugin}" \
-    "${compat_ir}" \
+    "${kernel_ir}" \
     -o "${variant_ir}" \
     2> "${output_dir}/ablation_${name}_profile.log"
   "${llvm_clang}" \
@@ -142,9 +142,9 @@ speedup() {
 
 {
   printf '# 步骤 5 预取类别消融\n\n'
-  printf -- '- 平台：`%s %s`（Apple M5，SME/SME2）\n' \
+  printf -- '- 平台：`%s %s`\n' \
     "$(uname -s)" "$(uname -m)"
-  printf -- '- 可比性：同一 LLVM 18 IR、`-O1` 管线、问题规模和样本数\n'
+  printf -- '- 可比性：同一 kernel-only LLVM IR、`-O1` 管线、问题规模和样本数\n'
   printf -- '- 2D 规模：`%sx%s`\n' "${height_2d}" "${width_2d}"
   printf -- '- 3D 规模：`%sx%sx%s`\n\n' \
     "${depth_3d}" "${height_3d}" "${width_3d}"

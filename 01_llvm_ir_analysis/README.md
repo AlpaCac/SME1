@@ -1,55 +1,55 @@
-# 步骤 1：确认 Clang LLVM IR 可分析
+# 步骤 1：从服务器 C++ 输入生成 kernel-only IR
 
-本目录落实 `stencil预取优化实施方案.md` 第三部分的步骤 1。目标是证明原始 SME/SVE ACLE C kernel 经 Clang `-O1` 编译后，LLVM IR 仍保留后续 `StencilPrefetchPass` 所需的循环、地址和向量访存信息。
+服务器上的 `stencil_all_sme.cpp` 同时包含多个 stencil 计算函数、测试和
+`main`，但该文件不提交到仓库。步骤 1 先保留完整 LLVM IR，再用
+`llvm-extract` 生成仅含计算函数的 kernel-only IR；步骤 2 以后只消费后者。
 
-## 文件
+## 输入选择
 
-| 文件 | 说明 |
+默认输入是仓库根目录下被 `.gitignore` 排除的 `stencil_all_sme.cpp`：
+
+```bash
+./01_llvm_ir_analysis/generate_and_check.sh
+```
+
+若源文件位于其他目录，指定绝对路径：
+
+```bash
+STENCIL_SOURCE=/data/stencil_all_sme.cpp \
+  ./01_llvm_ir_analysis/generate_and_check.sh
+```
+
+默认提取 IR 中名称以 `stencil_` 开头的所有未修饰函数。对于其他命名规则或
+C++ 符号修饰，显式给出逗号分隔的 C ABI 函数名：
+
+```bash
+STENCIL_KERNEL_FUNCTIONS='stencil_1d3p_sme_f32,stencil_2d9p_sme_f32,stencil_3d27p_sme_f32' \
+  ./01_llvm_ir_analysis/generate_and_check.sh
+```
+
+运行时驱动通过 C 符号链接 kernel，因此计算函数应使用 `extern "C"` 导出，
+或在 C++ 源中提供同名 C ABI 包装函数。`main` 和 test 函数不要加入
+`STENCIL_KERNEL_FUNCTIONS`。
+
+## 产物
+
+| 路径 | 作用 |
 |---|---|
-| `generate_and_check.sh` | 从仓库根目录的 C kernel 生成 LLVM IR，并运行自动检查 |
-| `check_ir.py` | 按函数检查循环、GEP、masked load/store、SVE/SME intrinsic 和函数属性 |
-| `C与LLVM_IR对应关系.md` | 逐段说明 C 函数、循环、邻域地址和 ACLE intrinsic 如何对应到当前 LLVM IR |
-| `output/stencil_sme_kernels.ll` | 当前 Clang 生成的 LLVM IR |
-| `output/analysis_report.md` | 自动检查结果和后续 pass 可使用的信息 |
+| `output/stencil_all_sme.full.ll` | 完整模块，包含计算函数、test 和 `main` |
+| `output/stencil_all_sme.kernels.ll` | 仅提取的计算函数，步骤 2 的唯一输入 |
+| `output/analysis_report.md` | 各提取函数的循环、GEP、load/store、SVE/SME 指标 |
 
-## 运行
+文件名会随 `STENCIL_SOURCE` 的基名变化。可用 `STENCIL_KERNEL_IR` 覆盖步骤
+2/5 中默认的 kernel-only IR 路径。
 
-```bash
-./01_llvm_ir_analysis/generate_and_check.sh
-```
+## 算子范围
 
-可覆盖编译器和目标参数：
+IR 报告可以记录任意被提取的函数。当前 pass 识别并可插入预取的 load 模式为：
 
-```bash
-CLANG=/path/to/clang \
-TARGET=arm64-apple-macos15 \
-MARCH=armv9.2-a+sme+sve2 \
-./01_llvm_ir_analysis/generate_and_check.sh
-```
+1. 1D3P
+2. 2D5P、2D9P
+3. 3D7P、3D13P、3D25P、3D27P
 
-脚本执行：
-
-```text
-stencil_sme_kernels.c
--> clang -O1 -S -emit-llvm
--> output/stencil_sme_kernels.ll
--> check_ir.py
--> output/analysis_report.md
-```
-
-## 验收条件
-
-两个函数都必须满足：
-
-1. 函数属性包含 `aarch64_pstate_sm_body`。
-2. 调用 `llvm.aarch64.sme.cntsw`。
-3. 存在 `phi i64` 和回边分支所表示的循环。
-4. 存在 `getelementptr` 地址计算。
-5. 存在 SVE 浮点算术和一个 masked store。
-
-逻辑输入 load 数必须为：
-
-1. `stencil_2d5p_sme_f32`：5 个 `llvm.masked.load`
-2. `stencil_3d7p_sme_f32`：7 个 `llvm.masked.load`
-
-检查工具不依赖 SSA 名称、基本块编号或固定源码行号。后续 LLVM pass 仍应使用 `LoopInfo`、ScalarEvolution 和 DominatorTree 完成正式识别。
+识别要求最内层为 `cntsw()` 步长的 predicated SVE 循环，并且各 load/store
+共享 `whilelo` 谓词。其他算子会保留在 kernel-only IR 中，但不会被错误地
+插入预取。

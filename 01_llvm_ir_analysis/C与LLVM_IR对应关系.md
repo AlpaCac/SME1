@@ -1,5 +1,9 @@
 # Stencil C 与 LLVM IR 代码对应关系
 
+> 此文档描述仓库内 2D5P/3D7P 回归 fixture。服务器上的实际入口改为
+> `stencil_all_sme.cpp`：步骤 1 先生成完整 IR，再提取多个计算函数的
+> kernel-only IR，具体命令见本目录 `README.md`。
+
 本文说明以下两个文件之间的对应关系：
 
 1. C 源码：`../stencil_sme_kernels.c`

@@ -4,17 +4,21 @@
 服务器。仓库只保留可重新构建或验证方案所需的源码、脚本、测试输入和
 维护文档，不提交本机生成的 LLVM IR、汇编、日志及性能报告。
 
-当前支持两个单时间步、常系数算子：
+服务器私有输入 `stencil_all_sme.cpp` 可以包含 test、`main` 和多个算子。步骤
+1 会生成完整 IR 后提取计算函数，后续步骤不链接或分析 `main`/test。当前 pass
+支持以下单时间步、常系数算子：
 
-1. 2D 5-point stencil（2D5P）
-2. 3D 7-point stencil（3D7P）
+1. 1D 3-point（1D3P）
+2. 2D 5-point、9-point（2D5P、2D9P）
+3. 3D 7-point、13-point、25-point、27-point（3D7P、3D13P、3D25P、3D27P）
 
 ## 保留内容
 
 | 路径 | 作用 |
 |---|---|
-| `stencil_sme_kernels.c` | 使用 SME/SVE ACLE 实现的 2D5P、3D7P kernel |
-| `01_llvm_ir_analysis/` | 从 C 生成 LLVM IR，并检查循环、地址和向量访存结构 |
+| `stencil_all_sme.cpp` | 服务器本地输入，不提交；包含多个计算函数、test 和 `main` |
+| `stencil_sme_kernels.c` | 本地 2D5P、3D7P 回归 fixture |
+| `01_llvm_ir_analysis/` | 从 C++ 生成完整 IR，提取 kernel-only IR 并检查向量访存结构 |
 | `02_llvm_pass_plugin/` | LLVM pass 源码、决策模型、测试输入和构建脚本 |
 | `05_runtime_validation/` | 正确性、配对性能、距离扫描、消融和多线程测试 |
 | `stencil预取优化实施方案.md` | 预取模型、决策算法和 LLVM 实施步骤 |
@@ -27,8 +31,9 @@
 ## 编译链路
 
 ```text
-stencil_sme_kernels.c
--> Clang 生成 LLVM IR
+stencil_all_sme.cpp
+-> Clang 生成完整 LLVM IR（含 test/main）
+-> llvm-extract 提取 kernel-only LLVM IR
 -> StencilPrefetchPass 分析循环并作出预取决策
 -> 插入 llvm.aarch64.prefetch
 -> AArch64 后端生成 SME/SVE 计算指令和 PRFM
@@ -44,7 +49,8 @@ stencil_sme_kernels.c
    CMake、Ninja 和系统依赖。
 2. 将步骤 1、2、5 的目标三元组、工具路径、动态库后缀和 CPU Profile
    适配到服务器。
-3. 运行 `./01_llvm_ir_analysis/generate_and_check.sh` 验证 C 到 IR。
+3. 将服务器私有的 `stencil_all_sme.cpp` 放在仓库根目录或设置
+   `STENCIL_SOURCE`，运行 `./01_llvm_ir_analysis/generate_and_check.sh`。
 4. 运行 `./02_llvm_pass_plugin/build_and_test.sh` 构建 pass，并检查 IR
    中的预取 intrinsic 和汇编中的 `prfm`。
 5. 运行 `./05_runtime_validation/build_and_run.sh` 验证数值正确性。

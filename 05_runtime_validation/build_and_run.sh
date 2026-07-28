@@ -24,21 +24,10 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 fi
 
 "${runtime_clang}" "${kernel_assembly_flags[@]}" \
-  -c "${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.ir-baseline.s" \
+  -c "${repo_root}/02_llvm_pass_plugin/output/stencil_kernels.baseline.s" \
   -o "${build_dir}/stencil_kernels.baseline.o"
 
-case "${runtime_profile}" in
-  generic-sme)
-    prefetch_assembly="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.s"
-    ;;
-  apple-m5)
-    prefetch_assembly="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.apple-m5.s"
-    ;;
-  *)
-    printf 'unsupported SME_RUNTIME_PROFILE: %s\n' "${runtime_profile}" >&2
-    exit 2
-    ;;
-esac
+prefetch_assembly="${repo_root}/02_llvm_pass_plugin/output/stencil_kernels.s"
 
 "${runtime_clang}" "${kernel_assembly_flags[@]}" \
   -c "${prefetch_assembly}" \
@@ -97,7 +86,7 @@ fi
   printf '# 步骤 5 数值正确性状态\n\n'
   printf -- '- 状态：**%s**\n' "${result}"
   printf -- '- 说明：%s\n' "${detail}"
-  printf -- '- 运行平台：`%s %s`（Apple M5，SME/SME2）\n' \
+  printf -- '- 运行平台：`%s %s`\n' \
     "$(uname -s)" "$(uname -m)"
   printf -- '- 运行编译器：`%s`\n' "${runtime_clang_version}"
   printf -- '- 实际 streaming VL：`%s` B\n' "${actual_streaming_vl}"

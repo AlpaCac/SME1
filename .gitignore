@@ -13,3 +13,4 @@ __pycache__/
 /stencil_sme_kernels.ll
 /stencil_sme_kernels.s
 /stencil_benchmark
+/stencil_all_sme.cpp

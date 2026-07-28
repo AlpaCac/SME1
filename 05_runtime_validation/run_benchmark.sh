@@ -108,12 +108,12 @@ speedup_3d="$(awk -v p="${gups_3d_prefetch}" -v b="${gups_3d_baseline}" \
 
 {
   printf '# 步骤 5 初始性能结果\n\n'
-  printf -- '- 平台：`%s %s`（Apple M5，SME/SME2）\n' \
+  printf -- '- 平台：`%s %s`\n' \
     "$(uname -s)" "$(uname -m)"
   printf -- '- 预取 Profile：`%s`\n' "${runtime_profile}"
   printf -- '- 重复次数/样本数：`%s / %s`，报告样本中位数\n' \
     "${repetitions}" "${samples}"
-  printf -- '- 可比性：基线/预取来自同一 LLVM 18 IR 与 `-O1` 管线，'
+  printf -- '- 可比性：基线/预取来自同一 kernel-only LLVM IR 与 `-O1` 管线，'
   printf '仅 pass 开关不同\n'
   printf -- '- 正确性：基线与预取 checksum 一致\n'
   printf -- '- 2D 规模：`%sx%s`，基线 `%s` GUP/s，预取 `%s` GUP/s，加速比 `%sx`\n' \

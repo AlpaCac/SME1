@@ -3,13 +3,13 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-workspace_root="$(cd "${repo_root}/.." && pwd)"
 build_dir="${script_dir}/build"
 output_dir="${script_dir}/output"
-llvm_clang="${LLVM_CLANG:-${workspace_root}/external/Polygeist/build/bin/clang}"
-runtime_clang="${RUNTIME_CLANG:-/usr/bin/clang}"
-plugin="${repo_root}/02_llvm_pass_plugin/build/StencilPrefetchPass.dylib"
-compat_ir="${repo_root}/02_llvm_pass_plugin/build/stencil_sme_kernels.llvm18.ll"
+llvm_clang="${LLVM_CLANG:-$(command -v clang)}"
+runtime_clang="${RUNTIME_CLANG:-${llvm_clang}}"
+plugin="${repo_root}/02_llvm_pass_plugin/build/StencilPrefetchPass.so"
+if [[ ! -f "${plugin}" ]]; then plugin="${repo_root}/02_llvm_pass_plugin/build/StencilPrefetchPass.dylib"; fi
+kernel_ir="${STENCIL_KERNEL_IR:-${repo_root}/01_llvm_ir_analysis/output/stencil_all_sme.kernels.ll}"
 
 FORCE_SME_RUN="${FORCE_SME_RUN:-0}" \
   "${script_dir}/build_and_run.sh" >/dev/null
@@ -36,7 +36,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 fi
 
 rename_baseline() {
-  source="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.ir-baseline.s"
+  source="${repo_root}/02_llvm_pass_plugin/output/stencil_kernels.baseline.s"
   renamed="${build_dir}/profile_sweep.baseline.s"
   sed \
     -e 's/stencil_2d5p_sme_f32/baseline_stencil_2d5p_sme_f32/g' \
@@ -57,7 +57,7 @@ generate_variant() {
   env "$@" "${llvm_clang}" \
     -x ir -O1 -S -emit-llvm -Wno-override-module \
     -fpass-plugin="${plugin}" \
-    "${compat_ir}" \
+    "${kernel_ir}" \
     -o "${variant_ir}" \
     2> "${output_dir}/profile_sweep_${name}_decision.log"
   "${llvm_clang}" \
@@ -195,8 +195,8 @@ depth_3d="${STENCIL_3D_DEPTH:-512}"
 height_3d="${STENCIL_3D_HEIGHT:-32}"
 
 {
-  printf '# Apple M5 预取距离扫描\n\n'
-  printf -- '- 可比性：同一 LLVM 18 IR、`-O1` 管线和同进程配对执行\n'
+  printf '# 预取距离扫描\n\n'
+  printf -- '- 可比性：同一 kernel-only LLVM IR、`-O1` 管线和同进程配对执行\n'
   printf -- '- 重复次数/样本数/外层轮数：`%s / %s / %s`\n' \
     "${repetitions}" "${samples}" "${rounds}"
   printf -- '- 2D 规模：`%sx%s`\n' "${height_2d}" "${width_2d}"

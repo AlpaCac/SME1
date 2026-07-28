@@ -22,8 +22,8 @@ if [[ "${run_enabled}" != "1" ]]; then
   exit 0
 fi
 
-baseline_source="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.ir-baseline.s"
-prefetch_source="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.apple-m5.s"
+baseline_source="${repo_root}/02_llvm_pass_plugin/output/stencil_kernels.baseline.s"
+prefetch_source="${repo_root}/02_llvm_pass_plugin/output/stencil_kernels.s"
 baseline_renamed="${build_dir}/stencil_kernels.threaded-baseline.s"
 prefetch_renamed="${build_dir}/stencil_kernels.threaded-prefetch.s"
 
@@ -92,8 +92,8 @@ range() {
 
 report="${output_dir}/threaded_benchmark_report.md"
 {
-  printf '# Apple M5 3D7P 多线程配对结果\n\n'
-  printf -- '- Profile：`apple-m5`\n'
+  printf '# 3D7P 多线程配对结果\n\n'
+  printf -- '- Profile：`%s`\n' "${SME_RUNTIME_PROFILE:-generic-sme}"
   printf -- '- 每线程独立网格：`%sx%sx%s`\n' \
     "${depth}" "${height}" "${width}"
   printf -- '- 每轮重复/样本/外层轮数：`%s / %s / %s`\n' \

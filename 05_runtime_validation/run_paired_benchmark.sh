@@ -24,19 +24,8 @@ if [[ "${run_enabled}" != "1" ]]; then
   exit 0
 fi
 
-baseline_source="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.ir-baseline.s"
-case "${runtime_profile}" in
-  generic-sme)
-    prefetch_source="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.s"
-    ;;
-  apple-m5)
-    prefetch_source="${repo_root}/02_llvm_pass_plugin/output/stencil_sme_kernels.apple-m5.s"
-    ;;
-  *)
-    printf 'unsupported SME_RUNTIME_PROFILE: %s\n' "${runtime_profile}" >&2
-    exit 2
-    ;;
-esac
+baseline_source="${repo_root}/02_llvm_pass_plugin/output/stencil_kernels.baseline.s"
+prefetch_source="${repo_root}/02_llvm_pass_plugin/output/stencil_kernels.s"
 baseline_renamed="${build_dir}/stencil_kernels.baseline-renamed.s"
 prefetch_renamed="${build_dir}/stencil_kernels.prefetch-renamed.s"
 
@@ -144,7 +133,7 @@ range_3d="$(range "${speedups_3d[@]}")"
 
 {
   printf '# 步骤 5 同进程配对性能结果\n\n'
-  printf -- '- 平台：`%s %s`（Apple M5，SME/SME2）\n' \
+  printf -- '- 平台：`%s %s`\n' \
     "$(uname -s)" "$(uname -m)"
   printf -- '- 方法：同一进程链接基线/预取函数，奇偶样本交换执行顺序\n'
   printf -- '- 预取 Profile：`%s`\n' "${runtime_profile}"

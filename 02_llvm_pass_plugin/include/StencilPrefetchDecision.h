@@ -55,6 +55,7 @@ struct TargetPrefetchProfile {
   unsigned UsefulCycles2D = 8;
   unsigned UsefulCycles3D = 10;
   unsigned MaxDistance = 32;
+  bool EnableCurrentL1 = false;
   bool EnableRowL1 = true;
   bool EnablePlaneL1 = true;
   bool EnablePlaneL2 = true;
@@ -75,7 +76,7 @@ struct PrefetchDecision {
 const TargetPrefetchProfile &getDefaultPrefetchProfile();
 const TargetPrefetchProfile &getAppleM5PrefetchProfile();
 
-llvm::SmallVector<PrefetchDecision, 8>
+llvm::SmallVector<PrefetchDecision, 32>
 decidePrefetches(const StencilInfo &Stencil, llvm::ScalarEvolution &SE,
                  const TargetPrefetchProfile &Profile);
 

@@ -82,7 +82,13 @@ sme1::TargetPrefetchProfile getActiveProfile() {
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_USEFUL_CYCLES_3D", Profile.UsefulCycles3D);
 
-  unsigned Toggle = Profile.EnableRowL1;
+  unsigned Toggle = Profile.EnableCurrentL1;
+  if (applyUnsignedEnvironmentOverride("SME_PREFETCH_ENABLE_CURRENT_L1",
+                                       Toggle)) {
+    Profile.EnableCurrentL1 = Toggle != 0;
+    Overridden = true;
+  }
+  Toggle = Profile.EnableRowL1;
   if (applyUnsignedEnvironmentOverride("SME_PREFETCH_ENABLE_ROW_L1", Toggle)) {
     Profile.EnableRowL1 = Toggle != 0;
     Overridden = true;
@@ -119,7 +125,10 @@ class StencilPrefetchPass
     : public PassInfoMixin<StencilPrefetchPass> {
 public:
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM) {
-    if (F.isDeclaration() || !F.getName().starts_with("stencil_"))
+    // Step 1 supplies a kernel-only module, so names need not encode which
+    // functions are eligible for analysis. This also supports C++ sources
+    // whose stencil kernels do not share a single prefix.
+    if (F.isDeclaration())
       return PreservedAnalyses::all();
     if (hasAArch64Prefetch(F)) {
       errs() << "StencilPrefetchPass: function=" << F.getName()
@@ -147,7 +156,7 @@ public:
            << " analyses=LoopInfo,ScalarEvolution,DominatorTree,"
               "TargetIR,AssumptionCache\n";
 
-    SmallVector<sme1::StencilInfo, 2> Stencils =
+    SmallVector<sme1::StencilInfo, 8> Stencils =
         sme1::analyzeStencilFunction(F, LI, SE, DT);
     bool Changed = false;
     const sme1::TargetPrefetchProfile Profile = getActiveProfile();
@@ -174,12 +183,13 @@ public:
              << " plane-or-tile-bytes="
              << Profile.ExpectedPlaneOrTileBytes
              << " max-streams=" << Profile.MaxPrefetchStreams
+             << " current-l1=" << (Profile.EnableCurrentL1 ? "on" : "off")
              << " row-l1=" << (Profile.EnableRowL1 ? "on" : "off")
              << " plane-l1=" << (Profile.EnablePlaneL1 ? "on" : "off")
              << " plane-l2=" << (Profile.EnablePlaneL2 ? "on" : "off")
              << "\n";
 
-      SmallVector<sme1::PrefetchDecision, 8> Decisions =
+      SmallVector<sme1::PrefetchDecision, 32> Decisions =
           sme1::decidePrefetches(Stencil, SE, Profile);
       for (const sme1::PrefetchDecision &Decision : Decisions) {
         errs() << "StencilDecision: function=" << F.getName()

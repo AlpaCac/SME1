@@ -33,16 +33,25 @@ uint64_t divideCeil(uint64_t Numerator, uint64_t Denominator) {
 }
 
 bool isRowStream(StreamKind Kind) {
-  return Kind == StreamKind::NorthRow || Kind == StreamKind::SouthRow;
+  return Kind == StreamKind::RowNeighbor;
 }
 
 bool isPlaneStream(StreamKind Kind) {
-  return Kind == StreamKind::FrontPlane || Kind == StreamKind::BackPlane;
+  return Kind == StreamKind::PlaneNeighbor;
 }
+
+bool is1D(StencilKind Kind) { return Kind == StencilKind::Stencil1D3P; }
+
+bool is2D(StencilKind Kind) {
+  return Kind == StencilKind::Stencil2D5P ||
+         Kind == StencilKind::Stencil2D9P;
+}
+
+bool is3D(StencilKind Kind) { return !is1D(Kind) && !is2D(Kind); }
 
 unsigned candidatePriority(StencilKind Stencil, StreamKind Stream,
                            CacheLevel Level) {
-  if (Stencil == StencilKind::Stencil2D5P)
+  if (is1D(Stencil))
     return 0;
   if (isPlaneStream(Stream) && Level == CacheLevel::L1)
     return 0;
@@ -70,8 +79,7 @@ unsigned latencyFor(const TargetPrefetchProfile &Profile, CacheLevel Level) {
 
 unsigned usefulCycles(const TargetPrefetchProfile &Profile,
                       StencilKind Kind) {
-  return Kind == StencilKind::Stencil2D5P ? Profile.UsefulCycles2D
-                                          : Profile.UsefulCycles3D;
+  return is3D(Kind) ? Profile.UsefulCycles3D : Profile.UsefulCycles2D;
 }
 
 unsigned estimatedTripCount(const StencilInfo &Stencil, ScalarEvolution &SE,
@@ -129,12 +137,13 @@ PrefetchDecision makeDecision(const StencilInfo &Stencil,
 
   Decision.DistanceIterations = Distance;
   Decision.LiveBytes = Distance * Profile.AssumedStreamingVLBytes;
-  Decision.ReuseCount = 3;
+  Decision.ReuseCount = std::max<unsigned>(1, Stream.Loads.size());
   if (isRowStream(Stream.Kind)) {
-    uint64_t RowMultiplier =
-        Stencil.Kind == StencilKind::Stencil2D5P ? 3 : 5;
+    uint64_t RowMultiplier = is2D(Stencil.Kind) ? 3 : 5;
     Decision.ReuseDistanceBytes =
         RowMultiplier * Profile.ExpectedRowBytes;
+  } else if (Stream.Kind == StreamKind::CurrentRow) {
+    Decision.ReuseDistanceBytes = Profile.ExpectedRowBytes;
   } else {
     Decision.ReuseDistanceBytes = Profile.ExpectedPlaneOrTileBytes;
   }
@@ -181,14 +190,11 @@ const TargetPrefetchProfile &getAppleM5PrefetchProfile() {
   return Profile;
 }
 
-SmallVector<PrefetchDecision, 8>
+SmallVector<PrefetchDecision, 32>
 decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
                  const TargetPrefetchProfile &Profile) {
-  SmallVector<Candidate, 8> Candidates;
+  SmallVector<Candidate, 32> Candidates;
   for (const StreamInfo &Stream : Stencil.Streams) {
-    if (Stream.Kind == StreamKind::CurrentRow)
-      continue;
-
     auto AddCandidate = [&](CacheLevel Level) {
       Candidate C;
       C.Decision = makeDecision(Stencil, Stream, Level, SE, Profile);
@@ -196,10 +202,12 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
       Candidates.push_back(C);
     };
 
-    if ((isRowStream(Stream.Kind) && Profile.EnableRowL1) ||
+    if ((Stream.Kind == StreamKind::CurrentRow && is1D(Stencil.Kind) &&
+         Profile.EnableCurrentL1) ||
+        (isRowStream(Stream.Kind) && Profile.EnableRowL1) ||
         (isPlaneStream(Stream.Kind) && Profile.EnablePlaneL1))
       AddCandidate(CacheLevel::L1);
-    if (Stencil.Kind == StencilKind::Stencil3D7P &&
+    if (is3D(Stencil.Kind) &&
         isPlaneStream(Stream.Kind) && Profile.EnablePlaneL2)
       AddCandidate(CacheLevel::L2);
   }
@@ -215,9 +223,9 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
   uint64_t FrontierBytes =
       std::max(Profile.CacheLineBytes, Profile.AssumedStreamingVLBytes);
   uint64_t L1Used =
-      (Stencil.Kind == StencilKind::Stencil2D5P ? 3 : 5) * FrontierBytes;
+      Stencil.Streams.size() * FrontierBytes;
   uint64_t L2Used =
-      Stencil.Kind == StencilKind::Stencil3D7P
+      is3D(Stencil.Kind)
           ? 3 * Profile.ExpectedPlaneOrTileBytes
           : 0;
   uint64_t InstructionCount = 0;
@@ -226,7 +234,7 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
       divideCeil(Profile.AssumedStreamingVLBytes, Profile.CacheLineBytes);
   SmallPtrSet<const StreamInfo *, 8> AdmittedStreams;
 
-  SmallVector<PrefetchDecision, 8> Results;
+  SmallVector<PrefetchDecision, 32> Results;
   for (Candidate &Candidate : Candidates) {
     PrefetchDecision &Decision = Candidate.Decision;
     if (Decision.Reason == DecisionReason::ShortTripCount) {
