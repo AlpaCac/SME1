@@ -21,6 +21,7 @@
 | `01_llvm_ir_analysis/` | 从 C++ 生成完整 IR，提取 kernel-only IR 并检查向量访存结构 |
 | `02_llvm_pass_plugin/` | LLVM pass 源码、决策模型、测试输入和构建脚本 |
 | `05_runtime_validation/` | 正确性、配对性能、距离扫描、消融和多线程测试 |
+| `scripts/` | 服务器上依次执行的独立 LLVM IR 检查与 pass 构建脚本 |
 | `stencil预取优化实施方案.md` | 预取模型、决策算法和 LLVM 实施步骤 |
 | `断网AArch64服务器迁移指南.md` | 离线工具链准备、服务器适配与验收方法 |
 | `独立LLVM预取Pass部署教程.md` | 用独立 LLVM `opt` 改写 IR、再交回 BiSheng 编译的服务器流程 |
