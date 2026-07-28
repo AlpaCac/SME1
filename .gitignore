@@ -14,3 +14,9 @@ __pycache__/
 /stencil_sme_kernels.s
 /stencil_benchmark
 /stencil_all_sme.cpp
+
+# Server-local standalone LLVM source, build, and installation.
+/tools/llvm-project-19.1.7.src.tar.xz
+/tools/llvm-project-19.1.7.src/
+/tools/llvm-project-19.1.7.build/
+/tools/llvm-19.1.7/

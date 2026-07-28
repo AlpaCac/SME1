@@ -42,6 +42,22 @@ LLVM pass 的构建。
 以下以 `~/toolchains/llvm-19.1.7` 为安装位置。LLVM 官方源码归档 URL 是固定的
 release URL；`curl -fL` 会跟随 GitHub 的临时下载重定向。
 
+若源码压缩包已位于仓库的 `tools/llvm-project-19.1.7.src.tar.xz`，优先直接运行
+仓库提供的安装脚本。脚本默认将源码、构建目录和安装目录都放在 `tools/` 下：
+
+```bash
+./tools/install_standalone_llvm.sh
+```
+
+编译内存不足时限制并行度：
+
+```bash
+JOBS=1 ./tools/install_standalone_llvm.sh
+```
+
+脚本结束后会打印 `STANDALONE_LLVM` 的导出命令。下面的手动命令仅用于需要自定义
+安装目录时的参考：
+
 ```bash
 mkdir -p ~/src ~/toolchains
 cd ~/src
