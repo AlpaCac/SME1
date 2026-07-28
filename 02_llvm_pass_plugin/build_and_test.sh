@@ -38,6 +38,14 @@ fi
 
 llvm_dir="$("${llvm_config}" --cmakedir)"
 llvm_bindir="$("${llvm_config}" --bindir)"
+llvm_includedir="$("${llvm_config}" --includedir)"
+if [[ ! -f "${llvm_includedir}/llvm/ADT/SmallVector.h" ]]; then
+  printf 'missing LLVM development header: %s/llvm/ADT/SmallVector.h\n' \
+    "${llvm_includedir}" >&2
+  printf 'the LLVM installation selected by llvm-config is not a complete development package.\n' >&2
+  printf 'install matching LLVM headers or set LLVM_CONFIG to the full LLVM installation.\n' >&2
+  exit 1
+fi
 plugin_cc="${PLUGIN_CC:-${llvm_bindir}/clang}"
 plugin_cxx="${PLUGIN_CXX:-${llvm_bindir}/clang++}"
 llvm_clang="${LLVM_CLANG:-${llvm_bindir}/clang}"

@@ -57,6 +57,17 @@ export PATH="${LLVM_HOME}/bin:${PATH}"
 pass 开发文件，不能构建插件；需要获取与加载插件的 Clang ABI 兼容的完整 LLVM
 开发包。
 
+同样确认 LLVM 头文件实际存在：
+
+```bash
+llvm-config --includedir
+test -f "$(llvm-config --includedir)/llvm/ADT/SmallVector.h" && echo 'LLVM headers: OK'
+```
+
+若此检查失败，不能通过添加 CMake include 参数修复；应安装匹配版本的 LLVM
+development/devel 包，或将 `LLVM_CONFIG` 指向包含 `include/llvm` 的完整 BiSheng
+LLVM 安装。
+
 ```bash
 LLVM_CONFIG=/path/to/llvm-config \
 LLVM_CLANG=/path/to/clang \

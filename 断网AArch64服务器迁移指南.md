@@ -324,6 +324,8 @@ llvm-config --version
 llvm-config --bindir
 llvm-config --cmakedir
 test -f "$(llvm-config --cmakedir)/LLVMConfig.cmake" && echo 'LLVM CMake config: OK'
+llvm-config --includedir
+test -f "$(llvm-config --includedir)/llvm/ADT/SmallVector.h" && echo 'LLVM headers: OK'
 ```
 
 若全部成功，直接构建，不需要设置 `LLVM_HOME`：
@@ -343,9 +345,11 @@ export LLVM_HOME="$(dirname "$(dirname "$(readlink -f "${LLVM_CONFIG}")")")"
 export PATH="${LLVM_HOME}/bin:${PATH}"
 ```
 
-若服务器只有 `clang`，但没有 `llvm-config` 或 `LLVMConfig.cmake`，则该 BiSheng
-安装不包含构建 pass 所需的 LLVM 开发文件。必须安装或获取与 `clang 19.1.7` ABI
-兼容的完整 LLVM 19 开发包，不能用其他主版本替代。
+若服务器只有 `clang`，没有 `llvm-config`、`LLVMConfig.cmake`，或缺少
+`llvm/ADT/SmallVector.h`，则该 BiSheng 安装不包含构建 pass 所需的 LLVM 开发文件。
+必须安装或获取与 `clang 19.1.7` ABI 兼容的完整 LLVM 19 development/devel 包，
+不能用其他主版本替代。不要通过手工复制单个头文件或追加 CMake include 路径解决，
+因为 pass 还需要同一安装的 LLVM 库与 CMake 配置。
 
 ### 1. 步骤 1 的 target triple
 
