@@ -7,7 +7,7 @@ output_dir="${script_dir}/output"
 
 clang_bin="${CLANG:-clang}"
 source_file="${STENCIL_SOURCE:-${repo_root}/stencil_all_sme.cpp}"
-kernel_prefix="${STENCIL_KERNEL_PREFIX:-stencil_}"
+kernel_pattern="${STENCIL_KERNEL_PATTERN:-^stencil(_|[0-9])}"
 kernel_functions="${STENCIL_KERNEL_FUNCTIONS:-}"
 target="${TARGET:-aarch64-unknown-linux-gnu}"
 march="${MARCH:-armv9.2-a+sme+sve2+sme-f64f64}"
@@ -28,6 +28,17 @@ if [[ ! -x "${llvm_extract}" ]]; then
   printf 'missing llvm-extract: %s\n' "${llvm_extract}" >&2
   exit 1
 fi
+if [[ -n "${LLVM_CXXFILT:-}" ]]; then
+  llvm_cxxfilt="${LLVM_CXXFILT}"
+elif [[ -x "$(dirname "${clang_path}")/llvm-cxxfilt" ]]; then
+  llvm_cxxfilt="$(dirname "${clang_path}")/llvm-cxxfilt"
+else
+  llvm_cxxfilt="$(command -v c++filt || true)"
+fi
+if [[ -z "${llvm_cxxfilt}" || ! -x "${llvm_cxxfilt}" ]]; then
+  printf 'missing C++ demangler; install llvm-cxxfilt or c++filt.\n' >&2
+  exit 1
+fi
 
 source_name="$(basename "${source_file}")"
 source_stem="${source_name%.*}"
@@ -44,17 +55,20 @@ mkdir -p "${output_dir}"
   "${source_file}" \
   -o "${full_ir}"
 
-# The input translation unit also contains test helpers and main. By default,
-# select all unmangled functions whose names start with STENCIL_KERNEL_PREFIX.
-# A comma-separated STENCIL_KERNEL_FUNCTIONS list overrides discovery when the
-# source uses a different naming convention.
+# The input translation unit also contains test helpers and main. Match the
+# original IR symbol and its C++-demangled spelling so C++ kernels such as
+# stencil1D_3point_sme() are discovered as well as C ABI stencil_* functions.
+# A comma-separated STENCIL_KERNEL_FUNCTIONS list overrides automatic discovery.
 if [[ -n "${kernel_functions}" ]]; then
   IFS=',' read -r -a selected_functions <<< "${kernel_functions}"
 else
-  mapfile -t selected_functions < <(
-    sed -n 's/^define .* @\\([^ (]*\\)(.*/\\1/p' "${full_ir}" | \
-      grep -E "^${kernel_prefix}" || true
-  )
+  selected_functions=()
+  while IFS= read -r function; do
+    demangled="$(printf '%s\n' "${function}" | "${llvm_cxxfilt}")"
+    if [[ "${function}" =~ ${kernel_pattern} || "${demangled}" =~ ${kernel_pattern} ]]; then
+      selected_functions+=("${function}")
+    fi
+  done < <(sed -n 's/^define .* @\\([^ (]*\\)(.*/\\1/p' "${full_ir}")
 fi
 if [[ "${#selected_functions[@]}" -eq 0 ]]; then
   printf 'no kernel functions found; set STENCIL_KERNEL_FUNCTIONS explicitly.\n' >&2
