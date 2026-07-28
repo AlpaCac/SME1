@@ -311,37 +311,72 @@ python3 --version
 
 ## 五、AArch64 Linux 必须修改或覆盖的默认值
 
+### 0. 使用服务器已有 LLVM
+
+`LLVM_HOME` 只是离线工具链目录的示例前缀，并非构建脚本的必需变量。
+`02_llvm_pass_plugin/build_and_test.sh` 会通过 `llvm-config` 自动查找同套
+Clang 与 LLVM CMake 配置。服务器先执行：
+
+```bash
+command -v clang clang++ llvm-config cmake ninja
+clang --version
+llvm-config --version
+llvm-config --bindir
+llvm-config --cmakedir
+test -f "$(llvm-config --cmakedir)/LLVMConfig.cmake" && echo 'LLVM CMake config: OK'
+```
+
+若全部成功，直接构建，不需要设置 `LLVM_HOME`：
+
+```bash
+./02_llvm_pass_plugin/build_and_test.sh
+```
+
+若 `llvm-config` 不在 PATH，使用其绝对路径推导安装前缀：
+
+```bash
+export LLVM_CONFIG=/path/to/llvm-config
+export LLVM_HOME="$(dirname "$(dirname "$(readlink -f "${LLVM_CONFIG}")")")"
+export PATH="${LLVM_HOME}/bin:${PATH}"
+```
+
+若服务器只有 `clang`，但没有 `llvm-config` 或 `LLVMConfig.cmake`，则该 BiSheng
+安装不包含构建 pass 所需的 LLVM 开发文件。必须安装或获取与 `clang 19.1.7` ABI
+兼容的完整 LLVM 19 开发包，不能用其他主版本替代。
+
 ### 1. 步骤 1 的 target triple
 
 `01_llvm_ir_analysis/generate_and_check.sh` 当前默认：
 
 ```text
-arm64-apple-macos15
+aarch64-unknown-linux-gnu
 ```
 
-在 Linux 服务器必须覆盖为：
+当前默认架构也已包含双精度 SME 外积所需的扩展：
 
 ```bash
-export TARGET=aarch64-unknown-linux-gnu
-export MARCH=armv9.2-a+sme+sve2+sme-f64f64
+TARGET=aarch64-unknown-linux-gnu
+MARCH=armv9.2-a+sme+sve2+sme-f64f64
 ```
 
-然后运行：
+因此服务器工具已在 PATH 时可直接运行：
 
 ```bash
-CLANG="${LLVM_HOME}/bin/clang" \
-TARGET=aarch64-unknown-linux-gnu \
-MARCH=armv9.2-a+sme+sve2+sme-f64f64 \
-  ./01_llvm_ir_analysis/generate_and_check.sh
+./01_llvm_ir_analysis/generate_and_check.sh
 ```
 
-这一步必须重新生成 Linux IR，不能继续使用仓库中从 Apple Clang 生成的
-IR。
+若工具不在 PATH，才显式指定：
+
+```bash
+CLANG="${LLVM_HOME}/bin/clang" ./01_llvm_ir_analysis/generate_and_check.sh
+```
+
+这一步必须重新生成服务器 LLVM IR，不能继续使用仓库中其他平台生成的 IR。
 
 ### 2. 步骤 2～4 的工具默认路径
 
-`02_llvm_pass_plugin/build_and_test.sh` 默认引用当前开发机工作区中的
-Polygeist、CMake.app 和 Ninja。Linux 服务器应显式传入：
+`02_llvm_pass_plugin/build_and_test.sh` 优先从 PATH 自动发现工具。仅当工具不在
+PATH 时，才显式传入：
 
 ```bash
 LLVM_CONFIG="${LLVM_HOME}/bin/llvm-config" \
