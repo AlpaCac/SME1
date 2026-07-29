@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-build_dir="${script_dir}/build"
+build_dir="${BUILD_DIR:-${script_dir}/build}"
 output_dir="${script_dir}/output"
 
 find_tool() {
@@ -39,6 +39,13 @@ fi
 llvm_dir="$("${llvm_config}" --cmakedir)"
 llvm_bindir="$("${llvm_config}" --bindir)"
 llvm_includedir="$("${llvm_config}" --includedir)"
+if [[ ! -f "${llvm_dir}/LLVMConfig.cmake" ]]; then
+  printf 'missing LLVM CMake package configuration: %s/LLVMConfig.cmake\n' \
+    "${llvm_dir}" >&2
+  printf 'llvm-config=%s\n' "${llvm_config}" >&2
+  printf 'install a complete standalone LLVM toolchain or set LLVM_CONFIG correctly.\n' >&2
+  exit 1
+fi
 if [[ ! -f "${llvm_includedir}/llvm/ADT/SmallVector.h" ]]; then
   printf 'missing LLVM development header: %s/llvm/ADT/SmallVector.h\n' \
     "${llvm_includedir}" >&2

@@ -6,6 +6,7 @@
 __pycache__/
 /build/
 /02_llvm_pass_plugin/build/
+/02_llvm_pass_plugin/build-standalone-llvm19/
 /05_runtime_validation/build/
 /01_llvm_ir_analysis/output/
 /02_llvm_pass_plugin/output/
