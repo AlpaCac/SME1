@@ -1,6 +1,7 @@
 #include "StencilAnalysis.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
@@ -89,6 +90,45 @@ bool is2D(StencilKind Kind) {
 
 bool is3D(StencilKind Kind) { return !is2D(Kind) && Kind != StencilKind::Stencil1D3P; }
 
+bool isScalableVectorStepImpl(Value *Step, SmallPtrSetImpl<Value *> &Seen) {
+  if (!Seen.insert(Step).second)
+    return false;
+
+  if (auto *Call = dyn_cast<CallBase>(Step)) {
+    return hasNamePrefix(*Call, "llvm.aarch64.sme.cntsw") ||
+           hasNamePrefix(*Call, "llvm.aarch64.sme.cntsd") ||
+           hasNamePrefix(*Call, "llvm.aarch64.sve.cntw") ||
+           hasNamePrefix(*Call, "llvm.aarch64.sve.cntd") ||
+           hasNamePrefix(*Call, "llvm.vscale.");
+  }
+
+  auto *Inst = dyn_cast<Instruction>(Step);
+  if (!Inst)
+    return false;
+  for (Value *Operand : Inst->operands())
+    if (isScalableVectorStepImpl(Operand, Seen))
+      return true;
+  return false;
+}
+
+bool isScalableVectorStep(Value *Step) {
+  SmallPtrSet<Value *, 8> Seen;
+  return isScalableVectorStepImpl(Step, Seen);
+}
+
+Value *findInductionStep(PHINode *Induction, Loop &L) {
+  for (User *User : Induction->users()) {
+    auto *Add = dyn_cast<BinaryOperator>(User);
+    if (!Add || Add->getOpcode() != Instruction::Add || !L.contains(Add))
+      continue;
+    if (Add->getOperand(0) == Induction)
+      return Add->getOperand(1);
+    if (Add->getOperand(1) == Induction)
+      return Add->getOperand(0);
+  }
+  return nullptr;
+}
+
 std::optional<StencilInfo>
 analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
                  DominatorTree &DT) {
@@ -125,22 +165,23 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
       MaskedStores.front()->getArgOperand(3) != Predicate)
     return std::nullopt;
 
-  auto *WhileLo = dyn_cast<CallBase>(Predicate);
-  if (!WhileLo || !hasNamePrefix(*WhileLo, "llvm.aarch64.sve.whilelo.") ||
-      WhileLo->arg_size() < 2)
+  auto *TailPredicate = dyn_cast<CallBase>(Predicate);
+  if (!TailPredicate ||
+      (!hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelo.") &&
+       !hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.")) ||
+      TailPredicate->arg_size() < 2)
     return std::nullopt;
-  auto *Induction = dyn_cast<PHINode>(WhileLo->getArgOperand(0));
+  auto *Induction = dyn_cast<PHINode>(TailPredicate->getArgOperand(0));
   if (!Induction || !L.contains(Induction))
     return std::nullopt;
   auto *AddRec = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(Induction));
   if (!AddRec || AddRec->getLoop() != &L || !AddRec->isAffine())
     return std::nullopt;
   auto *StepUnknown = dyn_cast<SCEVUnknown>(AddRec->getStepRecurrence(SE));
-  auto *StepCall = StepUnknown ? dyn_cast<CallBase>(StepUnknown->getValue())
-                               : nullptr;
-  if (!StepCall ||
-      (!hasNamePrefix(*StepCall, "llvm.aarch64.sme.cntsw") &&
-       !hasNamePrefix(*StepCall, "llvm.aarch64.sme.cntsd")))
+  Value *VectorStep = StepUnknown ? StepUnknown->getValue() : nullptr;
+  if (!VectorStep)
+    VectorStep = findInductionStep(Induction, L);
+  if (!VectorStep || !isScalableVectorStep(VectorStep))
     return std::nullopt;
 
   auto *LoadVectorType = dyn_cast<VectorType>(MaskedLoads.front()->getType());
@@ -243,7 +284,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   Result.InnerLoop = &L;
   Result.Induction = Induction;
   Result.Predicate = Predicate;
-  Result.VectorStep = StepCall;
+  Result.VectorStep = VectorStep;
   Result.LogicalLoadCount = MaskedLoads.size();
   Result.ElementBytes = ElementBytes;
   Result.Streams = std::move(Streams);

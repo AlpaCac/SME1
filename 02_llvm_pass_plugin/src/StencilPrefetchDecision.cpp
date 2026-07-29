@@ -5,6 +5,7 @@
 #include "llvm/Analysis/DomTreeUpdater.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
@@ -24,6 +25,11 @@ struct Candidate {
   PrefetchDecision Decision;
   unsigned Priority = 0;
 };
+
+bool hasNamePrefix(const CallBase &Call, StringRef Prefix) {
+  const Function *Callee = Call.getCalledFunction();
+  return Callee && Callee->getName().starts_with(Prefix);
+}
 
 unsigned divideCeil(unsigned Numerator, unsigned Denominator) {
   return (Numerator + Denominator - 1) / Denominator;
@@ -289,8 +295,8 @@ bool insertPrefetches(const StencilInfo &Stencil,
                       ArrayRef<PrefetchDecision> Decisions,
                       DominatorTree &DT, LoopInfo &LI) {
   CallBase *FirstLoad = findFirstLoad(Stencil);
-  auto *WhileLo = dyn_cast<CallBase>(Stencil.Predicate);
-  if (!FirstLoad || !WhileLo || WhileLo->arg_size() < 2)
+  auto *TailPredicate = dyn_cast<CallBase>(Stencil.Predicate);
+  if (!FirstLoad || !TailPredicate || TailPredicate->arg_size() < 2)
     return false;
 
   SmallVector<unsigned, 4> Distances;
@@ -325,8 +331,14 @@ bool insertPrefetches(const StencilInfo &Stencil,
         "prefetch.step");
     Value *FutureX = HeadBuilder.CreateAdd(
         Stencil.Induction, ScaledStep, "prefetch.future.x");
-    Value *InBounds = HeadBuilder.CreateICmpULT(
-        FutureX, WhileLo->getArgOperand(1), "prefetch.in.range");
+    bool IsSignedTail = hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.");
+    Value *InBounds = IsSignedTail
+                          ? HeadBuilder.CreateICmpSLT(
+                                FutureX, TailPredicate->getArgOperand(1),
+                                "prefetch.in.range")
+                          : HeadBuilder.CreateICmpULT(
+                                FutureX, TailPredicate->getArgOperand(1),
+                                "prefetch.in.range");
 
     Instruction *ThenTerm = SplitBlockAndInsertIfThen(
         InBounds, FirstLoad, false, nullptr, &DTU, &LI);

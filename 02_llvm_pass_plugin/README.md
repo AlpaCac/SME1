@@ -12,10 +12,10 @@ test 已在步骤 1 被排除，因此 pass 不依赖函数名前缀，也不会
 | 2D | 5P、9P |
 | 3D | 7P、13P、25P、27P |
 
-识别器按 masked load 数、中心连续 x 流、共同 `whilelo`、`cntsw`/`cntsd` 步长及相对
-行/平面地址归并进行判断。2D9P 与 3D25P/27P 的对角邻域会合并到相应 row 或
-plane 流；当候选流多于硬件预算时，决策器按 L1/L2 容量、流数、指令数与带宽
-预算筛选。
+识别器按 masked load 数、中心连续 x 流、共同 `whilelo`/`whilelt`、可缩放
+`cnt*`/`llvm.vscale` 步长及相对行/平面地址归并进行判断。2D9P 与 3D25P/27P 的
+对角邻域会合并到相应 row 或 plane 流；当候选流多于硬件预算时，决策器按 L1/L2
+容量、流数、指令数与带宽预算筛选。
 
 1D3P 的 current-row 预取默认关闭，因为它是连续流。需要实验时设置：
 
@@ -94,5 +94,5 @@ output/stencil_recognition_report.md
 output/stencil_prefetch_decision_report.md
 ```
 
-如果提取的函数中没有任何一个匹配当前 7 类模型，脚本默认失败以避免把“没有
+如果提取的函数中没有任何一个匹配当前 stencil 模型，脚本默认失败以避免把“没有
 优化”误报为成功。仅检查提取流程时可设置 `STENCIL_REQUIRE_RECOGNIZED=0`。

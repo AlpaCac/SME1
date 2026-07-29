@@ -127,7 +127,7 @@ decision_count="$(grep -c '^StencilDecision:' "${pass_log}" || true)"
 enabled_count="$(grep '^StencilDecision:' "${pass_log}" | grep -c 'enable=yes' || true)"
 prefetch_count="$(grep -c 'call void @llvm.aarch64.prefetch' "${after_ir}" || true)"
 if [[ "${require_recognized}" == "1" && "${recognized_count}" -eq 0 ]]; then
-  printf 'no extracted function matches the current 2D5P/3D7P pass model\n' >&2
+  printf 'no extracted function matches the current stencil pass model\n' >&2
   printf 'set STENCIL_REQUIRE_RECOGNIZED=0 to inspect extraction only.\n' >&2
   exit 1
 fi
