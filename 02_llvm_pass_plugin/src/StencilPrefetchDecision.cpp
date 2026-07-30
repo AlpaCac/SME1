@@ -299,22 +299,6 @@ bool insertPrefetches(const StencilInfo &Stencil,
   if (!FirstLoad || !TailPredicate || TailPredicate->arg_size() < 2)
     return false;
 
-  SmallVector<unsigned, 4> Distances;
-  for (const PrefetchDecision &Decision : Decisions) {
-    if (!Decision.Enable)
-      continue;
-    if (auto *PointerInst =
-            dyn_cast<Instruction>(Decision.Stream->RepresentativePointer)) {
-      if (!DT.dominates(PointerInst, FirstLoad))
-        return false;
-    }
-    if (!llvm::is_contained(Distances, Decision.DistanceIterations))
-      Distances.push_back(Decision.DistanceIterations);
-  }
-  llvm::sort(Distances);
-  if (Distances.empty())
-    return false;
-
   DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
   Module *M = FirstLoad->getModule();
   Function *Prefetch =
@@ -324,11 +308,26 @@ bool insertPrefetches(const StencilInfo &Stencil,
   if (!LoadVectorType)
     return false;
   Type *ElementType = LoadVectorType->getElementType();
+  bool Changed = false;
 
-  for (unsigned Distance : Distances) {
-    IRBuilder<> HeadBuilder(FirstLoad);
+  for (const PrefetchDecision &Decision : Decisions) {
+    if (!Decision.Enable || Decision.Stream->Loads.empty())
+      continue;
+
+    // Address calculations for different rows/planes are not guaranteed to
+    // dominate the first masked load in the loop. Anchor each prefetch at the
+    // first load of its own stream so all operands are available.
+    CallBase *AnchorLoad = Decision.Stream->Loads.front();
+    if (auto *PointerInst =
+            dyn_cast<Instruction>(Decision.Stream->RepresentativePointer)) {
+      if (!DT.dominates(PointerInst, AnchorLoad))
+        continue;
+    }
+
+    IRBuilder<> HeadBuilder(AnchorLoad);
     Value *ScaledStep = HeadBuilder.CreateMul(
-        Stencil.VectorStep, ConstantInt::get(IndexType, Distance),
+        Stencil.VectorStep,
+        ConstantInt::get(IndexType, Decision.DistanceIterations),
         "prefetch.step");
     Value *FutureX = HeadBuilder.CreateAdd(
         Stencil.Induction, ScaledStep, "prefetch.future.x");
@@ -351,28 +350,23 @@ bool insertPrefetches(const StencilInfo &Stencil,
                                 "prefetch.in.range");
 
     Instruction *ThenTerm = SplitBlockAndInsertIfThen(
-        InBounds, FirstLoad, false, nullptr, &DTU, &LI);
+        InBounds, AnchorLoad, false, nullptr, &DTU, &LI);
     IRBuilder<> PrefetchBuilder(ThenTerm);
 
-    for (const PrefetchDecision &Decision : Decisions) {
-      if (!Decision.Enable || Decision.DistanceIterations != Distance)
-        continue;
-
-      Value *Address = PrefetchBuilder.CreateGEP(
-          ElementType, Decision.Stream->RepresentativePointer, ScaledStep,
-          "prefetch.addr");
-      PrefetchBuilder.CreateCall(
-          Prefetch,
-          {Address, PrefetchBuilder.getInt32(0),
-           PrefetchBuilder.getInt32(
-               static_cast<unsigned>(Decision.Level)),
-           PrefetchBuilder.getInt32(
-               Decision.Policy == LocalityPolicy::Stream ? 1 : 0),
-           PrefetchBuilder.getInt32(1)});
-    }
+    Value *Address = PrefetchBuilder.CreateGEP(
+        ElementType, Decision.Stream->RepresentativePointer, ScaledStep,
+        "prefetch.addr");
+    PrefetchBuilder.CreateCall(
+        Prefetch,
+        {Address, PrefetchBuilder.getInt32(0),
+         PrefetchBuilder.getInt32(static_cast<unsigned>(Decision.Level)),
+         PrefetchBuilder.getInt32(
+             Decision.Policy == LocalityPolicy::Stream ? 1 : 0),
+         PrefetchBuilder.getInt32(1)});
+    Changed = true;
   }
   DTU.flush();
-  return true;
+  return Changed;
 }
 
 const char *toString(CacheLevel Level) {
