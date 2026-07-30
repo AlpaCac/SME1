@@ -142,10 +142,12 @@ CMAKE_GENERATOR="Unix Makefiles" \
 01_llvm_ir_analysis/output/stencil_all_sme.kernels.ll
 ```
 
-它会构建插件、运行识别/决策、检查插入的 `llvm.aarch64.prefetch` 数量，并生成
-`02_llvm_pass_plugin/output/stencil_kernels.s`。若当前输入没有任何函数匹配已有
-识别模型，可临时加 `STENCIL_REQUIRE_RECOGNIZED=0` 只验证插件构建与 IR 可读性；
-这不表示已经插入预取。
+它会构建插件，优先用同一 LLVM 安装中的 `opt` 显式运行
+`function(stencil-prefetch),verify`，再检查启用决策、实际插入日志、
+`llvm.aarch64.prefetch` 和汇编 `PRFM` 的数量。这样不会把后续 Clang 优化造成的
+删除或合并误判为 Pass 漏插。若当前输入没有任何函数匹配已有识别模型，可临时加
+`STENCIL_REQUIRE_RECOGNIZED=0` 只验证插件构建与 IR 可读性；这不表示已经插入
+预取。
 
 ## 6. 用 opt 改写完整 IR
 

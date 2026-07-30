@@ -10,6 +10,7 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <algorithm>
@@ -327,8 +328,13 @@ bool insertPrefetches(const StencilInfo &Stencil,
     }
     if (auto *PointerInst =
             dyn_cast<Instruction>(Decision.Stream->RepresentativePointer)) {
-      if (!DT.dominates(PointerInst, AnchorLoad))
+      if (!DT.dominates(PointerInst, AnchorLoad)) {
+        errs() << "StencilPrefetchInsertReject: function="
+               << AnchorLoad->getFunction()->getName()
+               << " stream=" << toString(Decision.Stream->Kind)
+               << " reason=address-does-not-dominate-anchor\n";
         continue;
+      }
     }
 
     IRBuilder<> HeadBuilder(AnchorLoad);
@@ -366,6 +372,12 @@ bool insertPrefetches(const StencilInfo &Stencil,
          PrefetchBuilder.getInt32(
              Decision.Policy == LocalityPolicy::Stream ? 1 : 0),
          PrefetchBuilder.getInt32(1)});
+    errs() << "StencilPrefetchInsert: function="
+           << AnchorLoad->getFunction()->getName()
+           << " stream=" << toString(Decision.Stream->Kind)
+           << " distance=" << Decision.DistanceIterations
+           << " level=" << toString(Decision.Level)
+           << " policy=" << toString(Decision.Policy) << "\n";
     Changed = true;
   }
   DTU.flush();

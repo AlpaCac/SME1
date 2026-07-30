@@ -44,6 +44,11 @@ test -f "$(llvm-config --cmakedir)/LLVMConfig.cmake" && echo 'LLVM CMake config:
 ./02_llvm_pass_plugin/build_and_test.sh
 ```
 
+脚本优先使用该 LLVM 安装中的 `bin/opt`，在步骤 1 已生成的 `-O1` IR 上显式运行
+`function(stencil-prefetch),verify`。这样统计的是 Pass 直接输出，不会被后续
+Clang 优化提前合并或删除。可用 `LLVM_OPT=/path/to/opt` 覆盖；只有裁剪版开发
+环境确实没有 `opt` 时才回退到 `-fpass-plugin`。
+
 检测到 Ninja 时脚本使用 Ninja；未安装时自动回退到 CMake `Unix Makefiles`，只需
 系统提供 `make`。也可用 `CMAKE_GENERATOR` 显式指定生成器。
 
@@ -74,6 +79,7 @@ LLVM 安装。
 ```bash
 LLVM_CONFIG=/path/to/llvm-config \
 LLVM_CLANG=/path/to/clang \
+LLVM_OPT=/path/to/opt \
 PLUGIN_CC=/path/to/clang \
 PLUGIN_CXX=/path/to/clang++ \
   ./02_llvm_pass_plugin/build_and_test.sh
