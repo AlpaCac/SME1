@@ -86,6 +86,11 @@ if [[ "${cmake_generator}" == "Ninja" ]]; then
   cmake_args+=("-DCMAKE_MAKE_PROGRAM=${ninja_bin}")
 fi
 "${cmake_bin}" "${cmake_args[@]}"
+# Force this small plugin to rebuild without cleaning LLVM or unrelated targets.
+"${cmake_bin}" -E touch \
+  "${script_dir}/src/StencilAnalysis.cpp" \
+  "${script_dir}/src/StencilPrefetchDecision.cpp" \
+  "${script_dir}/src/StencilPrefetchPass.cpp"
 "${cmake_bin}" --build "${build_dir}"
 
 plugin="${build_dir}/StencilPrefetchPass.so"

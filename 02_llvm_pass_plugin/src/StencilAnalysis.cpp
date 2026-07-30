@@ -692,18 +692,17 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
     }
   }
 
-  // Some frontends materialize height*width in an opaque SSA value, so the
-  // plane term no longer appears as a SCEV multiplication. For the supported
-  // symmetric 3D star/box topologies, rank offset expressions by structural
-  // complexity: row stride is the simpler term, while plane stride depends on
-  // the row stride and height. Require the exact stream count and all expected
-  // opposite pairs before applying this fallback.
+  // Some frontends materialize height*width in an opaque SSA value, so neither
+  // plane terms nor opposite plane pairs remain provable through SCEV. For the
+  // supported 3D point counts, the exact physical stream count plus the
+  // validated center stream identifies the known star/box topology. Rank the
+  // remaining offsets by structural complexity: row stride is the simpler
+  // term, while plane stride depends on the row stride and height.
   std::optional<unsigned> ExpectedRows = expected3DRowNeighbors(*Kind);
   std::optional<unsigned> ExpectedStreams = expected3DStreamCount(*Kind);
   if (is3D(*Kind) && (RowNeighbors < 2 || PlaneNeighbors < 2) &&
       ExpectedRows && ExpectedStreams &&
-      Streams.size() == *ExpectedStreams &&
-      BestOppositePairs >= (*ExpectedStreams - 1) / 2) {
+      Streams.size() == *ExpectedStreams) {
     SmallVector<std::pair<unsigned, unsigned>, 16> RankedStreams;
     for (unsigned I = 0; I < Streams.size(); ++I) {
       if (I == CenterIndex)
@@ -731,8 +730,16 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
     }
     errs() << "StencilAnalysisTopologyFallback: function=" << F.getName()
            << " kind=" << toString(*Kind)
+           << " opposite-pairs=" << BestOppositePairs
            << " row-neighbors=" << RowNeighbors
-           << " plane-neighbors=" << PlaneNeighbors << "\n";
+           << " plane-neighbors=" << PlaneNeighbors
+           << " ranked-offset-complexity=";
+    for (unsigned I = 0; I < RankedStreams.size(); ++I) {
+      if (I)
+        errs() << ",";
+      errs() << RankedStreams[I].first << ":" << RankedStreams[I].second;
+    }
+    errs() << "\n";
   }
 
   if ((*Kind == StencilKind::Stencil1D3P && Streams.size() != 1) ||
