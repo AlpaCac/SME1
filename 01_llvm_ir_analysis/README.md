@@ -1,9 +1,10 @@
 # 步骤 1：从服务器 C++ 输入生成 kernel-only IR
 
-仓库根目录的 `stencil_all_sme.cpp` 提供六个与服务器同名、同参数数量的
-双精度 SME/SVE stencil 计算函数，以及测试入口和 `main`。步骤 1 先保留完整
+仓库根目录的 `stencil_all_sme_fixture.cpp` 提供六个与服务器同名、同参数数量
+的双精度 SME/SVE stencil 计算函数，以及测试入口和 `main`。服务器私有文件
+仍命名为 `stencil_all_sme.cpp`，并由 `.gitignore` 排除。步骤 1 先保留完整
 LLVM IR，再用 `llvm-extract` 生成仅含计算函数的 kernel-only IR；步骤 2 以后
-只消费后者。服务器私有源文件可通过 `STENCIL_SOURCE` 覆盖该 fixture。
+只消费后者。
 
 ## 输入选择
 
@@ -11,6 +12,13 @@ LLVM IR，再用 `llvm-extract` 生成仅含计算函数的 kernel-only IR；步
 
 ```bash
 ./01_llvm_ir_analysis/generate_and_check.sh
+```
+
+在本机使用仓库 fixture 时显式指定：
+
+```bash
+STENCIL_SOURCE=stencil_all_sme_fixture.cpp \
+  ./01_llvm_ir_analysis/generate_and_check.sh
 ```
 
 默认 `MARCH` 包含 `+sme-f64f64`，以支持 `svmopa_za64_f64_m` 等双精度

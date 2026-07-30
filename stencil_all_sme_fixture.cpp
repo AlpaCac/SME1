@@ -1,3 +1,4 @@
+// Local regression fixture matching the server kernel names and signatures.
 #include <arm_sme.h>
 #include <arm_sve.h>
 
