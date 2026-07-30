@@ -43,6 +43,9 @@ void collectInnermostLoops(Loop &L, SmallVectorImpl<Loop *> &Loops) {
 }
 
 Value *stripSingleIndexGEP(Value *Pointer, Value *Induction) {
+  // CodeGen may preserve a no-op pointer cast between the masked load and its
+  // GEP. Remove only casts; any remaining address arithmetic is significant.
+  Pointer = Pointer->stripPointerCasts();
   auto *GEP = dyn_cast<GetElementPtrInst>(Pointer);
   if (!GEP || GEP->getNumIndices() != 1 ||
       GEP->idx_begin()->get() != Induction)
@@ -247,8 +250,15 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   SmallVector<StreamInfo, 27> Streams;
   for (auto &Entry : Groups) {
     Value *StreamBase = stripSingleIndexGEP(Entry.first, Induction);
-    if (!StreamBase)
+    if (!StreamBase) {
+      const LoadAccess &Access = Accesses[Entry.second.front()];
+      errs() << "StencilAnalysisStreamBase: function=" << F.getName()
+             << " loop=" << L.getHeader()->getName()
+             << " induction=" << *Induction
+             << " constant-base=" << *Entry.first
+             << " load-pointer=" << *Access.Pointer << "\n";
       return reject(F, L, "stream-base-gep");
+    }
     StreamInfo Stream;
     Stream.Base = StreamBase;
     Stream.RepresentativePointer = Accesses[Entry.second.front()].Pointer;
