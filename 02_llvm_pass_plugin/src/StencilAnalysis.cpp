@@ -287,6 +287,84 @@ bool is2D(StencilKind Kind) {
 
 bool is3D(StencilKind Kind) { return !is2D(Kind) && Kind != StencilKind::Stencil1D3P; }
 
+std::optional<unsigned> expected3DRowNeighbors(StencilKind Kind) {
+  switch (Kind) {
+  case StencilKind::Stencil3D7P:
+  case StencilKind::Stencil3D27P:
+    return 2;
+  case StencilKind::Stencil3D13P:
+    return 4;
+  case StencilKind::Stencil3D25P:
+    return 8;
+  default:
+    return std::nullopt;
+  }
+}
+
+std::optional<unsigned> expected3DStreamCount(StencilKind Kind) {
+  switch (Kind) {
+  case StencilKind::Stencil3D7P:
+    return 5;
+  case StencilKind::Stencil3D13P:
+  case StencilKind::Stencil3D27P:
+    return 9;
+  case StencilKind::Stencil3D25P:
+    return 17;
+  default:
+    return std::nullopt;
+  }
+}
+
+unsigned valueExpressionComplexityImpl(Value *V,
+                                       SmallPtrSetImpl<Value *> &Seen) {
+  if (!Seen.insert(V).second)
+    return 0;
+  auto *Inst = dyn_cast<Instruction>(V);
+  if (!Inst)
+    return 0;
+  unsigned Complexity = 1;
+  for (Value *Operand : Inst->operands())
+    Complexity += valueExpressionComplexityImpl(Operand, Seen);
+  return Complexity;
+}
+
+unsigned valueExpressionComplexity(Value *V) {
+  SmallPtrSet<Value *, 16> Seen;
+  return valueExpressionComplexityImpl(V, Seen);
+}
+
+unsigned streamOffsetComplexity(
+    unsigned StreamIndex, unsigned CenterIndex,
+    ArrayRef<std::optional<SymbolicAddress>> SymbolicAddresses,
+    ScalarEvolution &SE, ArrayRef<StreamInfo> Streams) {
+  if (SymbolicAddresses[StreamIndex] && SymbolicAddresses[CenterIndex]) {
+    const SymbolicAddress &Address = *SymbolicAddresses[StreamIndex];
+    const SymbolicAddress &Center = *SymbolicAddresses[CenterIndex];
+    if (Address.Base == Center.Base) {
+      SmallPtrSet<Value *, 16> Operands;
+      for (const SymbolicTerm &Term : Address.Terms)
+        Operands.insert(Term.Operand);
+      for (const SymbolicTerm &Term : Center.Terms)
+        Operands.insert(Term.Operand);
+      unsigned Complexity = 0;
+      for (Value *Operand : Operands) {
+        if (coefficientFor(Operand, Address) ==
+            coefficientFor(Operand, Center))
+          continue;
+        Complexity += 1 + valueExpressionComplexity(Operand);
+      }
+      return Complexity;
+    }
+  }
+
+  const SCEV *Offset = SE.getMinusSCEV(
+      Streams[StreamIndex].Address, Streams[CenterIndex].Address);
+  std::string Text;
+  raw_string_ostream OS(Text);
+  Offset->print(OS);
+  return OS.str().size();
+}
+
 bool isScalableVectorStepImpl(Value *Step, SmallPtrSetImpl<Value *> &Seen) {
   if (!Seen.insert(Step).second)
     return false;
@@ -614,10 +692,60 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
     }
   }
 
+  // Some frontends materialize height*width in an opaque SSA value, so the
+  // plane term no longer appears as a SCEV multiplication. For the supported
+  // symmetric 3D star/box topologies, rank offset expressions by structural
+  // complexity: row stride is the simpler term, while plane stride depends on
+  // the row stride and height. Require the exact stream count and all expected
+  // opposite pairs before applying this fallback.
+  std::optional<unsigned> ExpectedRows = expected3DRowNeighbors(*Kind);
+  std::optional<unsigned> ExpectedStreams = expected3DStreamCount(*Kind);
+  if (is3D(*Kind) && (RowNeighbors < 2 || PlaneNeighbors < 2) &&
+      ExpectedRows && ExpectedStreams &&
+      Streams.size() == *ExpectedStreams &&
+      BestOppositePairs >= (*ExpectedStreams - 1) / 2) {
+    SmallVector<std::pair<unsigned, unsigned>, 16> RankedStreams;
+    for (unsigned I = 0; I < Streams.size(); ++I) {
+      if (I == CenterIndex)
+        continue;
+      RankedStreams.push_back(
+          {I, streamOffsetComplexity(I, CenterIndex,
+                                     StreamSymbolicAddresses, SE, Streams)});
+    }
+    llvm::stable_sort(
+        RankedStreams, [](const auto &Left, const auto &Right) {
+          return Left.second < Right.second;
+        });
+
+    RowNeighbors = 0;
+    PlaneNeighbors = 0;
+    for (unsigned Rank = 0; Rank < RankedStreams.size(); ++Rank) {
+      StreamInfo &Stream = Streams[RankedStreams[Rank].first];
+      if (Rank < *ExpectedRows) {
+        Stream.Kind = StreamKind::RowNeighbor;
+        ++RowNeighbors;
+      } else {
+        Stream.Kind = StreamKind::PlaneNeighbor;
+        ++PlaneNeighbors;
+      }
+    }
+    errs() << "StencilAnalysisTopologyFallback: function=" << F.getName()
+           << " kind=" << toString(*Kind)
+           << " row-neighbors=" << RowNeighbors
+           << " plane-neighbors=" << PlaneNeighbors << "\n";
+  }
+
   if ((*Kind == StencilKind::Stencil1D3P && Streams.size() != 1) ||
       (is2D(*Kind) && (RowNeighbors < 2 || PlaneNeighbors != 0)) ||
-      (is3D(*Kind) && (RowNeighbors < 2 || PlaneNeighbors < 2)))
+      (is3D(*Kind) && (RowNeighbors < 2 || PlaneNeighbors < 2))) {
+    errs() << "StencilAnalysisTopology: function=" << F.getName()
+           << " kind=" << toString(*Kind)
+           << " streams=" << Streams.size()
+           << " opposite-pairs=" << BestOppositePairs
+           << " row-neighbors=" << RowNeighbors
+           << " plane-neighbors=" << PlaneNeighbors << "\n";
     return reject(F, L, "stream-topology");
+  }
 
   StencilInfo Result;
   Result.Kind = *Kind;
