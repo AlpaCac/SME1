@@ -332,12 +332,21 @@ bool insertPrefetches(const StencilInfo &Stencil,
     Value *FutureX = HeadBuilder.CreateAdd(
         Stencil.Induction, ScaledStep, "prefetch.future.x");
     bool IsSignedTail = hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.");
+    Value *CompareX = FutureX;
+    Type *TailIndexType = TailPredicate->getArgOperand(0)->getType();
+    if (CompareX->getType() != TailIndexType) {
+      CompareX = IsSignedTail
+                     ? HeadBuilder.CreateSExtOrTrunc(CompareX, TailIndexType,
+                                                     "prefetch.compare.x")
+                     : HeadBuilder.CreateZExtOrTrunc(CompareX, TailIndexType,
+                                                     "prefetch.compare.x");
+    }
     Value *InBounds = IsSignedTail
                           ? HeadBuilder.CreateICmpSLT(
-                                FutureX, TailPredicate->getArgOperand(1),
+                                CompareX, TailPredicate->getArgOperand(1),
                                 "prefetch.in.range")
                           : HeadBuilder.CreateICmpULT(
-                                FutureX, TailPredicate->getArgOperand(1),
+                                CompareX, TailPredicate->getArgOperand(1),
                                 "prefetch.in.range");
 
     Instruction *ThenTerm = SplitBlockAndInsertIfThen(

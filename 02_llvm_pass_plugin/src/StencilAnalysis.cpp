@@ -100,6 +100,9 @@ bool isScalableVectorStepImpl(Value *Step, SmallPtrSetImpl<Value *> &Seen) {
            hasNamePrefix(*Call, "llvm.aarch64.sme.cntsd") ||
            hasNamePrefix(*Call, "llvm.aarch64.sve.cntw") ||
            hasNamePrefix(*Call, "llvm.aarch64.sve.cntd") ||
+           hasNamePrefix(*Call, "llvm.aarch64.sve.cntp") ||
+           hasNamePrefix(*Call, "llvm.aarch64.sve.inc") ||
+           hasNamePrefix(*Call, "llvm.aarch64.sve.addvl") ||
            hasNamePrefix(*Call, "llvm.vscale.");
   }
 
@@ -128,6 +131,13 @@ Value *findInductionStep(PHINode *Induction, Loop &L) {
       return Add->getOperand(0);
   }
   return nullptr;
+}
+
+PHINode *findTailInduction(Value *TailIndex) {
+  // BiSheng may sign- or zero-extend an i32 loop induction before whilelt.
+  while (auto *Cast = dyn_cast<CastInst>(TailIndex))
+    TailIndex = Cast->getOperand(0);
+  return dyn_cast<PHINode>(TailIndex);
 }
 
 std::optional<StencilInfo> reject(Function &F, Loop &L, StringRef Reason) {
@@ -179,7 +189,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
        !hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.")) ||
       TailPredicate->arg_size() < 2)
     return reject(F, L, "tail-predicate");
-  auto *Induction = dyn_cast<PHINode>(TailPredicate->getArgOperand(0));
+  auto *Induction = findTailInduction(TailPredicate->getArgOperand(0));
   if (!Induction || !L.contains(Induction))
     return reject(F, L, "tail-induction");
   auto *AddRec = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(Induction));
@@ -189,8 +199,15 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   Value *VectorStep = StepUnknown ? StepUnknown->getValue() : nullptr;
   if (!VectorStep)
     VectorStep = findInductionStep(Induction, L);
-  if (!VectorStep || !isScalableVectorStep(VectorStep))
+  if (!VectorStep || !isScalableVectorStep(VectorStep)) {
+    errs() << "StencilAnalysisStep: function=" << F.getName()
+           << " loop=" << L.getHeader()->getName() << " scev="
+           << *AddRec->getStepRecurrence(SE);
+    if (VectorStep)
+      errs() << " value=" << *VectorStep;
+    errs() << "\n";
     return reject(F, L, "scalable-vector-step");
+  }
 
   auto *LoadVectorType = dyn_cast<VectorType>(MaskedLoads.front()->getType());
   if (!LoadVectorType)
