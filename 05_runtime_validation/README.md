@@ -57,6 +57,9 @@ LLVM 的 `clang++`，并会检查版本首行包含 BiSheng。最终链接计划
 `STENCIL_REQUIRE_IDENTICAL_OUTPUT=1`，要求 baseline 与 prefetch 的标准输出
 和标准错误完全一致。
 
+墙钟测量读取 Linux `/proc/uptime` 的单调时钟，不依赖 GNU
+`/usr/bin/time`。
+
 以下命令仅用于旧的固定 C ABI 2D5P/3D7P 驱动：
 
 ```bash

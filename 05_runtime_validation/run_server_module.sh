@@ -185,9 +185,8 @@ samples="${STENCIL_SAMPLES:-7}"
 timings="${output_dir}/wall_time_seconds.tsv"
 : > "${timings}"
 
-time_bin="${TIME_BIN:-/usr/bin/time}"
-if [[ ! -x "${time_bin}" ]]; then
-  printf 'missing GNU time: %s\n' "${time_bin}" >&2
+if [[ ! -r /proc/uptime ]]; then
+  printf 'missing readable monotonic clock: /proc/uptime\n' >&2
   exit 1
 fi
 
@@ -196,14 +195,17 @@ timed_run() {
   local variant="$2"
   local binary="$3"
   local sample="$4"
-  local case_name="${test_case#--}"
-  local time_file="${build_dir}/${case_name}.${variant}.time"
+  local start_time
+  local end_time
+  local elapsed
 
-  "${time_bin}" -f '%e' -o "${time_file}" \
-    "${runner[@]}" "${binary}" "${test_case}" >/dev/null 2>/dev/null
+  start_time="$(awk '{ print $1 }' /proc/uptime)"
+  "${runner[@]}" "${binary}" "${test_case}" >/dev/null 2>/dev/null
+  end_time="$(awk '{ print $1 }' /proc/uptime)"
+  elapsed="$(awk -v start="${start_time}" -v end="${end_time}" \
+    'BEGIN { printf "%.6f", end - start }')"
   printf '%s\t%s\t%s\t%s\n' \
-    "${test_case}" "${variant}" "${sample}" \
-    "$(sed -n '1p' "${time_file}")" >> "${timings}"
+    "${test_case}" "${variant}" "${sample}" "${elapsed}" >> "${timings}"
 }
 
 if [[ "${STENCIL_SKIP_PERFORMANCE:-0}" != "1" ]]; then
