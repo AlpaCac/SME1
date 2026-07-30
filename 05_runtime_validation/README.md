@@ -4,6 +4,10 @@
 应先完成正确性测试，再进行性能调优；历史机器的日志和结论不作为新服务器
 的决策依据。
 
+服务器私有的 `stencil_all_sme.cpp` 已包含计算函数、test 和 `main` 时，使用
+`run_server_module.sh`。该脚本处理步骤 1 生成的完整 IR，baseline 和 prefetch
+版本都会保留原始 test、`main` 及辅助函数，唯一差异是是否运行预取 Pass。
+
 步骤 1/2 可以处理 1D3P、2D5P/9P、3D7P/13P/25P/27P 的 kernel-only IR。
 本目录现有 C 驱动只定义了 `stencil_2d5p_sme_f32` 和
 `stencil_3d7p_sme_f32` 的参考实现与函数原型，因此当前只能运行这两个算子
@@ -14,6 +18,7 @@
 
 | 文件 | 作用 |
 |---|---|
+| `run_server_module.sh` | 用完整服务器 IR 中原有的 test/main 验证正确性和整体墙钟性能 |
 | `build_and_run.sh` | 构建基线/预取版本，探测 SME 与 streaming VL，并运行正确性测试 |
 | `run_benchmark.sh` | 分进程运行 2D5P、3D7P 墙钟基准 |
 | `run_paired_benchmark.sh` | 同进程交替测量基线与预取版本，降低系统漂移 |
@@ -29,6 +34,24 @@
 `build/` 和 `output/` 都是运行时生成目录，不提交到仓库。
 
 ## 推荐顺序
+
+服务器多算子 C++ 输入优先运行：
+
+```bash
+BISHENG_CXX=/path/to/bisheng/bin/clang++ \
+STENCIL_CPU=0 \
+./scripts/03_validate_server_runtime.sh
+```
+
+脚本默认检查预取版本包含 29 个 intrinsic，随后分别向原始 `main` 传入
+`--1d3p-s1`、`--1d3p-s2`、`--2d5p-s1`、`--2d5p-s2`，以及 2D9P、
+3D13P、3D25P、3D27P 对应的 `s1/s2` 参数。每个 test 独立执行 2 次预热和
+7 次正式测量并报告中位数。可用 `STENCIL_CASES` 覆盖参数列表，
+`STENCIL_LINK_FLAGS` 可增加链接参数。如果原程序输出不含计时等非确定字段，
+可设置 `STENCIL_REQUIRE_IDENTICAL_OUTPUT=1`，要求 baseline 与 prefetch 的
+标准输出和标准错误完全一致。
+
+以下命令仅用于旧的固定 C ABI 2D5P/3D7P 驱动：
 
 ```bash
 ./05_runtime_validation/build_and_run.sh

@@ -56,8 +56,9 @@ stencil_all_sme.cpp
    `STENCIL_SOURCE`，运行 `./01_llvm_ir_analysis/generate_and_check.sh`。
 4. 用独立 LLVM 构建 pass 并通过 `opt` 改写完整 IR，再由 BiSheng 生成汇编；
    检查 IR 中的预取 intrinsic 和汇编中的 `prfm`。
-5. 运行 `./05_runtime_validation/build_and_run.sh` 验证数值正确性。
-6. 依次运行配对基准、距离扫描、类别消融和多线程测试，建立服务器专用
+5. 运行 `./scripts/03_validate_server_runtime.sh`，使用服务器原始 C++ 完整
+   模块中的 test 和 `main` 验证数值正确性，并测量 baseline/prefetch 中位时间。
+6. 正确性通过后再进行距离扫描、类别消融和多线程测试，建立服务器专用
    Profile。
 
 迁移前不要直接沿用 `apple-m5` Profile；预取距离、cache 层级和
