@@ -2,13 +2,17 @@
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Operator.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <optional>
@@ -19,10 +23,22 @@ using namespace llvm;
 namespace sme1 {
 namespace {
 
+struct SymbolicTerm {
+  Value *Operand = nullptr;
+  int64_t Coefficient = 0;
+};
+
+struct SymbolicAddress {
+  Value *Base = nullptr;
+  int64_t ConstantOffsetBytes = 0;
+  SmallVector<SymbolicTerm, 8> Terms;
+};
+
 struct LoadAccess {
   CallBase *Load = nullptr;
   Value *Pointer = nullptr;
   const SCEV *Address = nullptr;
+  std::optional<SymbolicAddress> Symbolic;
 };
 
 bool hasNamePrefix(const CallBase &Call, StringRef Prefix) {
@@ -39,6 +55,117 @@ void collectInnermostLoops(Loop &L, SmallVectorImpl<Loop *> &Loops) {
     collectInnermostLoops(*SubLoop, Loops);
 }
 
+void collectAdditiveTerms(Value *V, int64_t Coefficient,
+                          int64_t &Constant,
+                          SmallVectorImpl<SymbolicTerm> &Terms) {
+  if (auto *Cast = dyn_cast<CastInst>(V)) {
+    if (Cast->getOpcode() == Instruction::SExt ||
+        Cast->getOpcode() == Instruction::ZExt) {
+      collectAdditiveTerms(Cast->getOperand(0), Coefficient, Constant, Terms);
+      return;
+    }
+  }
+
+  if (auto *ConstantIntValue = dyn_cast<ConstantInt>(V)) {
+    Constant += Coefficient * ConstantIntValue->getSExtValue();
+    return;
+  }
+
+  if (auto *Binary = dyn_cast<BinaryOperator>(V)) {
+    if (Binary->getOpcode() == Instruction::Add ||
+        Binary->getOpcode() == Instruction::Sub) {
+      collectAdditiveTerms(Binary->getOperand(0), Coefficient, Constant,
+                           Terms);
+      collectAdditiveTerms(
+          Binary->getOperand(1),
+          Binary->getOpcode() == Instruction::Sub ? -Coefficient
+                                                   : Coefficient,
+          Constant, Terms);
+      return;
+    }
+    if (Binary->getOpcode() == Instruction::Mul) {
+      for (unsigned ConstantOperand = 0; ConstantOperand < 2;
+           ++ConstantOperand) {
+        auto *Factor = dyn_cast<ConstantInt>(
+            Binary->getOperand(ConstantOperand));
+        if (!Factor)
+          continue;
+        collectAdditiveTerms(Binary->getOperand(1 - ConstantOperand),
+                             Coefficient * Factor->getSExtValue(), Constant,
+                             Terms);
+        return;
+      }
+    }
+  }
+
+  Terms.push_back({V, Coefficient});
+}
+
+std::optional<SymbolicAddress>
+getSymbolicAddress(Value *Pointer, const DataLayout &DL) {
+  int64_t PointerConstantBytes = 0;
+  Value *DynamicPointer =
+      GetPointerBaseWithConstantOffset(Pointer, PointerConstantBytes, DL);
+  auto *GEP = dyn_cast<GEPOperator>(DynamicPointer->stripPointerCasts());
+  if (!GEP || GEP->getNumIndices() != 1)
+    return std::nullopt;
+
+  SymbolicAddress Result;
+  Result.Base = GEP->getPointerOperand()->stripPointerCasts();
+  int64_t IndexConstant = 0;
+  collectAdditiveTerms(GEP->idx_begin()->get(), 1, IndexConstant,
+                       Result.Terms);
+  llvm::sort(Result.Terms, [](const SymbolicTerm &Left,
+                              const SymbolicTerm &Right) {
+    return Left.Operand < Right.Operand;
+  });
+
+  SmallVector<SymbolicTerm, 8> Combined;
+  for (const SymbolicTerm &Term : Result.Terms) {
+    if (!Combined.empty() && Combined.back().Operand == Term.Operand)
+      Combined.back().Coefficient += Term.Coefficient;
+    else
+      Combined.push_back(Term);
+  }
+  llvm::erase_if(Combined,
+                 [](const SymbolicTerm &Term) {
+                   return Term.Coefficient == 0;
+                 });
+  Result.Terms = std::move(Combined);
+
+  TypeSize ElementSize = DL.getTypeAllocSize(GEP->getSourceElementType());
+  if (ElementSize.isScalable())
+    return std::nullopt;
+  Result.ConstantOffsetBytes =
+      PointerConstantBytes +
+      IndexConstant * static_cast<int64_t>(ElementSize.getFixedValue());
+  return Result;
+}
+
+bool haveSameSymbolicTerms(const SymbolicAddress &Left,
+                           const SymbolicAddress &Right) {
+  if (Left.Base != Right.Base || Left.Terms.size() != Right.Terms.size())
+    return false;
+  for (unsigned I = 0; I < Left.Terms.size(); ++I)
+    if (Left.Terms[I].Operand != Right.Terms[I].Operand ||
+        Left.Terms[I].Coefficient != Right.Terms[I].Coefficient)
+      return false;
+  return true;
+}
+
+std::optional<int64_t> constantAddressDifference(const LoadAccess &Left,
+                                                 const LoadAccess &Right,
+                                                 ScalarEvolution &SE) {
+  if (auto *Difference = dyn_cast<SCEVConstant>(
+          SE.getMinusSCEV(Left.Address, Right.Address)))
+    return Difference->getAPInt().getSExtValue();
+  if (Left.Symbolic && Right.Symbolic &&
+      haveSameSymbolicTerms(*Left.Symbolic, *Right.Symbolic))
+    return Left.Symbolic->ConstantOffsetBytes -
+           Right.Symbolic->ConstantOffsetBytes;
+  return std::nullopt;
+}
+
 bool isPlaneOffset(const SCEV *S) {
   if (auto *Mul = dyn_cast<SCEVMulExpr>(S)) {
     unsigned NonConstantOperands = 0;
@@ -53,10 +180,47 @@ bool isPlaneOffset(const SCEV *S) {
   return false;
 }
 
-const SCEVConstant *constantAddressDifference(const SCEV *Left,
-                                              const SCEV *Right,
-                                              ScalarEvolution &SE) {
-  return dyn_cast<SCEVConstant>(SE.getMinusSCEV(Left, Right));
+int64_t coefficientFor(Value *Operand, const SymbolicAddress &Address) {
+  for (const SymbolicTerm &Term : Address.Terms)
+    if (Term.Operand == Operand)
+      return Term.Coefficient;
+  return 0;
+}
+
+bool areSymmetricAddresses(const SymbolicAddress &Left,
+                           const SymbolicAddress &Right,
+                           const SymbolicAddress &Center) {
+  if (Left.Base != Center.Base || Right.Base != Center.Base ||
+      Left.ConstantOffsetBytes + Right.ConstantOffsetBytes !=
+          2 * Center.ConstantOffsetBytes)
+    return false;
+
+  SmallPtrSet<Value *, 16> Operands;
+  for (const SymbolicTerm &Term : Left.Terms)
+    Operands.insert(Term.Operand);
+  for (const SymbolicTerm &Term : Right.Terms)
+    Operands.insert(Term.Operand);
+  for (const SymbolicTerm &Term : Center.Terms)
+    Operands.insert(Term.Operand);
+  for (Value *Operand : Operands)
+    if (coefficientFor(Operand, Left) + coefficientFor(Operand, Right) !=
+        2 * coefficientFor(Operand, Center))
+      return false;
+  return true;
+}
+
+bool symbolicDifferenceHasPlaneTerm(const SymbolicAddress &Address,
+                                    const SymbolicAddress &Center,
+                                    ScalarEvolution &SE) {
+  if (Address.Base != Center.Base)
+    return false;
+  for (const SymbolicTerm &Term : Address.Terms) {
+    if (Term.Coefficient == coefficientFor(Term.Operand, Center))
+      continue;
+    if (isPlaneOffset(SE.getSCEV(Term.Operand)))
+      return true;
+  }
+  return false;
 }
 
 bool areOppositeOffsets(const SCEV *Left, const SCEV *Right,
@@ -67,6 +231,8 @@ bool areOppositeOffsets(const SCEV *Left, const SCEV *Right,
 
 unsigned countOppositeStreamPairs(unsigned Candidate,
                                   ArrayRef<StreamInfo> Streams,
+                                  ArrayRef<std::optional<SymbolicAddress>>
+                                      SymbolicAddresses,
                                   ScalarEvolution &SE) {
   SmallVector<const SCEV *, 16> Offsets;
   for (unsigned I = 0; I < Streams.size(); ++I) {
@@ -78,8 +244,18 @@ unsigned countOppositeStreamPairs(unsigned Candidate,
 
   unsigned Pairs = 0;
   for (unsigned I = 0; I < Offsets.size(); ++I)
-    for (unsigned J = I + 1; J < Offsets.size(); ++J)
-      Pairs += areOppositeOffsets(Offsets[I], Offsets[J], SE);
+    for (unsigned J = I + 1; J < Offsets.size(); ++J) {
+      bool Opposite = areOppositeOffsets(Offsets[I], Offsets[J], SE);
+      if (!Opposite && SymbolicAddresses[Candidate]) {
+        unsigned LeftIndex = I >= Candidate ? I + 1 : I;
+        unsigned RightIndex = J >= Candidate ? J + 1 : J;
+        if (SymbolicAddresses[LeftIndex] && SymbolicAddresses[RightIndex])
+          Opposite = areSymmetricAddresses(
+              *SymbolicAddresses[LeftIndex], *SymbolicAddresses[RightIndex],
+              *SymbolicAddresses[Candidate]);
+      }
+      Pairs += Opposite;
+    }
   return Pairs;
 }
 
@@ -163,11 +339,36 @@ Value *findInductionStep(PHINode *Induction, Loop &L) {
   return nullptr;
 }
 
-PHINode *findTailInduction(Value *TailIndex) {
-  // BiSheng may sign- or zero-extend an i32 loop induction before whilelt.
-  while (auto *Cast = dyn_cast<CastInst>(TailIndex))
-    TailIndex = Cast->getOperand(0);
-  return dyn_cast<PHINode>(TailIndex);
+void findTailInductionImpl(Value *V, Loop &L, SmallPtrSetImpl<Value *> &Seen,
+                           PHINode *&Found, bool &Ambiguous) {
+  if (Ambiguous || !Seen.insert(V).second)
+    return;
+  if (auto *Phi = dyn_cast<PHINode>(V)) {
+    if (Phi->getParent() != L.getHeader())
+      return;
+    if (Found && Found != Phi)
+      Ambiguous = true;
+    else
+      Found = Phi;
+    return;
+  }
+
+  auto *Inst = dyn_cast<Instruction>(V);
+  if (!Inst || !L.contains(Inst) || isa<CallBase>(Inst))
+    return;
+  for (Value *Operand : Inst->operands())
+    findTailInductionImpl(Operand, L, Seen, Found, Ambiguous);
+}
+
+PHINode *findTailInduction(Value *TailIndex, Loop &L) {
+  // BiSheng can fold a constant offset or scaling expression into whilelt's
+  // start value. Follow that expression and require one unambiguous header
+  // PHI instead of accepting only cast(PHI).
+  SmallPtrSet<Value *, 16> Seen;
+  PHINode *Found = nullptr;
+  bool Ambiguous = false;
+  findTailInductionImpl(TailIndex, L, Seen, Found, Ambiguous);
+  return Ambiguous ? nullptr : Found;
 }
 
 std::optional<StencilInfo> reject(Function &F, Loop &L, StringRef Reason) {
@@ -219,9 +420,12 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
        !hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.")) ||
       TailPredicate->arg_size() < 2)
     return reject(F, L, "tail-predicate");
-  auto *Induction = findTailInduction(TailPredicate->getArgOperand(0));
-  if (!Induction || !L.contains(Induction))
+  auto *Induction = findTailInduction(TailPredicate->getArgOperand(0), L);
+  if (!Induction || !L.contains(Induction)) {
+    errs() << "StencilAnalysisTail: function=" << F.getName()
+           << " start=" << *TailPredicate->getArgOperand(0) << "\n";
     return reject(F, L, "tail-induction");
+  }
   auto *AddRec = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(Induction));
   if (!AddRec || AddRec->getLoop() != &L || !AddRec->isAffine())
     return reject(F, L, "induction-scev");
@@ -249,13 +453,15 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   if (ElementBytes == 0)
     return reject(F, L, "element-size");
 
+  const DataLayout &DL = F.getParent()->getDataLayout();
   SmallVector<LoadAccess, 32> Accesses;
   for (CallBase *Load : MaskedLoads) {
     Value *Pointer = Load->getArgOperand(0);
     const SCEV *Address = SE.getSCEV(Pointer);
     if (isa<SCEVCouldNotCompute>(Address))
       return reject(F, L, "load-address-scev");
-    Accesses.push_back({Load, Pointer, Address});
+    Accesses.push_back({Load, Pointer, Address,
+                        getSymbolicAddress(Pointer, DL)});
   }
 
   // Group loads into physical contiguous-row streams. LLVM may spell x-1,
@@ -273,8 +479,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   };
   for (unsigned I = 0; I < Accesses.size(); ++I) {
     for (unsigned J = I + 1; J < Accesses.size(); ++J) {
-      if (!constantAddressDifference(Accesses[I].Address,
-                                     Accesses[J].Address, SE))
+      if (!constantAddressDifference(Accesses[I], Accesses[J], SE))
         continue;
       unsigned LeftRoot = FindRoot(I);
       unsigned RightRoot = FindRoot(J);
@@ -288,6 +493,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
     Groups[FindRoot(I)].push_back(I);
 
   SmallVector<StreamInfo, 27> Streams;
+  SmallVector<std::optional<SymbolicAddress>, 27> StreamSymbolicAddresses;
   for (auto &Entry : Groups) {
     ArrayRef<unsigned> Members = Entry.second;
     unsigned Representative = Members.front();
@@ -300,13 +506,12 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
       unsigned NegativeCount = 0;
       unsigned PositiveCount = 0;
       for (unsigned Other : Members) {
-        const SCEVConstant *Difference = constantAddressDifference(
-            Accesses[Other].Address, Accesses[Candidate].Address, SE);
+        std::optional<int64_t> Difference = constantAddressDifference(
+            Accesses[Other], Accesses[Candidate], SE);
         if (!Difference)
           continue;
-        NegativeCount += Difference->getAPInt().isNegative();
-        PositiveCount += !Difference->getAPInt().isNegative() &&
-                         !Difference->getAPInt().isZero();
+        NegativeCount += *Difference < 0;
+        PositiveCount += *Difference > 0;
       }
       unsigned Imbalance = NegativeCount > PositiveCount
                                ? NegativeCount - PositiveCount
@@ -324,6 +529,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
     for (unsigned Index : Members)
       Stream.Loads.push_back(Accesses[Index].Load);
     Streams.push_back(std::move(Stream));
+    StreamSymbolicAddresses.push_back(Accesses[Representative].Symbolic);
   }
 
   unsigned CenterIndex = Streams.size();
@@ -331,29 +537,54 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   for (unsigned I = 0; I < Streams.size(); ++I) {
     if (Streams[I].Loads.size() < 3)
       continue;
-    unsigned OppositePairs = countOppositeStreamPairs(I, Streams, SE);
+    unsigned OppositePairs = countOppositeStreamPairs(
+        I, Streams, StreamSymbolicAddresses, SE);
     if (CenterIndex == Streams.size() || OppositePairs > BestOppositePairs) {
       CenterIndex = I;
       BestOppositePairs = OppositePairs;
     }
   }
-  if (CenterIndex == Streams.size())
+  if (CenterIndex == Streams.size()) {
+    errs() << "StencilAnalysisStreams: function=" << F.getName()
+           << " groups=";
+    for (unsigned I = 0; I < Streams.size(); ++I) {
+      if (I)
+        errs() << ",";
+      errs() << Streams[I].Loads.size() << ":"
+             << (StreamSymbolicAddresses[I] ? "symbolic" : "scev-only");
+    }
+    errs() << "\n";
     return reject(F, L, "center-stream");
+  }
 
   // The representative selected above must have neighbors on both x sides.
   bool HasCenter = false;
   bool HasLeft = false;
   bool HasRight = false;
+  const LoadAccess *CenterAccess = nullptr;
+  for (const LoadAccess &Access : Accesses)
+    if (Access.Pointer == Streams[CenterIndex].RepresentativePointer) {
+      CenterAccess = &Access;
+      break;
+    }
+  if (!CenterAccess)
+    return reject(F, L, "center-address");
   for (CallBase *Load : Streams[CenterIndex].Loads) {
-    const SCEV *Address = SE.getSCEV(Load->getArgOperand(0));
-    const SCEVConstant *Difference = constantAddressDifference(
-        Address, Streams[CenterIndex].Address, SE);
+    const LoadAccess *Access = nullptr;
+    for (const LoadAccess &Candidate : Accesses)
+      if (Candidate.Load == Load) {
+        Access = &Candidate;
+        break;
+      }
+    if (!Access)
+      continue;
+    std::optional<int64_t> Difference =
+        constantAddressDifference(*Access, *CenterAccess, SE);
     if (!Difference)
       continue;
-    HasCenter |= Difference->getAPInt().isZero();
-    HasLeft |= Difference->getAPInt().isNegative();
-    HasRight |= !Difference->getAPInt().isNegative() &&
-                !Difference->getAPInt().isZero();
+    HasCenter |= *Difference == 0;
+    HasLeft |= *Difference < 0;
+    HasRight |= *Difference > 0;
   }
   if (!HasCenter || !HasLeft || !HasRight)
     return reject(F, L, "center-neighbor-offsets");
@@ -368,7 +599,13 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
         SE.getMinusSCEV(Streams[I].Address, Streams[CenterIndex].Address);
     if (isa<SCEVCouldNotCompute>(Offset))
       return reject(F, L, "stream-offset-scev");
-    if (isPlaneOffset(Offset)) {
+    bool IsPlane = isPlaneOffset(Offset);
+    if (!IsPlane && StreamSymbolicAddresses[I] &&
+        StreamSymbolicAddresses[CenterIndex])
+      IsPlane = symbolicDifferenceHasPlaneTerm(
+          *StreamSymbolicAddresses[I],
+          *StreamSymbolicAddresses[CenterIndex], SE);
+    if (IsPlane) {
       Streams[I].Kind = StreamKind::PlaneNeighbor;
       ++PlaneNeighbors;
     } else {

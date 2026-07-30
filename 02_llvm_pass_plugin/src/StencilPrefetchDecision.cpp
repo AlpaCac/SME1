@@ -329,18 +329,14 @@ bool insertPrefetches(const StencilInfo &Stencil,
         Stencil.VectorStep,
         ConstantInt::get(IndexType, Decision.DistanceIterations),
         "prefetch.step");
-    Value *FutureX = HeadBuilder.CreateAdd(
-        Stencil.Induction, ScaledStep, "prefetch.future.x");
     bool IsSignedTail = hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.");
-    Value *CompareX = FutureX;
     Type *TailIndexType = TailPredicate->getArgOperand(0)->getType();
-    if (CompareX->getType() != TailIndexType) {
-      CompareX = IsSignedTail
-                     ? HeadBuilder.CreateSExtOrTrunc(CompareX, TailIndexType,
-                                                     "prefetch.compare.x")
-                     : HeadBuilder.CreateZExtOrTrunc(CompareX, TailIndexType,
-                                                     "prefetch.compare.x");
-    }
+    Value *CompareStep = ScaledStep;
+    if (CompareStep->getType() != TailIndexType)
+      CompareStep = HeadBuilder.CreateZExtOrTrunc(
+          CompareStep, TailIndexType, "prefetch.compare.step");
+    Value *CompareX = HeadBuilder.CreateAdd(
+        TailPredicate->getArgOperand(0), CompareStep, "prefetch.compare.x");
     Value *InBounds = IsSignedTail
                           ? HeadBuilder.CreateICmpSLT(
                                 CompareX, TailPredicate->getArgOperand(1),
