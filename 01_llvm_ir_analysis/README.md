@@ -1,8 +1,9 @@
 # 步骤 1：从服务器 C++ 输入生成 kernel-only IR
 
-服务器上的 `stencil_all_sme.cpp` 同时包含多个 stencil 计算函数、测试和
-`main`，但该文件不提交到仓库。步骤 1 先保留完整 LLVM IR，再用
-`llvm-extract` 生成仅含计算函数的 kernel-only IR；步骤 2 以后只消费后者。
+仓库根目录的 `stencil_all_sme.cpp` 提供六个与服务器同名、同参数数量的
+双精度 SME/SVE stencil 计算函数，以及测试入口和 `main`。步骤 1 先保留完整
+LLVM IR，再用 `llvm-extract` 生成仅含计算函数的 kernel-only IR；步骤 2 以后
+只消费后者。服务器私有源文件可通过 `STENCIL_SOURCE` 覆盖该 fixture。
 
 ## 输入选择
 

@@ -4,9 +4,10 @@
 服务器。仓库只保留可重新构建或验证方案所需的源码、脚本、测试输入和
 维护文档，不提交本机生成的 LLVM IR、汇编、日志及性能报告。
 
-服务器私有输入 `stencil_all_sme.cpp` 可以包含 test、`main` 和多个算子。步骤
-1 会生成完整 IR 后提取计算函数，后续步骤不链接或分析 `main`/test。当前 pass
-支持以下单时间步、常系数算子：
+仓库提供可复现的 `stencil_all_sme.cpp`，包含与服务器同名、同参数数量的六个
+双精度 SME/SVE 算子以及 test、`main`。服务器仍可通过 `STENCIL_SOURCE` 使用
+私有原文件。步骤 1 会生成完整 IR 后提取计算函数，后续步骤不链接或分析
+`main`/test。当前 pass 支持：
 
 1. 1D 3-point（1D3P）
 2. 2D 5-point、9-point（2D5P、2D9P）
@@ -16,7 +17,7 @@
 
 | 路径 | 作用 |
 |---|---|
-| `stencil_all_sme.cpp` | 服务器本地输入，不提交；包含多个计算函数、test 和 `main` |
+| `stencil_all_sme.cpp` | 本地多算子回归 fixture；函数名和参数数量对应服务器输入 |
 | `stencil_sme_kernels.c` | 本地 2D5P、3D7P 回归 fixture |
 | `01_llvm_ir_analysis/` | 从 C++ 生成完整 IR，提取 kernel-only IR 并检查向量访存结构 |
 | `02_llvm_pass_plugin/` | LLVM pass 源码、决策模型、测试输入和构建脚本 |

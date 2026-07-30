@@ -318,6 +318,13 @@ bool insertPrefetches(const StencilInfo &Stencil,
     // dominate the first masked load in the loop. Anchor each prefetch at the
     // first load of its own stream so all operands are available.
     CallBase *AnchorLoad = Decision.Stream->Loads.front();
+    for (CallBase *Load : Decision.Stream->Loads) {
+      if (Load->getArgOperand(0) ==
+          Decision.Stream->RepresentativePointer) {
+        AnchorLoad = Load;
+        break;
+      }
+    }
     if (auto *PointerInst =
             dyn_cast<Instruction>(Decision.Stream->RepresentativePointer)) {
       if (!DT.dominates(PointerInst, AnchorLoad))
