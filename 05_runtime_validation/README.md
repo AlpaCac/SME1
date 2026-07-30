@@ -47,9 +47,11 @@ STENCIL_CPU=0 \
 `--1d3p-s1`、`--1d3p-s2`、`--2d5p-s1`、`--2d5p-s2`，以及 2D9P、
 3D13P、3D25P、3D27P 对应的 `s1/s2` 参数。每个 test 独立执行 2 次预热和
 7 次正式测量并报告中位数。可用 `STENCIL_CASES` 覆盖参数列表，
-`STENCIL_LINK_FLAGS` 可增加链接参数。如果原程序输出不含计时等非确定字段，
-可设置 `STENCIL_REQUIRE_IDENTICAL_OUTPUT=1`，要求 baseline 与 prefetch 的
-标准输出和标准错误完全一致。
+`STENCIL_LINK_FLAGS` 可增加链接参数。脚本默认使用
+`--rtlib=compiler-rt -lgcc_s`，由毕昇 compiler-rt 提供 SME ABI 所需的
+`__arm_tpidr2_save` 等例程。如果原程序输出不含计时等非确定字段，可设置
+`STENCIL_REQUIRE_IDENTICAL_OUTPUT=1`，要求 baseline 与 prefetch 的标准输出
+和标准错误完全一致。
 
 以下命令仅用于旧的固定 C ABI 2D5P/3D7P 驱动：
 

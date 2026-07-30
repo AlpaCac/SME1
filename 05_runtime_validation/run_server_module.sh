@@ -73,7 +73,11 @@ if [[ -n "${EXPECTED_PREFETCH_COUNT:-}" &&
   exit 1
 fi
 
-read -r -a link_flags <<< "${STENCIL_LINK_FLAGS:-}"
+link_flags=(--rtlib=compiler-rt -lgcc_s)
+if [[ -n "${STENCIL_LINK_FLAGS:-}" ]]; then
+  read -r -a extra_link_flags <<< "${STENCIL_LINK_FLAGS}"
+  link_flags+=("${extra_link_flags[@]}")
+fi
 "${runtime_cxx}" -x ir -O3 -march="${march}" \
   "${baseline_ir}" "${link_flags[@]}" -o "${baseline_bin}"
 "${runtime_cxx}" -x ir -O3 -march="${march}" \
@@ -228,6 +232,7 @@ report="${output_dir}/runtime_validation_report.md"
   printf -- '- 完整 IR：`%s`\n' "${full_ir}"
   printf -- '- 毕昇编译器：`%s`\n' \
     "$("${runtime_cxx}" --version | sed -n '1p')"
+  printf -- '- SME ABI runtime：`--rtlib=compiler-rt -lgcc_s`\n'
   printf -- '- 预取 intrinsic：baseline `%s`，prefetch `%s`\n' \
     "${baseline_prefetches}" "${prefetch_prefetches}"
   printf -- '- 测试入口：原始 `main`，每次只传入一个算子 test 参数\n'
