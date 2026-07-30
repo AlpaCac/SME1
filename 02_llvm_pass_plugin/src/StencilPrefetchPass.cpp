@@ -165,9 +165,15 @@ public:
              << " kind=" << sme1::toString(Stencil.Kind)
              << " logical-loads=" << Stencil.LogicalLoadCount
              << " physical-streams=" << Stencil.Streams.size()
-             << " vector-step="
-             << cast<CallBase>(Stencil.VectorStep)->getCalledFunction()->getName()
-             << " element-bytes=" << Stencil.ElementBytes << " streams=";
+             << " vector-step=";
+      if (const auto *StepCall = dyn_cast<CallBase>(Stencil.VectorStep)) {
+        const Function *StepCallee = StepCall->getCalledFunction();
+        errs() << (StepCallee ? StepCallee->getName() : "indirect-call");
+      } else {
+        // LLVM 19 can materialize the scalable step as arithmetic on vscale.
+        errs() << *Stencil.VectorStep;
+      }
+      errs() << " element-bytes=" << Stencil.ElementBytes << " streams=";
       for (unsigned I = 0; I < Stencil.Streams.size(); ++I) {
         if (I != 0)
           errs() << ",";

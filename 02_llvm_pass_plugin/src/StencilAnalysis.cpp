@@ -14,6 +14,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <optional>
+#include <string>
 
 using namespace llvm;
 
@@ -120,6 +121,16 @@ bool isScalableVectorStep(Value *Step) {
   return isScalableVectorStepImpl(Step, Seen);
 }
 
+bool isScalableVectorStep(const SCEV *Step) {
+  // LLVM 19 can model vscale as a dedicated SCEV rather than an IR call.
+  // Use its stable printed spelling to keep this pass compatible with both
+  // representations without depending on a version-specific SCEV subclass.
+  std::string Text;
+  raw_string_ostream OS(Text);
+  Step->print(OS);
+  return OS.str().find("vscale") != std::string::npos;
+}
+
 Value *findInductionStep(PHINode *Induction, Loop &L) {
   for (User *User : Induction->users()) {
     auto *Add = dyn_cast<BinaryOperator>(User);
@@ -195,14 +206,16 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   auto *AddRec = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(Induction));
   if (!AddRec || AddRec->getLoop() != &L || !AddRec->isAffine())
     return reject(F, L, "induction-scev");
-  auto *StepUnknown = dyn_cast<SCEVUnknown>(AddRec->getStepRecurrence(SE));
+  const SCEV *StepSCEV = AddRec->getStepRecurrence(SE);
+  auto *StepUnknown = dyn_cast<SCEVUnknown>(StepSCEV);
   Value *VectorStep = StepUnknown ? StepUnknown->getValue() : nullptr;
   if (!VectorStep)
     VectorStep = findInductionStep(Induction, L);
-  if (!VectorStep || !isScalableVectorStep(VectorStep)) {
+  if (!VectorStep ||
+      (!isScalableVectorStep(VectorStep) && !isScalableVectorStep(StepSCEV))) {
     errs() << "StencilAnalysisStep: function=" << F.getName()
            << " loop=" << L.getHeader()->getName() << " scev="
-           << *AddRec->getStepRecurrence(SE);
+           << *StepSCEV;
     if (VectorStep)
       errs() << " value=" << *VectorStep;
     errs() << "\n";
