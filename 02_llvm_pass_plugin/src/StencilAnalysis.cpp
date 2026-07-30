@@ -11,6 +11,7 @@
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <optional>
 
@@ -129,6 +130,13 @@ Value *findInductionStep(PHINode *Induction, Loop &L) {
   return nullptr;
 }
 
+std::optional<StencilInfo> reject(Function &F, Loop &L, StringRef Reason) {
+  errs() << "StencilAnalysisReject: function=" << F.getName()
+         << " loop=" << L.getHeader()->getName() << " reason=" << Reason
+         << "\n";
+  return std::nullopt;
+}
+
 std::optional<StencilInfo>
 analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
                  DominatorTree &DT) {
@@ -155,42 +163,42 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
 
   std::optional<StencilKind> Kind = kindForLoadCount(MaskedLoads.size());
   if (HasUnsafeCall || HasOrdinaryStore || !Kind || MaskedStores.size() != 1)
-    return std::nullopt;
+    return reject(F, L, "memory-or-load-pattern");
 
   Value *Predicate = MaskedLoads.front()->getArgOperand(2);
   for (CallBase *Load : MaskedLoads)
     if (Load->arg_size() < 3 || Load->getArgOperand(2) != Predicate)
-      return std::nullopt;
+      return reject(F, L, "masked-load-predicate");
   if (MaskedStores.front()->arg_size() < 4 ||
       MaskedStores.front()->getArgOperand(3) != Predicate)
-    return std::nullopt;
+    return reject(F, L, "masked-store-predicate");
 
   auto *TailPredicate = dyn_cast<CallBase>(Predicate);
   if (!TailPredicate ||
       (!hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelo.") &&
        !hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.")) ||
       TailPredicate->arg_size() < 2)
-    return std::nullopt;
+    return reject(F, L, "tail-predicate");
   auto *Induction = dyn_cast<PHINode>(TailPredicate->getArgOperand(0));
   if (!Induction || !L.contains(Induction))
-    return std::nullopt;
+    return reject(F, L, "tail-induction");
   auto *AddRec = dyn_cast<SCEVAddRecExpr>(SE.getSCEV(Induction));
   if (!AddRec || AddRec->getLoop() != &L || !AddRec->isAffine())
-    return std::nullopt;
+    return reject(F, L, "induction-scev");
   auto *StepUnknown = dyn_cast<SCEVUnknown>(AddRec->getStepRecurrence(SE));
   Value *VectorStep = StepUnknown ? StepUnknown->getValue() : nullptr;
   if (!VectorStep)
     VectorStep = findInductionStep(Induction, L);
   if (!VectorStep || !isScalableVectorStep(VectorStep))
-    return std::nullopt;
+    return reject(F, L, "scalable-vector-step");
 
   auto *LoadVectorType = dyn_cast<VectorType>(MaskedLoads.front()->getType());
   if (!LoadVectorType)
-    return std::nullopt;
+    return reject(F, L, "masked-load-vector-type");
   unsigned ElementBytes =
       LoadVectorType->getElementType()->getScalarSizeInBits() / 8;
   if (ElementBytes == 0)
-    return std::nullopt;
+    return reject(F, L, "element-size");
 
   const DataLayout &DL = F.getParent()->getDataLayout();
   SmallVector<LoadAccess, 32> Accesses;
@@ -200,7 +208,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
     int64_t Offset = 0;
     Value *ConstantBase = GetPointerBaseWithConstantOffset(Pointer, Offset, DL);
     if (!ConstantBase)
-      return std::nullopt;
+      return reject(F, L, "load-address-base");
     Groups[ConstantBase].push_back(Accesses.size());
     Accesses.push_back({Load, Pointer, ConstantBase, Offset});
   }
@@ -210,7 +218,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   for (auto &Entry : Groups) {
     Value *StreamBase = stripSingleIndexGEP(Entry.first, Induction);
     if (!StreamBase)
-      return std::nullopt;
+      return reject(F, L, "stream-base-gep");
     StreamInfo Stream;
     Stream.Base = StreamBase;
     Stream.RepresentativePointer = Accesses[Entry.second.front()].Pointer;
@@ -240,7 +248,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
     }
   }
   if (CenterIndex == Streams.size())
-    return std::nullopt;
+    return reject(F, L, "center-stream");
 
   // The center stream must contain the x-direction center/left/right loads.
   bool HasCenter = false;
@@ -255,7 +263,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
     HasRight |= Access.ConstantOffset > 0;
   }
   if (!HasCenter || !HasLeft || !HasRight)
-    return std::nullopt;
+    return reject(F, L, "center-neighbor-offsets");
   Streams[CenterIndex].Kind = StreamKind::CurrentRow;
 
   unsigned RowNeighbors = 0;
@@ -277,7 +285,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   if ((*Kind == StencilKind::Stencil1D3P && Streams.size() != 1) ||
       (is2D(*Kind) && (RowNeighbors < 2 || PlaneNeighbors != 0)) ||
       (is3D(*Kind) && (RowNeighbors < 2 || PlaneNeighbors < 2)))
-    return std::nullopt;
+    return reject(F, L, "stream-topology");
 
   StencilInfo Result;
   Result.Kind = *Kind;
