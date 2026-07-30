@@ -209,19 +209,21 @@ fi
   printf -- '- 插件：`%s`\n' "${plugin}"
   printf -- '- LLVM：`%s`\n' "$("${llvm_config}" --version)"
   printf -- '- 提取函数数：`%s`\n' "$(grep -c '^define ' "${kernel_ir}")"
-  printf -- '- 已识别 2D5P/3D7P 函数数：`%s`\n' "${recognized_count}"
+  printf -- '- 已识别 stencil 函数数：`%s`\n' "${recognized_count}"
   printf -- '- 预取决策数：`%s`，启用：`%s`\n' \
     "${decision_count}" "${enabled_count}"
   printf -- '- 插入 intrinsic/汇编 PRFM 数：`%s / %s`\n' \
     "${prefetch_count}" "${assembly_prefetch_count}"
   printf -- '- test/main：不在 kernel IR 中，不参与 pass 或 kernel 汇编链接\n\n'
-  printf '未匹配当前 2D5P/3D7P 结构的提取函数会被安全跳过；为它们增加预取前，'
-  printf '需要先扩展 StencilAnalysis 与决策模型。\n'
+  printf '支持 1D3P、2D5P/9P、3D7P/13P/25P/27P；未能证明地址拓扑的'
+  printf '提取函数会被安全跳过。逐函数结果见 stencil_recognition_report.md。\n'
 } > "${report}"
 
 {
-  printf '# 步骤 3 Stencil 识别报告\n\n```text\n'
+  printf '# 步骤 3 Stencil 识别报告\n\n## 已识别\n\n```text\n'
   grep '^StencilAnalysis:' "${pass_log}" || true
+  printf '```\n\n## 安全跳过\n\n```text\n'
+  grep '^StencilAnalysisReject:' "${pass_log}" || true
   printf '```\n'
 } > "${recognition_report}"
 

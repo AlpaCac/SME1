@@ -5,8 +5,6 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
-#include "llvm/Analysis/ValueTracking.h"
-#include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
@@ -24,8 +22,7 @@ namespace {
 struct LoadAccess {
   CallBase *Load = nullptr;
   Value *Pointer = nullptr;
-  Value *ConstantBase = nullptr;
-  int64_t ConstantOffset = 0;
+  const SCEV *Address = nullptr;
 };
 
 bool hasNamePrefix(const CallBase &Call, StringRef Prefix) {
@@ -54,6 +51,36 @@ bool isPlaneOffset(const SCEV *S) {
   if (auto *Cast = dyn_cast<SCEVCastExpr>(S))
     return isPlaneOffset(Cast->getOperand());
   return false;
+}
+
+const SCEVConstant *constantAddressDifference(const SCEV *Left,
+                                              const SCEV *Right,
+                                              ScalarEvolution &SE) {
+  return dyn_cast<SCEVConstant>(SE.getMinusSCEV(Left, Right));
+}
+
+bool areOppositeOffsets(const SCEV *Left, const SCEV *Right,
+                        ScalarEvolution &SE) {
+  auto *Sum = dyn_cast<SCEVConstant>(SE.getAddExpr(Left, Right));
+  return Sum && Sum->getAPInt().isZero();
+}
+
+unsigned countOppositeStreamPairs(unsigned Candidate,
+                                  ArrayRef<StreamInfo> Streams,
+                                  ScalarEvolution &SE) {
+  SmallVector<const SCEV *, 16> Offsets;
+  for (unsigned I = 0; I < Streams.size(); ++I) {
+    if (I == Candidate)
+      continue;
+    Offsets.push_back(
+        SE.getMinusSCEV(Streams[I].Address, Streams[Candidate].Address));
+  }
+
+  unsigned Pairs = 0;
+  for (unsigned I = 0; I < Offsets.size(); ++I)
+    for (unsigned J = I + 1; J < Offsets.size(); ++J)
+      Pairs += areOppositeOffsets(Offsets[I], Offsets[J], SE);
+  return Pairs;
 }
 
 std::optional<StencilKind> kindForLoadCount(unsigned Count) {
@@ -222,81 +249,111 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   if (ElementBytes == 0)
     return reject(F, L, "element-size");
 
-  const DataLayout &DL = F.getParent()->getDataLayout();
   SmallVector<LoadAccess, 32> Accesses;
-  DenseMap<Value *, SmallVector<unsigned, 9>> Groups;
   for (CallBase *Load : MaskedLoads) {
     Value *Pointer = Load->getArgOperand(0);
-    int64_t Offset = 0;
-    Value *ConstantBase = GetPointerBaseWithConstantOffset(Pointer, Offset, DL);
-    if (!ConstantBase)
-      return reject(F, L, "load-address-base");
-    Groups[ConstantBase].push_back(Accesses.size());
-    Accesses.push_back({Load, Pointer, ConstantBase, Offset});
+    const SCEV *Address = SE.getSCEV(Pointer);
+    if (isa<SCEVCouldNotCompute>(Address))
+      return reject(F, L, "load-address-scev");
+    Accesses.push_back({Load, Pointer, Address});
   }
 
-  DenseMap<Value *, unsigned> StreamByBase;
+  // Group loads into physical contiguous-row streams. LLVM may spell x-1,
+  // x, and x+1 with unrelated GEP SSA values; a constant SCEV difference is
+  // the representation-independent proof that they stay on the same row.
+  SmallVector<unsigned, 32> Parent(Accesses.size());
+  for (unsigned I = 0; I < Parent.size(); ++I)
+    Parent[I] = I;
+  auto FindRoot = [&](unsigned I) {
+    while (Parent[I] != I) {
+      Parent[I] = Parent[Parent[I]];
+      I = Parent[I];
+    }
+    return I;
+  };
+  for (unsigned I = 0; I < Accesses.size(); ++I) {
+    for (unsigned J = I + 1; J < Accesses.size(); ++J) {
+      if (!constantAddressDifference(Accesses[I].Address,
+                                     Accesses[J].Address, SE))
+        continue;
+      unsigned LeftRoot = FindRoot(I);
+      unsigned RightRoot = FindRoot(J);
+      if (LeftRoot != RightRoot)
+        Parent[RightRoot] = LeftRoot;
+    }
+  }
+
+  DenseMap<unsigned, SmallVector<unsigned, 9>> Groups;
+  for (unsigned I = 0; I < Accesses.size(); ++I)
+    Groups[FindRoot(I)].push_back(I);
+
   SmallVector<StreamInfo, 27> Streams;
   for (auto &Entry : Groups) {
-    // GetPointerBaseWithConstantOffset already groups left/center/right into
-    // one physical stream. Do not require a particular nested-GEP shape here:
-    // BiSheng may fold row offsets and the vector IV into one GEP index.
-    Value *StreamBase = Entry.first;
+    ArrayRef<unsigned> Members = Entry.second;
+    unsigned Representative = Members.front();
+    unsigned BestImbalance = Members.size() + 1;
+
+    // Prefer an interior x-neighbor as the stream anchor. This avoids using
+    // x-1 or x+1 when the center address is available, while remaining valid
+    // for longer-radius 13P/25P rows.
+    for (unsigned Candidate : Members) {
+      unsigned NegativeCount = 0;
+      unsigned PositiveCount = 0;
+      for (unsigned Other : Members) {
+        const SCEVConstant *Difference = constantAddressDifference(
+            Accesses[Other].Address, Accesses[Candidate].Address, SE);
+        if (!Difference)
+          continue;
+        NegativeCount += Difference->getAPInt().isNegative();
+        PositiveCount += !Difference->getAPInt().isNegative() &&
+                         !Difference->getAPInt().isZero();
+      }
+      unsigned Imbalance = NegativeCount > PositiveCount
+                               ? NegativeCount - PositiveCount
+                               : PositiveCount - NegativeCount;
+      if (NegativeCount && PositiveCount && Imbalance < BestImbalance) {
+        Representative = Candidate;
+        BestImbalance = Imbalance;
+      }
+    }
+
     StreamInfo Stream;
-    Stream.Base = StreamBase;
-    Stream.RepresentativePointer = Accesses[Entry.second.front()].Pointer;
-    Stream.Address = SE.getSCEV(Stream.RepresentativePointer);
-    for (unsigned Index : Entry.second)
+    Stream.Base = Accesses[Representative].Pointer;
+    Stream.RepresentativePointer = Accesses[Representative].Pointer;
+    Stream.Address = Accesses[Representative].Address;
+    for (unsigned Index : Members)
       Stream.Loads.push_back(Accesses[Index].Load);
-    StreamByBase[StreamBase] = Streams.size();
     Streams.push_back(std::move(Stream));
   }
 
   unsigned CenterIndex = Streams.size();
-  // For fixed-radius stencils, the current row contains at least the three
-  // x-neighbors. This remains true when CodeGen has flattened nested GEPs.
+  unsigned BestOppositePairs = 0;
   for (unsigned I = 0; I < Streams.size(); ++I) {
-    if (Streams[I].Loads.size() >= 3) {
+    if (Streams[I].Loads.size() < 3)
+      continue;
+    unsigned OppositePairs = countOppositeStreamPairs(I, Streams, SE);
+    if (CenterIndex == Streams.size() || OppositePairs > BestOppositePairs) {
       CenterIndex = I;
-      break;
-    }
-  }
-
-  // Preserve the original nested-GEP fallback for forms where the physical
-  // stream grouping does not expose all x-neighbors in one base group.
-  for (unsigned I = 0; I < Streams.size(); ++I) {
-    if (CenterIndex != Streams.size())
-      break;
-    bool IsCommonBase = true;
-    for (unsigned J = 0; J < Streams.size(); ++J) {
-      if (I == J)
-        continue;
-      auto *GEP = dyn_cast<GetElementPtrInst>(Streams[J].Base);
-      if (!GEP || GEP->getNumIndices() != 1 ||
-          GEP->getPointerOperand() != Streams[I].Base) {
-        IsCommonBase = false;
-        break;
-      }
-    }
-    if (IsCommonBase) {
-      CenterIndex = I;
-      break;
+      BestOppositePairs = OppositePairs;
     }
   }
   if (CenterIndex == Streams.size())
     return reject(F, L, "center-stream");
 
-  // The center stream must contain the x-direction center/left/right loads.
+  // The representative selected above must have neighbors on both x sides.
   bool HasCenter = false;
   bool HasLeft = false;
   bool HasRight = false;
-  for (const LoadAccess &Access : Accesses) {
-    Value *Base = Access.ConstantBase;
-    if (Base != Streams[CenterIndex].Base)
+  for (CallBase *Load : Streams[CenterIndex].Loads) {
+    const SCEV *Address = SE.getSCEV(Load->getArgOperand(0));
+    const SCEVConstant *Difference = constantAddressDifference(
+        Address, Streams[CenterIndex].Address, SE);
+    if (!Difference)
       continue;
-    HasCenter |= Access.ConstantOffset == 0;
-    HasLeft |= Access.ConstantOffset < 0;
-    HasRight |= Access.ConstantOffset > 0;
+    HasCenter |= Difference->getAPInt().isZero();
+    HasLeft |= Difference->getAPInt().isNegative();
+    HasRight |= !Difference->getAPInt().isNegative() &&
+                !Difference->getAPInt().isZero();
   }
   if (!HasCenter || !HasLeft || !HasRight)
     return reject(F, L, "center-neighbor-offsets");

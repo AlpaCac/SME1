@@ -108,11 +108,17 @@ def metrics_for(ir: str, name: str) -> tuple[list[tuple[str, str, bool]], dict[s
 
 
 def classify(metrics: dict[str, int]) -> str:
-    if metrics["masked_loads"] == 5:
-        return "2D5P candidate"
-    if metrics["masked_loads"] == 7:
-        return "3D7P candidate"
-    return "other stencil candidate"
+    stencil_by_load_count = {
+        3: "1D3P",
+        5: "2D5P",
+        7: "3D7P",
+        9: "2D9P",
+        13: "3D13P",
+        25: "3D25P",
+        27: "3D27P",
+    }
+    kind = stencil_by_load_count.get(metrics["masked_loads"])
+    return f"{kind} candidate" if kind else "other stencil candidate"
 
 
 def render_report(

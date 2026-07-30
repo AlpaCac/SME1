@@ -12,15 +12,18 @@ test 已在步骤 1 被排除，因此 pass 不依赖函数名前缀，也不会
 | 2D | 5P、9P |
 | 3D | 7P、13P、25P、27P |
 
-识别器按 masked load 数、中心连续 x 流、共同 `whilelo`/`whilelt`、可缩放
-`cnt*`/`llvm.vscale` 步长及相对行/平面地址归并进行判断。2D9P 与 3D25P/27P 的
-对角邻域会合并到相应 row 或 plane 流；当候选流多于硬件预算时，决策器按 L1/L2
-容量、流数、指令数与带宽预算筛选。
+识别器按 masked load 数、共同 `whilelo`/`whilelt`、可缩放
+`cnt*`/`llvm.vscale` 步长及 SCEV 地址差进行判断。地址差为常量的 load 会合并为
+同一条连续 x 流，再根据成对的行/平面地址差选择中心流并验证维度拓扑。这一规则
+不依赖 Clang 是否把行偏移和向量 IV 折叠进同一个 GEP。2D9P 与
+3D25P/27P 的对角邻域会合并到相应 row 或 plane 流；当候选流多于硬件预算时，
+决策器按 L1/L2 容量、流数、指令数与带宽预算筛选。
 
-1D3P 的 current-row 预取默认关闭，因为它是连续流。需要实验时设置：
+1D3P 的 current-row L1 预取默认开启，以便在服务器上与其余算子一起验证。若硬件
+流预取器已经覆盖该连续流，可在性能实验中关闭：
 
 ```bash
-SME_PREFETCH_ENABLE_CURRENT_L1=1
+SME_PREFETCH_ENABLE_CURRENT_L1=0
 ```
 
 ## 构建与运行
