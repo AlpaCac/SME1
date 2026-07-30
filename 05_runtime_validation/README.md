@@ -43,6 +43,10 @@ STENCIL_CPU=0 \
 ./scripts/03_validate_server_runtime.sh
 ```
 
+`BISHENG_CXX` 或 `BISHENG_HOME` 必须显式指定；脚本不会从 `PATH` 回退到独立
+LLVM 的 `clang++`，并会检查版本首行包含 BiSheng。最终链接计划保存在
+`output/server-module/baseline_link_plan.log`。
+
 脚本默认检查预取版本包含 29 个 intrinsic，随后分别向原始 `main` 传入
 `--1d3p-s1`、`--1d3p-s2`、`--2d5p-s1`、`--2d5p-s2`，以及 2D9P、
 3D13P、3D25P、3D27P 对应的 `s1/s2` 参数。每个 test 独立执行 2 次预热和

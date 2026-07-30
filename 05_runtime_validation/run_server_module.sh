@@ -18,7 +18,7 @@ elif [[ -n "${BISHENG_HOME:-}" &&
         -x "${BISHENG_HOME}/bin/clang++" ]]; then
   runtime_cxx="${BISHENG_HOME}/bin/clang++"
 else
-  runtime_cxx="$(command -v clang++ || true)"
+  runtime_cxx=""
 fi
 
 for executable in "${opt_bin}" "${runtime_cxx}"; do
@@ -28,6 +28,18 @@ for executable in "${opt_bin}" "${runtime_cxx}"; do
     exit 1
   fi
 done
+
+runtime_cxx_version="$("${runtime_cxx}" --version | sed -n '1p')"
+if [[ "${STENCIL_ALLOW_NON_BISHENG_CXX:-0}" != "1" &&
+      ! "${runtime_cxx_version}" =~ [Bb]i[Ss]heng ]]; then
+  printf 'runtime compiler is not BiSheng: %s\n' \
+    "${runtime_cxx_version}" >&2
+  printf 'set BISHENG_CXX to the absolute BiSheng clang++ path.\n' >&2
+  exit 1
+fi
+printf 'Runtime compiler: %s\n' "${runtime_cxx}"
+printf 'Runtime compiler version: %s\n' "${runtime_cxx_version}"
+
 for input in "${full_ir}" "${plugin}"; do
   if [[ ! -f "${input}" ]]; then
     printf 'missing input: %s\n' "${input}" >&2
@@ -78,6 +90,9 @@ if [[ -n "${STENCIL_LINK_FLAGS:-}" ]]; then
   read -r -a extra_link_flags <<< "${STENCIL_LINK_FLAGS}"
   link_flags+=("${extra_link_flags[@]}")
 fi
+"${runtime_cxx}" -### -x ir -O3 -march="${march}" \
+  "${baseline_ir}" "${link_flags[@]}" -o "${baseline_bin}" \
+  2> "${output_dir}/baseline_link_plan.log"
 "${runtime_cxx}" -x ir -O3 -march="${march}" \
   "${baseline_ir}" "${link_flags[@]}" -o "${baseline_bin}"
 "${runtime_cxx}" -x ir -O3 -march="${march}" \
@@ -231,7 +246,7 @@ report="${output_dir}/runtime_validation_report.md"
   printf '# 服务器原始 main/test 正确性与性能报告\n\n'
   printf -- '- 完整 IR：`%s`\n' "${full_ir}"
   printf -- '- 毕昇编译器：`%s`\n' \
-    "$("${runtime_cxx}" --version | sed -n '1p')"
+    "${runtime_cxx_version}"
   printf -- '- SME ABI runtime：`--rtlib=compiler-rt -lgcc_s`\n'
   printf -- '- 预取 intrinsic：baseline `%s`，prefetch `%s`\n' \
     "${baseline_prefetches}" "${prefetch_prefetches}"
