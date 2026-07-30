@@ -47,8 +47,16 @@ Value *stripSingleIndexGEP(Value *Pointer, Value *Induction) {
   // GEP. Remove only casts; any remaining address arithmetic is significant.
   Pointer = Pointer->stripPointerCasts();
   auto *GEP = dyn_cast<GetElementPtrInst>(Pointer);
-  if (!GEP || GEP->getNumIndices() != 1 ||
-      GEP->idx_begin()->get() != Induction)
+  if (!GEP || GEP->getNumIndices() != 1)
+    return nullptr;
+
+  // AArch64 code generation commonly keeps the loop IV in i32, but GEP uses
+  // i64 indices. The extension does not change which loop variable indexes
+  // the stream, so normalize it before matching the induction PHI.
+  Value *Index = GEP->idx_begin()->get();
+  while (auto *Cast = dyn_cast<CastInst>(Index))
+    Index = Cast->getOperand(0);
+  if (Index != Induction)
     return nullptr;
   return GEP->getPointerOperand();
 }
