@@ -60,6 +60,16 @@ LLVM 的 `clang++`，并会检查版本首行包含 BiSheng。最终链接计划
 墙钟测量读取 Linux `/proc/uptime` 的单调时钟，不依赖 GNU
 `/usr/bin/time`。
 
+脚本默认在标准错误中打印当前正确性用例和性能样本进度。设置
+`STENCIL_PROGRESS=0` 可关闭。只需确认完整链路能够运行时，使用：
+
+```bash
+STENCIL_SMOKE=1 ./scripts/03_validate_server_runtime.sh
+```
+
+smoke 模式只选择六类算子的 `s1`，默认不预热且每个版本只测 1 次，共运行
+24 次；该结果只用于检查流程，不用于判断稳定性能。
+
 以下命令仅用于旧的固定 C ABI 2D5P/3D7P 驱动：
 
 ```bash

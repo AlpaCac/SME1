@@ -108,6 +108,11 @@ default_cases=(
 )
 if [[ -n "${STENCIL_CASES:-}" ]]; then
   read -r -a test_cases <<< "${STENCIL_CASES}"
+elif [[ "${STENCIL_SMOKE:-0}" == "1" ]]; then
+  test_cases=(
+    --1d3p-s1 --2d5p-s1 --2d9p-s1
+    --3d13p-s1 --3d25p-s1 --3d27p-s1
+  )
 else
   test_cases=("${default_cases[@]}")
 fi
@@ -125,6 +130,12 @@ if [[ -n "${STENCIL_CPU:-}" ]]; then
   fi
   runner=("${taskset_bin}" -c "${STENCIL_CPU}")
 fi
+
+progress() {
+  if [[ "${STENCIL_PROGRESS:-1}" == "1" ]]; then
+    printf '[runtime-validation] %s\n' "$*" >&2
+  fi
+}
 
 run_original_test() {
   local variant="$1"
@@ -148,11 +159,16 @@ run_original_test() {
 
 correctness_summary="${output_dir}/correctness_summary.tsv"
 : > "${correctness_summary}"
+case_count="${#test_cases[@]}"
+case_index=0
 for test_case in "${test_cases[@]}"; do
+  ((case_index += 1))
+  progress "correctness ${case_index}/${case_count}: ${test_case} baseline"
   case_name="${test_case#--}"
   baseline_status="$(
     run_original_test baseline "${baseline_bin}" "${test_case}"
   )"
+  progress "correctness ${case_index}/${case_count}: ${test_case} prefetch"
   prefetch_status="$(
     run_original_test prefetch "${prefetch_bin}" "${test_case}"
   )"
@@ -180,8 +196,13 @@ for test_case in "${test_cases[@]}"; do
     "${outputs_match}" >> "${correctness_summary}"
 done
 
-warmups="${STENCIL_WARMUPS:-2}"
-samples="${STENCIL_SAMPLES:-7}"
+if [[ "${STENCIL_SMOKE:-0}" == "1" ]]; then
+  warmups="${STENCIL_WARMUPS:-0}"
+  samples="${STENCIL_SAMPLES:-1}"
+else
+  warmups="${STENCIL_WARMUPS:-2}"
+  samples="${STENCIL_SAMPLES:-7}"
+fi
 timings="${output_dir}/wall_time_seconds.tsv"
 : > "${timings}"
 
@@ -209,12 +230,16 @@ timed_run() {
 }
 
 if [[ "${STENCIL_SKIP_PERFORMANCE:-0}" != "1" ]]; then
+  case_index=0
   for test_case in "${test_cases[@]}"; do
+    ((case_index += 1))
+    progress "performance ${case_index}/${case_count}: ${test_case}, warmups=${warmups}, samples=${samples}"
     for ((sample = 0; sample < warmups; ++sample)); do
       "${runner[@]}" "${baseline_bin}" "${test_case}" >/dev/null 2>/dev/null
       "${runner[@]}" "${prefetch_bin}" "${test_case}" >/dev/null 2>/dev/null
     done
     for ((sample = 1; sample <= samples; ++sample)); do
+      progress "performance ${case_index}/${case_count}: ${test_case}, sample ${sample}/${samples}"
       if ((sample % 2)); then
         timed_run "${test_case}" baseline "${baseline_bin}" "${sample}"
         timed_run "${test_case}" prefetch "${prefetch_bin}" "${sample}"
@@ -225,6 +250,7 @@ if [[ "${STENCIL_SKIP_PERFORMANCE:-0}" != "1" ]]; then
     done
   done
 fi
+progress "completed; writing ${output_dir}/runtime_validation_report.md"
 
 median_for() {
   local test_case="$1"

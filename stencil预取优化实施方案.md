@@ -698,6 +698,16 @@ STENCIL_WARMUPS=1 STENCIL_SAMPLES=3 \
   ./scripts/03_validate_server_runtime.sh
 ```
 
+其中 `WARMUPS=1/SAMPLES=3` 仍需运行 120 次程序。只验证执行链路时可使用：
+
+```bash
+STENCIL_SMOKE=1 \
+  ./scripts/03_validate_server_runtime.sh
+```
+
+smoke 模式只运行六类算子的 `s1`，不预热且每个版本测量 1 次，共运行 24 次；
+它不能替代正式性能测试。脚本会实时打印当前用例、版本和样本进度。
+
 也可以通过 `STENCIL_CASES` 只测部分参数。
 
 报告位于：
