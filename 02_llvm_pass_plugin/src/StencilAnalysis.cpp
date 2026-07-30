@@ -42,25 +42,6 @@ void collectInnermostLoops(Loop &L, SmallVectorImpl<Loop *> &Loops) {
     collectInnermostLoops(*SubLoop, Loops);
 }
 
-Value *stripSingleIndexGEP(Value *Pointer, Value *Induction) {
-  // CodeGen may preserve a no-op pointer cast between the masked load and its
-  // GEP. Remove only casts; any remaining address arithmetic is significant.
-  Pointer = Pointer->stripPointerCasts();
-  auto *GEP = dyn_cast<GetElementPtrInst>(Pointer);
-  if (!GEP || GEP->getNumIndices() != 1)
-    return nullptr;
-
-  // AArch64 code generation commonly keeps the loop IV in i32, but GEP uses
-  // i64 indices. The extension does not change which loop variable indexes
-  // the stream, so normalize it before matching the induction PHI.
-  Value *Index = GEP->idx_begin()->get();
-  while (auto *Cast = dyn_cast<CastInst>(Index))
-    Index = Cast->getOperand(0);
-  if (Index != Induction)
-    return nullptr;
-  return GEP->getPointerOperand();
-}
-
 bool isPlaneOffset(const SCEV *S) {
   if (auto *Mul = dyn_cast<SCEVMulExpr>(S)) {
     unsigned NonConstantOperands = 0;
@@ -257,16 +238,10 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   DenseMap<Value *, unsigned> StreamByBase;
   SmallVector<StreamInfo, 27> Streams;
   for (auto &Entry : Groups) {
-    Value *StreamBase = stripSingleIndexGEP(Entry.first, Induction);
-    if (!StreamBase) {
-      const LoadAccess &Access = Accesses[Entry.second.front()];
-      errs() << "StencilAnalysisStreamBase: function=" << F.getName()
-             << " loop=" << L.getHeader()->getName()
-             << " induction=" << *Induction
-             << " constant-base=" << *Entry.first
-             << " load-pointer=" << *Access.Pointer << "\n";
-      return reject(F, L, "stream-base-gep");
-    }
+    // GetPointerBaseWithConstantOffset already groups left/center/right into
+    // one physical stream. Do not require a particular nested-GEP shape here:
+    // BiSheng may fold row offsets and the vector IV into one GEP index.
+    Value *StreamBase = Entry.first;
     StreamInfo Stream;
     Stream.Base = StreamBase;
     Stream.RepresentativePointer = Accesses[Entry.second.front()].Pointer;
@@ -278,7 +253,20 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   }
 
   unsigned CenterIndex = Streams.size();
+  // For fixed-radius stencils, the current row contains at least the three
+  // x-neighbors. This remains true when CodeGen has flattened nested GEPs.
   for (unsigned I = 0; I < Streams.size(); ++I) {
+    if (Streams[I].Loads.size() >= 3) {
+      CenterIndex = I;
+      break;
+    }
+  }
+
+  // Preserve the original nested-GEP fallback for forms where the physical
+  // stream grouping does not expose all x-neighbors in one base group.
+  for (unsigned I = 0; I < Streams.size(); ++I) {
+    if (CenterIndex != Streams.size())
+      break;
     bool IsCommonBase = true;
     for (unsigned J = 0; J < Streams.size(); ++J) {
       if (I == J)
@@ -303,7 +291,7 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   bool HasLeft = false;
   bool HasRight = false;
   for (const LoadAccess &Access : Accesses) {
-    Value *Base = stripSingleIndexGEP(Access.ConstantBase, Induction);
+    Value *Base = Access.ConstantBase;
     if (Base != Streams[CenterIndex].Base)
       continue;
     HasCenter |= Access.ConstantOffset == 0;
@@ -319,8 +307,10 @@ analyzeInnerLoop(Function &F, Loop &L, ScalarEvolution &SE,
   for (unsigned I = 0; I < Streams.size(); ++I) {
     if (I == CenterIndex)
       continue;
-    auto *GEP = dyn_cast<GetElementPtrInst>(Streams[I].Base);
-    const SCEV *Offset = SE.getSCEV(GEP->idx_begin()->get());
+    const SCEV *Offset =
+        SE.getMinusSCEV(Streams[I].Address, Streams[CenterIndex].Address);
+    if (isa<SCEVCouldNotCompute>(Offset))
+      return reject(F, L, "stream-offset-scev");
     if (isPlaneOffset(Offset)) {
       Streams[I].Kind = StreamKind::PlaneNeighbor;
       ++PlaneNeighbors;

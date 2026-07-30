@@ -303,8 +303,9 @@ bool insertPrefetches(const StencilInfo &Stencil,
   for (const PrefetchDecision &Decision : Decisions) {
     if (!Decision.Enable)
       continue;
-    if (auto *BaseInst = dyn_cast<Instruction>(Decision.Stream->Base)) {
-      if (!DT.dominates(BaseInst, FirstLoad))
+    if (auto *PointerInst =
+            dyn_cast<Instruction>(Decision.Stream->RepresentativePointer)) {
+      if (!DT.dominates(PointerInst, FirstLoad))
         return false;
     }
     if (!llvm::is_contained(Distances, Decision.DistanceIterations))
@@ -358,7 +359,8 @@ bool insertPrefetches(const StencilInfo &Stencil,
         continue;
 
       Value *Address = PrefetchBuilder.CreateGEP(
-          ElementType, Decision.Stream->Base, FutureX, "prefetch.addr");
+          ElementType, Decision.Stream->RepresentativePointer, ScaledStep,
+          "prefetch.addr");
       PrefetchBuilder.CreateCall(
           Prefetch,
           {Address, PrefetchBuilder.getInt32(0),
