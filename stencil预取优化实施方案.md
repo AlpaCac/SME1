@@ -1,36 +1,5 @@
 # SME Stencil 读预取优化实施方案
 
-## 0. 目标与范围
-
-本方案面向服务器私有输入 `stencil_all_sme.cpp`。该文件同时包含 SME/SVE
-计算函数、test 函数和 `main`，实际算子为：
-
-1. 1D 3-point（1D3P）
-2. 2D 5-point（2D5P）
-3. 2D 9-point（2D9P）
-4. 3D 13-point（3D13P）
-5. 3D 25-point（3D25P）
-6. 3D 27-point（3D27P）
-
-当前计算数据类型为 `double`。Pass 还保留对 3D7P 和 `float` kernel 的支持，
-用于本地回归，但它们不是当前服务器输入的主要测试对象。
-
-本方案只优化数据读预取，不改变 stencil 数值计算，不修改原始 C++ 源码，
-不依赖 MLIR，也不使用 JSON 在分析和插入之间传递信息。最终目标是：
-
-```text
-原始 C++/ACLE
--> 毕昇 Clang 生成 LLVM IR
--> 独立 LLVM 19 运行 StencilPrefetchPass
--> 插入 llvm.aarch64.prefetch
--> 毕昇 AArch64 后端和链接器生成可执行程序
--> 汇编中形成 PRFM
--> 使用原 main/test 验证正确性和性能
-```
-
-Pass 在一次遍历中完成流分析、预取决策和 IR 插入。无法证明循环或地址安全时，
-必须跳过函数，不能根据函数名强行插入。
-
 ---
 
 ## 第一部分：Stencil 算子如何计算
@@ -48,143 +17,26 @@ Pass 在一次遍历中完成流分析、预取决策和 IR 插入。无法证�
 其中：
 
 - `W` 是行宽。
+
 - `H` 是每个平面的行数。
+
 - `row_stride = W`。
+
 - `plane_stride = H * W`。
+
 - `x` 是最内层连续维。
+
 - `y` 是跨行维。
+
 - `z` 是跨平面维。
 
-SME/SVE kernel 使用可伸缩向量沿 `x` 推进。对 `double` 数据，每次迭代的
-元素步长来自 `svcntd()`；LLVM IR 中通常表现为 `llvm.vscale` 相关表达式。
-循环尾部通过谓词 load/store 处理，不能假设 `W` 是固定向量长度的整数倍。
+  ![image-20260731143541837](C:\Users\AlpaCa\AppData\Roaming\Typora\typora-user-images\image-20260731143541837.png)
 
-每个输出点包含若干“逻辑 load”，但预取必须按“物理 cache-line 流”去重。
-例如同一行的 `x-1`、`x`、`x+1` 会随 `x` 一起连续推进，应合并为一条流。
+  ![image-20260731143502427](C:\Users\AlpaCa\AppData\Roaming\Typora\typora-user-images\image-20260731143502427.png)
 
-### 1.2 1D3P
+  
 
-1D3P 读取中心及左右邻居：
-
-```text
-out[x] = in[x - 1] + in[x] + in[x + 1]
-```
-
-相对偏移为：
-
-```text
--1, 0, +1
-```
-
-它有 3 个逻辑 load，但三者属于同一条连续物理流。因此 1D3P 的软件预取只需
-考虑当前连续流，不应为三个 load 重复发出预取。
-
-### 1.3 2D5P
-
-2D5P 使用中心、左右、上下邻居：
-
-```text
-out[y, x]
-  = in[y, x]
-  + in[y, x - 1] + in[y, x + 1]
-  + in[y - 1, x] + in[y + 1, x]
-```
-
-相对中心点的线性偏移为：
-
-```text
-0, -1, +1, -W, +W
-```
-
-5 个逻辑 load 合并为 3 条物理流：
-
-1. 当前行：`x-1/x/x+1`
-2. 上一行：`-W`
-3. 下一行：`+W`
-
-当前行通常容易被硬件预取器识别。软件预取优先处理上下行，减少额外并发流的
-cache miss。
-
-### 1.4 2D9P
-
-2D9P 使用以中心为中心的 `3 x 3` 邻域：
-
-```text
-out[y, x]
-  = sum(in[y + dy, x + dx],
-        dy in {-1, 0, +1},
-        dx in {-1, 0, +1})
-```
-
-9 个逻辑 load 仍合并为 3 条物理行流，但每条流各包含 3 个相邻 `x` load：
-
-1. `row(y - 1)`：3 个 load
-2. `row(y)`：3 个 load
-3. `row(y + 1)`：3 个 load
-
-与 2D5P 相比，物理流数量相同，但每条 cache line 的复用次数更高，因此
-KEEP/STRM 决策可能不同。
-
-### 1.5 3D13P
-
-当前 3D13P 是三轴半径 2 的 star stencil：
-
-```text
-out[z, y, x]
-  = in[z, y, x]
-  + sum(in[z, y, x +/- r], r = 1..2)
-  + sum(in[z, y +/- r, x], r = 1..2)
-  + sum(in[z +/- r, y, x], r = 1..2)
-```
-
-13 个逻辑 load 合并为 9 条物理流：
-
-1. 当前行 1 条，包含 5 个相邻 `x` load
-2. 跨行流 4 条：`y +/- 1`、`y +/- 2`
-3. 跨平面流 4 条：`z +/- 1`、`z +/- 2`
-
-### 1.6 3D25P
-
-当前 3D25P 是三轴半径 4 的 star stencil：
-
-```text
-out[z, y, x]
-  = in[z, y, x]
-  + sum(in[z, y, x +/- r], r = 1..4)
-  + sum(in[z, y +/- r, x], r = 1..4)
-  + sum(in[z +/- r, y, x], r = 1..4)
-```
-
-25 个逻辑 load 合并为 17 条物理流：
-
-1. 当前行 1 条，包含 9 个相邻 `x` load
-2. 跨行流 8 条：`y +/- 1..4`
-3. 跨平面流 8 条：`z +/- 1..4`
-
-3D25P 的并发流最多，最容易触发流预算和预取指令预算裁剪。
-
-### 1.7 3D27P
-
-3D27P 使用 `3 x 3 x 3` box 邻域：
-
-```text
-out[z, y, x]
-  = sum(in[z + dz, y + dy, x + dx],
-        dz in {-1, 0, +1},
-        dy in {-1, 0, +1},
-        dx in {-1, 0, +1})
-```
-
-27 个逻辑 load 合并为 9 条物理流，每条流包含 3 个相邻 `x` load：
-
-1. 当前行 1 条
-2. 当前平面的上下行 2 条
-3. 前后平面中的三行各 3 条，共 6 条
-
-因此 3D27P 与 3D13P 都有 9 条物理流，但行/平面组成不同，不能只根据物理流
-总数判断算子类型。
-
-### 1.8 六类算子的流拓扑
+### 1.2六类算子的流拓扑
 
 | 算子 | 逻辑 load | 物理流 | 当前行 | 跨行 | 跨平面 |
 |---|---:|---:|---:|---:|---:|
@@ -409,59 +261,17 @@ enabled decisions == inserted IR prefetches == assembly PRFM
 SME ABI，例如保留的非 streaming/streaming 函数边界可能需要
 `__arm_tpidr2_save`。该例程属于 Arm SME ABI，不是预取 Pass 的依赖。
 
-### 3.2 步骤 1：从服务器 C++ 生成 IR
-
-入口：
-
-```bash
-./01_llvm_ir_analysis/generate_and_check.sh
-```
-
-默认输入是仓库根目录下不提交 Git 的 `stencil_all_sme.cpp`。脚本使用：
-
-```text
--target aarch64-unknown-linux-gnu
--march=armv9.2-a+sme+sve2+sme-f64f64
--O1
--fno-inline
--S -emit-llvm
-```
-
-`-fno-inline` 用于保留每个 kernel 的独立函数定义，避免在提取前被 test/main
-内联。步骤 1 产生：
-
-```text
-01_llvm_ir_analysis/output/stencil_all_sme.full.ll
-01_llvm_ir_analysis/output/stencil_all_sme.kernels.ll
-01_llvm_ir_analysis/output/analysis_report.md
-```
+### 3.2 步骤 1：从 C++ 生成 IR
 
 用途：
 
 1. `full.ll` 保留 kernel、test、`main`，用于最终运行验证。
 2. `kernels.ll` 只包含匹配到的计算函数，用于 Pass 结构验证。
-3. 报告记录函数、循环、GEP、masked load/store 和可伸缩步长特征。
-
-函数发现同时匹配 C++ 修饰名和解修饰名，支持：
-
-```text
-stencil1D_3point_sme(...)
-stencil2D_5point_sme(...)
-...
-```
-
-不能直接用源码拼写匹配 `_Z20stencil2D_5point_sme...`，必须先读取 IR symbol
-并通过 `llvm-cxxfilt` 解修饰。
+3. 报告记录函数、循环、GEP（根据数组下表或者结构体字段计算内存地址）、masked load/store 和可伸缩步长特征。
 
 ### 3.3 步骤 2：构建 LLVM Pass
 
-入口：
-
-```bash
-./scripts/02_build_and_test_pass.sh
-```
-
-该脚本显式使用仓库 `tools/llvm-19.1.7` 中的：
+使用仓库 `tools/llvm-19.1.7` 中的：
 
 ```text
 llvm-config
@@ -482,43 +292,29 @@ Pass 是 LLVM new-pass-manager function plugin，获取：
 | `TargetIRAnalysis` | 目标相关代价接口 |
 | `AssumptionAnalysis` | 使用范围和对齐假设 |
 
-构建脚本会触碰三个 Pass 源文件后重新构建插件，避免服务器复用旧 `.so`。
-
 ### 3.4 步骤 3：识别循环和物理流
 
 Pass 对每个最内层循环执行以下检查。
 
 #### 3.4.1 向量循环
 
-1. 存在可识别的归纳变量。
-2. 步长来自可伸缩向量长度。
-3. load/store 使用兼容的 SVE 谓词。
-4. 循环中不存在破坏地址推理的危险调用。
-5. 尾部归纳变量形式允许通过算术表达式回溯。
+1. 存在可识别的归纳变量（按照固定规律变化的变量，比如循环变量）。
+2. 步长来自可伸缩向量长度（SVE/SME的向量寄存器长度可变，llvm中通常用vscale表示）。
+3. load/store 使用兼容的 SVE 谓词（谓词即掩码，决定向量中哪些参与运算）。
 
 #### 3.4.2 地址规范化
 
-优先通过 SCEV 表示地址：
+SCEV（标量演化分析），用于描述一个标量值如何随循环迭代变化。
 
 ```text
-Base + IV * vector_step + loop_invariant_offset + constant_offset
+for(x=1; x<end; x+=svcntd())
+{1,+,2*vscale}<loop>
+
+input[ y * width + x ]
+center = base + y*W + {1,+,VL}
 ```
 
-若毕昇 IR 中 SCEV 无法保留全部结构，则递归解析：
-
-1. `getelementptr`
-2. `add/sub`
-3. `mul/shl`
-4. `sext/zext/trunc`
-5. 循环外不变量 SSA 值
-
-已经解决的服务器 IR 差异包括：
-
-1. 尾部归纳变量不是简单 PHI。
-2. 步长表示为 `vscale` 算术。
-3. load 指针的 base 本身是 GEP。
-4. 中心流不一定是列表中的第一条流。
-5. `H * W` 可能被保存为不透明 SSA 值。
+可以用于计算地址差，确定物理流
 
 #### 3.4.3 中心流
 
@@ -528,13 +324,7 @@ Base + IV * vector_step + loop_invariant_offset + constant_offset
 2. 能证明存在负、零、正三个 `x` 偏移。
 3. 与最多的其它流形成对称关系，或满足已知拓扑的中心约束。
 
-无法找到中心流时返回 `reason=center-stream`，不插入预取。
-
 #### 3.4.4 3D 拓扑回退
-
-正常路径通过 SCEV 或符号差值识别 row/plane。毕昇可能把 plane stride
-物化为不透明 SSA 值，使 `H * W` 和平面对称性无法直接证明。此时仅对已知
-点数和精确物理流数启用保守回退：
 
 | 算子 | 精确物理流 | 预期跨行 | 预期跨平面 |
 |---|---:|---:|---:|
@@ -549,19 +339,7 @@ Base + IV * vector_step + loop_invariant_offset + constant_offset
 3. 中心流已经通过左右/中心偏移验证。
 
 其余流按地址表达式结构复杂度排序。row stride 通常依赖 `W`，plane stride
-通常依赖 `H * W`，因此较简单的前若干流归为 row，其余归为 plane。日志输出：
-
-```text
-StencilAnalysisTopologyFallback:
-  function=...
-  kind=...
-  opposite-pairs=...
-  row-neighbors=...
-  plane-neighbors=...
-  ranked-offset-complexity=...
-```
-
-若精确拓扑仍不满足，则输出 `reason=stream-topology` 并安全跳过。
+通常依赖 `H * W`，因此较简单的前若干流归为 row，其余归为 plane。
 
 ### 3.5 步骤 4：边分析边决策并插入
 
@@ -574,8 +352,6 @@ StencilAnalysisTopologyFallback:
 -> 启用则立即构造未来地址
 -> 插入 llvm.aarch64.prefetch
 ```
-
-不生成 JSON，也没有第二个独立“读取决策并插入”的步骤。
 
 插入时：
 
@@ -614,15 +390,13 @@ IR intrinsic 数
 
 这表示步骤 1-4 已通过结构验收。
 
+
+
+
+
 ### 3.6 步骤 5.1：使用原 main/test 验证正确性
 
-入口：
-
-```bash
-./scripts/03_validate_server_runtime.sh
-```
-
-该脚本不使用旧的固定 C 测试驱动，而是消费 `full.ll`：
+消费 `full.ll`：
 
 ```text
 full.ll
@@ -639,9 +413,6 @@ full.ll
 stencil_all_sme.baseline
 stencil_all_sme.prefetch
 ```
-
-脚本不允许从 `PATH` 静默回退到独立 LLVM 的 `clang++`，必须通过
-`BISHENG_CXX` 或 `BISHENG_HOME` 指定毕昇，并检查版本首行。
 
 默认逐一运行：
 
@@ -683,8 +454,7 @@ baseline/prefetch 各正式测量 7 次
 ```
 
 运行时间较长是预期行为。正式样本中 baseline/prefetch 按奇偶轮次交换先后顺序，
-减少频率、温度和系统漂移造成的偏差。计时读取 Linux `/proc/uptime` 单调时钟，
-不依赖 GNU `/usr/bin/time`。
+减少频率、温度和系统漂移造成的偏差。
 
 快速模式：
 
@@ -726,28 +496,11 @@ speedup = median_time(baseline) / median_time(prefetch)
 
 `speedup > 1` 表示预取版本更快。
 
-### 3.8 SME ABI 与链接
 
-`__arm_tpidr2_save` 等符号属于 AArch64 SME ABI。步骤 1 使用 `-fno-inline`
-保留 kernel 边界，可能使直接编译时被内联优化掉的 streaming/non-streaming
-调用边界继续存在，因此最终链接必须提供真实 SME ABI 实现。
 
-当前脚本通过毕昇驱动链接，并默认使用：
 
-```text
---rtlib=compiler-rt -lgcc_s
-```
 
-这不是让独立 LLVM 负责运行库，而是由最终毕昇链接驱动选择目标平台 runtime。
-实际链接计划保存在：
-
-```text
-05_runtime_validation/output/server-module/baseline_link_plan.log
-```
-
-禁止用空函数桩替代 `__arm_tpidr2_save`，因为它负责真实的 ZA lazy-save 语义。
-
-### 3.9 性能结果的解释和 Profile 回写
+### 3.8 性能结果的解释和 Profile 回写
 
 当前 29 条 `PRFM` 只证明插入链路正确，不证明全部预取都有收益。性能报告完成后
 按以下顺序分析：
@@ -793,7 +546,7 @@ instruction budget
 不能把 Apple M5 的历史参数直接作为服务器结论，也不能把 2D 的 row 策略直接
 用于 3D plane。
 
-### 3.10 当前完成情况和剩余工作
+### 3.9 当前完成情况和剩余工作
 
 已完成：
 
@@ -820,34 +573,4 @@ instruction budget
 5. 在固定 CPU、频率和系统负载条件下复测。
 6. 有条件时加入 PMU 归因和多线程带宽测试。
 
----
-
-## 验收标准
-
-### 结构验收
-
-```text
-六类服务器算子全部识别
-enabled decisions == inserted intrinsic == PRFM
-baseline IR 不含软件预取
-非 stencil 函数不产生预取决策
-Pass 重复运行不增加预取
-```
-
-### 正确性验收
-
-```text
-12 个原始 main/test 参数在 baseline 和 prefetch 中均返回成功
-原 test 的数值校验结果一致
-尾部、边界和小尺寸场景不出现越界或崩溃
-```
-
-### 性能验收
-
-```text
-固定 CPU 和测试环境
-每个场景使用预热和多轮中位数
-逐算子报告，不用总时间掩盖退化
-收益超过测量噪声并能通过消融解释
-最终 Profile 经正确性回归
-```
+### 
