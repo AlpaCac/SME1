@@ -36,25 +36,91 @@ metadata 直接、稳定。
 
 ## 3. 分块、时间与复用语义
 
-### 3.1 已使用的时间语义
+### 3.1 如何用循环时间计算预取距离
 
-当前 Pass 只分析最内层 SVE/SME 向量循环，并使用：
+这部分要解决的问题是：**数据从目标 cache 层级到达处理器需要若干周期，那么软件
+预取应该比真正的 load 提前多少次循环迭代发出？**
 
-- `LoopInfo` 查找最内层循环；
-- 尾部谓词对应的 PHI 作为归纳变量；
-- SCEV AddRec 验证归纳变量按固定规律变化；
-- `vscale` 相关表达式识别可伸缩向量步长；
-- SCEV 常量 trip count，或从 `whilelo/whilelt` 的起止值估算迭代次数；
-- Profile 中的 `UsefulCycles2D/UsefulCycles3D` 估算每次向量迭代的有效周期。
-
-距离模型实际使用：
+当前方案把最内层 `x` 向量循环的一次执行称为“一次向量迭代”。例如：
 
 ```text
-raw_distance = ceil(target_latency / useful_cycles_per_vector_iteration)
+当前迭代读取 input[..., x]
+下一迭代读取 input[..., x + VL]
+再下一迭代读取 input[..., x + 2 * VL]
 ```
 
-随后用 trip count 限制过短循环，并按 cache line 对距离取整。最终距离以“提前多少
-次向量迭代”表示，而不是固定字节数，因此可以适应运行时可伸缩向量长度。
+其中 `VL` 是运行时的 SVE/SME 向量长度对应的元素步长。预取距离 `D = 4` 表示：
+
+```text
+计算 x 位置时，预取 x + 4 * VL 位置的数据
+```
+
+#### 第一步：确认一次迭代如何前进
+
+Pass 使用 LLVM 分析恢复以下信息：
+
+| LLVM 信息 | 在本方案中的直观含义 |
+|---|---|
+| `LoopInfo` | 找到真正执行向量 load/store 的最内层循环 |
+| PHI 归纳变量 | 当前的 `x` 位置 |
+| SCEV AddRec | 证明 `x` 每轮都按固定规律增长 |
+| `vscale` 相关步长 | 证明每轮增长量来自可伸缩向量长度，而不是普通标量步长 |
+| `whilelo/whilelt` | 给出当前 `x` 和循环上界，并处理最后不足一个向量的尾部 |
+
+这些检查通过后，Pass 才能把未来地址可靠地写成：
+
+```text
+future_x = current_x + D * vector_step
+```
+
+这里的 `vector_step` 直接取自 LLVM IR，因此地址会随机器运行时的 VL 变化。
+
+#### 第二步：把 cache 延迟换算成迭代数
+
+Profile 提供两个模型输入：
+
+| 输入 | 含义 |
+|---|---|
+| `target_latency` | 从目标层级取回数据预计需要的周期数，例如 L1 预取延迟为 32 cycle |
+| `useful_cycles_per_iteration` | 当前 Stencil 完成一次向量迭代预计消耗的周期数 |
+
+假设一次迭代可提供 8 cycle 的计算时间，而数据需要提前 32 cycle 请求，则需要提前
+四次迭代：
+
+```text
+raw_distance
+  = ceil(target_latency / useful_cycles_per_iteration)
+  = ceil(32 / 8)
+  = 4 次向量迭代
+```
+
+当前默认 Profile 对 2D 使用 8 cycle/iteration，对 3D 使用
+10 cycle/iteration。例如 3D 的 L2 延迟按 96 cycle 估算时：
+
+```text
+raw_distance = ceil(96 / 10) = 10 次向量迭代
+```
+
+这里的 8、10、32 和 96 都是 Profile 参数，不是 LLVM IR 能直接证明的硬件事实，
+后续需要通过服务器性能实验校正。
+
+#### 第三步：避免距离不适合当前循环
+
+得到 `raw_distance` 后还要做三项修正：
+
+1. **短循环过滤**：先用 SCEV 获取 trip count，也就是最内层循环总共执行多少次
+   向量迭代。若循环长度不超过 `2 * raw_distance`，预取还没有足够时间发挥作用，
+   当前方案关闭该候选；若无法静态得到 trip count，则使用 Profile 的最大距离约束。
+2. **距离上下限**：L1 距离至少为 1，L2 距离至少为 2；最大距离不能超过 Profile
+   的限制，已知 trip count 时还不能超过循环长度的一半。
+3. **cache-line 修正**：根据 cache line 大小和 Profile 假定的 VL，把距离取整为
+   “覆盖一条 cache line 所需迭代数”的整数倍，使提前量按 cache-line 粒度表达。
+   当前实现没有降低预取发射频率，因此这一步不等同于完整的 cache-line 去重。
+
+最终保存的是“提前 `D` 次向量迭代”，而不是“提前固定多少字节”。插入时再用真实
+`vector_step` 构造 `x + D * vector_step`，因此最终预取地址仍能适应可伸缩向量
+长度。需要注意，距离是否真正足够隐藏延迟仍取决于 Profile 中的周期估计和目标
+机器的实际执行情况。
 
 ### 3.2 已使用的复用语义
 
@@ -270,6 +336,4 @@ stencil.prefetch_candidate {
 该 op 或等价 metadata 在高层记录不会被 LLVM IR 可靠恢复的信息；经过 tiling、
 bufferization 和向量化后，再把有效候选 lower 到 `llvm.aarch64.prefetch`。此时用
 最终 VL、谓词、GEP 和 Profile 重新计算距离并做预算检查。
-
-
 
