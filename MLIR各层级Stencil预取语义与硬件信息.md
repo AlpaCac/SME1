@@ -37,6 +37,55 @@ microbenchmark 或 PMU 测得的延迟、带宽和 stall。MLIR 各层只是使�
 | LLVM/Machine | 最终 GEP、控制流、目标 intrinsic、指令调度 | 最终合法性检查并生成 `PRFM` | 完整目标 Profile 和调度模型 |
 | Runtime/PMU | miss、stall、带宽、TLB、实际加速比 | 调参、消融或关闭负收益预取 | PMU 事件定义与稳定测试环境 |
 
+### 1.1 当前方案实际使用了哪些语义
+
+当前编译流程是：
+
+```text
+SME/SVE ACLE C++
+-> Clang 生成 LLVM IR
+-> StencilPrefetchPass 分析、决策并插入预取
+-> AArch64 后端生成 PRFM
+```
+
+它没有经过 Linalg、SCF、Vector、ArmSVE 或 ArmSME MLIR dialect。下表中的“使用”
+表示当前 Pass 在 LLVM IR 中直接获得、重新恢复或用 Profile 近似了该类语义，不代表
+对应 MLIR 层已经接入。
+
+| 语义对应层级 | 当前使用状态 | 当前方案实际使用的语义 | 主要缺失 |
+|---|---|---|---|
+| Linalg/Tensor | 间接恢复 | 按 masked load 数和地址拓扑恢复 Stencil 类型；区分输入 load 与唯一输出 store；恢复 current/row/plane 逻辑角色 | 显式 `x/y/z`、shape、indexing map、邻域半径和 star/box 算子属性 |
+| Tiling/Bufferization/MemRef | 少量近似 | 从 GEP 获取实际指针；用 Profile 的 `ExpectedRowBytes` 和 `ExpectedPlaneOrTileBytes` 估算工作集 | tile、subview、真实 memref shape/stride、allocation 边界、buffer 生命周期和下一 tile |
+| SCF/Affine | 使用 LLVM 等价分析 | 用 `LoopInfo` 找最内层循环；用 PHI/SCEV 获取归纳变量、地址递推、部分 trip count、row/plane 地址差 | 结构化 `x/y/z` 外层循环、精确 affine map、跨外层循环复用、tile 切换位置 |
+| Vector | 直接使用低层等价信息 | masked load/store、元素大小、可伸缩向量类型、同一物理连续流及逻辑 load 去重 | 向量化前后的对应关系、通用 stride/gather 分类和完整 cache-line 发射去重 |
+| ArmSVE | 直接使用 LLVM intrinsic | `vscale` 相关向量步长、`whilelo/whilelt` 谓词、尾部归纳变量、未来 `x` 上界保护 | 高层 predicate 来源、硬件预取器模型和目标 CPU 上 hint 的精确收益 |
+| ArmSME | 计算使用，预取分析基本未使用 | Profile 中假定的 streaming VL；间接利用 SME kernel 已形成的向量循环结构 | streaming-mode 区域、ZA 生命周期、MOPA 数量、SME 计算周期和调度窗口 |
+| LLVM/Machine | 核心直接使用 | CFG、GEP、SCEV、支配关系、最终指针、目标 feature；插入 `llvm.aarch64.prefetch` 并检查汇编 `PRFM` | Machine 层寄存器压力和调度成本；`TargetIRAnalysis` 虽已获取但尚未进入决策 |
+| Runtime/PMU | 部分使用 | 正确性、运行时间、中位加速比、距离扫描、row/plane 消融、跨尺寸和多线程测试；结果人工回写 Profile | 自动 Profile 回写以及 L1/L2/LLC miss、stall、带宽、TLB 和污染事件 |
+
+按预取决策需要的信息归纳，当前方案已经实际使用：
+
+```text
+算子和物理流：
+  Stencil 点数、current-row、row-neighbor、plane-neighbor
+
+循环和时间：
+  最内层循环、PHI 归纳变量、SCEV 递推、trip count、向量迭代步长
+
+访问和合法性：
+  masked load/store、共同谓词、whilelo/whilelt、GEP 地址、支配关系、尾部上界
+
+缓存和决策：
+  cache line、L1/L2 容量与延迟、假定 VL、代表性 row/plane 大小、预取预算
+
+运行反馈：
+  正确性、耗时、加速比、距离扫描和流类别消融
+```
+
+这些语义支撑了当前 A 类 1D 连续流、B 类跨行流和 C 类跨平面流的决策与插入。
+D 类下一空间块需要 tile 边界、下一块身份和外层循环切换时间，当前方案尚未真正
+使用这些语义，因此仍未默认实现。
+
 ## 2. Linalg/Tensor 层
 
 ### 2.1 能够获取的语义
