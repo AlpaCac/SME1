@@ -98,6 +98,13 @@ fi
 "${runtime_cxx}" -x ir -O3 -march="${march}" \
   "${prefetch_ir}" "${link_flags[@]}" -o "${prefetch_bin}"
 
+if [[ "${STENCIL_BUILD_ONLY:-0}" == "1" ]]; then
+  printf 'Build-only validation completed.\n'
+  printf 'Baseline binary: %s\n' "${baseline_bin}"
+  printf 'Prefetch binary: %s\n' "${prefetch_bin}"
+  exit 0
+fi
+
 default_cases=(
   --1d3p-s1 --1d3p-s2
   --2d5p-s1 --2d5p-s2
@@ -131,11 +138,51 @@ if [[ -n "${STENCIL_CPU:-}" ]]; then
   runner=("${taskset_bin}" -c "${STENCIL_CPU}")
 fi
 
+run_timeout="${STENCIL_TIMEOUT_SECONDS:-0}"
+if [[ ! "${run_timeout}" =~ ^[0-9]+$ ]]; then
+  printf 'STENCIL_TIMEOUT_SECONDS must be a non-negative integer\n' >&2
+  exit 1
+fi
+timeout_bin=""
+if [[ "${run_timeout}" -gt 0 ]]; then
+  timeout_bin="$(command -v timeout || true)"
+  if [[ -z "${timeout_bin}" ]]; then
+    printf 'STENCIL_TIMEOUT_SECONDS requires the coreutils timeout command\n' >&2
+    exit 1
+  fi
+fi
+
+run_binary() {
+  if [[ "${run_timeout}" -gt 0 ]]; then
+    "${timeout_bin}" --signal=TERM --kill-after=5s "${run_timeout}s" \
+      "${runner[@]}" "$@"
+  else
+    "${runner[@]}" "$@"
+  fi
+}
+
 progress() {
   if [[ "${STENCIL_PROGRESS:-1}" == "1" ]]; then
     printf '[runtime-validation] %s\n' "$*" >&2
   fi
 }
+
+single_run="${STENCIL_SINGLE_RUN:-1}"
+if [[ "${single_run}" != "0" && "${single_run}" != "1" ]]; then
+  printf 'STENCIL_SINGLE_RUN must be 0 or 1\n' >&2
+  exit 1
+fi
+if [[ "${STENCIL_SKIP_CORRECTNESS:-0}" == "1" ]]; then
+  # Performance-only mode cannot reuse correctness executions.
+  single_run=0
+fi
+
+timings="${output_dir}/wall_time_seconds.tsv"
+: > "${timings}"
+if [[ ! -r /proc/uptime ]]; then
+  printf 'missing readable monotonic clock: /proc/uptime\n' >&2
+  exit 1
+fi
 
 run_original_test() {
   local variant="$1"
@@ -143,72 +190,112 @@ run_original_test() {
   local test_case="$3"
   local case_name="${test_case#--}"
   local status
+  local start_time
+  local end_time
+  local elapsed
 
   if [[ ! "${case_name}" =~ ^[a-z0-9-]+$ ]]; then
     printf 'invalid test case argument: %s\n' "${test_case}" >&2
     return 2
   fi
+  start_time="$(awk '{ print $1 }' /proc/uptime)"
   set +e
-  "${runner[@]}" "${binary}" "${test_case}" \
+  run_binary "${binary}" "${test_case}" \
     > "${output_dir}/correctness_${case_name}_${variant}.out" \
     2> "${output_dir}/correctness_${case_name}_${variant}.err"
   status=$?
   set -e
+  end_time="$(awk '{ print $1 }' /proc/uptime)"
+  elapsed="$(awk -v start="${start_time}" -v end="${end_time}" \
+    'BEGIN { printf "%.6f", end - start }')"
+  if [[ "${single_run}" == "1" ]]; then
+    printf '%s\t%s\t1\t%s\n' \
+      "${test_case}" "${variant}" "${elapsed}" >> "${timings}"
+  fi
   printf '%s' "${status}"
 }
 
 correctness_summary="${output_dir}/correctness_summary.tsv"
 : > "${correctness_summary}"
 case_count="${#test_cases[@]}"
-case_index=0
-for test_case in "${test_cases[@]}"; do
-  ((case_index += 1))
-  progress "correctness ${case_index}/${case_count}: ${test_case} baseline"
-  case_name="${test_case#--}"
-  baseline_status="$(
-    run_original_test baseline "${baseline_bin}" "${test_case}"
-  )"
-  progress "correctness ${case_index}/${case_count}: ${test_case} prefetch"
-  prefetch_status="$(
-    run_original_test prefetch "${prefetch_bin}" "${test_case}"
-  )"
-  if [[ "${baseline_status}" -ne 0 || "${prefetch_status}" -ne 0 ]]; then
-    printf 'original test %s failed: baseline=%s prefetch=%s\n' \
-      "${test_case}" "${baseline_status}" "${prefetch_status}" >&2
-    exit 1
+correctness_variants="${STENCIL_CORRECTNESS_VARIANTS:-both}"
+if [[ "${correctness_variants}" != "both" &&
+      "${correctness_variants}" != "prefetch" ]]; then
+  printf 'STENCIL_CORRECTNESS_VARIANTS must be both or prefetch\n' >&2
+  exit 1
+fi
+if [[ "${single_run}" == "1" ]]; then
+  variants_per_case=1
+  if [[ "${correctness_variants}" == "both" ]]; then
+    variants_per_case=2
   fi
+  progress "mode=single-run cases=${case_count} executions=$((case_count * variants_per_case)); each execution checks correctness and records time"
+fi
 
-  outputs_match="yes"
-  if ! cmp -s "${output_dir}/correctness_${case_name}_baseline.out" \
-      "${output_dir}/correctness_${case_name}_prefetch.out" ||
-     ! cmp -s "${output_dir}/correctness_${case_name}_baseline.err" \
-      "${output_dir}/correctness_${case_name}_prefetch.err"; then
-    outputs_match="no"
-  fi
-  if [[ "${STENCIL_REQUIRE_IDENTICAL_OUTPUT:-0}" == "1" &&
-        "${outputs_match}" != "yes" ]]; then
-    printf 'baseline and prefetch output differ for %s\n' \
-      "${test_case}" >&2
-    exit 1
-  fi
-  printf '%s\t%s\t%s\t%s\n' \
-    "${test_case}" "${baseline_status}" "${prefetch_status}" \
-    "${outputs_match}" >> "${correctness_summary}"
-done
+if [[ "${STENCIL_SKIP_CORRECTNESS:-0}" == "1" ]]; then
+  for test_case in "${test_cases[@]}"; do
+    printf '%s\tnot-run\tnot-run\tnot-run\n' "${test_case}" \
+      >> "${correctness_summary}"
+  done
+else
+  case_index=0
+  for test_case in "${test_cases[@]}"; do
+    ((case_index += 1))
+    case_name="${test_case#--}"
+    baseline_status="not-run"
+    if [[ "${correctness_variants}" == "both" ]]; then
+      progress "validation ${case_index}/${case_count}: ${test_case} baseline"
+      baseline_status="$(
+        run_original_test baseline "${baseline_bin}" "${test_case}"
+      )"
+      if [[ "${baseline_status}" -ne 0 ]]; then
+        printf 'original test %s failed: baseline=%s\n' \
+          "${test_case}" "${baseline_status}" >&2
+        exit 1
+      fi
+    fi
 
-if [[ "${STENCIL_SMOKE:-0}" == "1" ]]; then
+    progress "validation ${case_index}/${case_count}: ${test_case} prefetch"
+    prefetch_status="$(
+      run_original_test prefetch "${prefetch_bin}" "${test_case}"
+    )"
+    if [[ "${prefetch_status}" -ne 0 ]]; then
+      printf 'original test %s failed: prefetch=%s\n' \
+        "${test_case}" "${prefetch_status}" >&2
+      exit 1
+    fi
+
+    outputs_match="not-run"
+    if [[ "${correctness_variants}" == "both" ]]; then
+      outputs_match="yes"
+      if ! cmp -s "${output_dir}/correctness_${case_name}_baseline.out" \
+          "${output_dir}/correctness_${case_name}_prefetch.out" ||
+         ! cmp -s "${output_dir}/correctness_${case_name}_baseline.err" \
+          "${output_dir}/correctness_${case_name}_prefetch.err"; then
+        outputs_match="no"
+      fi
+      if [[ "${STENCIL_REQUIRE_IDENTICAL_OUTPUT:-0}" == "1" &&
+            "${outputs_match}" != "yes" ]]; then
+        printf 'baseline and prefetch output differ for %s\n' \
+          "${test_case}" >&2
+        exit 1
+      fi
+    fi
+    printf '%s\t%s\t%s\t%s\n' \
+      "${test_case}" "${baseline_status}" "${prefetch_status}" \
+      "${outputs_match}" >> "${correctness_summary}"
+  done
+fi
+
+if [[ "${single_run}" == "1" ]]; then
+  warmups=0
+  samples=1
+elif [[ "${STENCIL_SMOKE:-0}" == "1" ]]; then
   warmups="${STENCIL_WARMUPS:-0}"
   samples="${STENCIL_SAMPLES:-1}"
 else
   warmups="${STENCIL_WARMUPS:-2}"
   samples="${STENCIL_SAMPLES:-7}"
-fi
-timings="${output_dir}/wall_time_seconds.tsv"
-: > "${timings}"
-
-if [[ ! -r /proc/uptime ]]; then
-  printf 'missing readable monotonic clock: /proc/uptime\n' >&2
-  exit 1
 fi
 
 timed_run() {
@@ -219,9 +306,18 @@ timed_run() {
   local start_time
   local end_time
   local elapsed
+  local status
 
   start_time="$(awk '{ print $1 }' /proc/uptime)"
-  "${runner[@]}" "${binary}" "${test_case}" >/dev/null 2>/dev/null
+  set +e
+  run_binary "${binary}" "${test_case}" >/dev/null 2>/dev/null
+  status=$?
+  set -e
+  if [[ "${status}" -ne 0 ]]; then
+    printf 'performance run failed: case=%s variant=%s sample=%s status=%s\n' \
+      "${test_case}" "${variant}" "${sample}" "${status}" >&2
+    return "${status}"
+  fi
   end_time="$(awk '{ print $1 }' /proc/uptime)"
   elapsed="$(awk -v start="${start_time}" -v end="${end_time}" \
     'BEGIN { printf "%.6f", end - start }')"
@@ -229,14 +325,15 @@ timed_run() {
     "${test_case}" "${variant}" "${sample}" "${elapsed}" >> "${timings}"
 }
 
-if [[ "${STENCIL_SKIP_PERFORMANCE:-0}" != "1" ]]; then
+if [[ "${STENCIL_SKIP_PERFORMANCE:-0}" != "1" &&
+      "${single_run}" != "1" ]]; then
   case_index=0
   for test_case in "${test_cases[@]}"; do
     ((case_index += 1))
     progress "performance ${case_index}/${case_count}: ${test_case}, warmups=${warmups}, samples=${samples}"
     for ((sample = 0; sample < warmups; ++sample)); do
-      "${runner[@]}" "${baseline_bin}" "${test_case}" >/dev/null 2>/dev/null
-      "${runner[@]}" "${prefetch_bin}" "${test_case}" >/dev/null 2>/dev/null
+      run_binary "${baseline_bin}" "${test_case}" >/dev/null 2>/dev/null
+      run_binary "${prefetch_bin}" "${test_case}" >/dev/null 2>/dev/null
     done
     for ((sample = 1; sample <= samples; ++sample)); do
       progress "performance ${case_index}/${case_count}: ${test_case}, sample ${sample}/${samples}"
@@ -280,6 +377,7 @@ report="${output_dir}/runtime_validation_report.md"
     "${baseline_prefetches}" "${prefetch_prefetches}"
   printf -- '- 测试入口：原始 `main`，每次只传入一个算子 test 参数\n'
   printf -- '- CPU 绑定：`%s`\n' "${STENCIL_CPU:-未绑定}"
+  printf -- '- 单次复用模式：`%s`\n' "${single_run}"
   printf -- '- 每个用例预热/样本数：`%s / %s`\n\n' \
     "${warmups}" "${samples}"
   printf '| 参数 | baseline 状态 | prefetch 状态 | 输出一致 | baseline 中位时间/s | prefetch 中位时间/s | 加速比 |\n'
