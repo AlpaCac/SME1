@@ -155,6 +155,27 @@ STENCIL_TIMEOUT_SECONDS=1800 \
 正确性覆盖范围由服务器私有 C++ 中原有的 test 决定。性能模式支持通过
 `STENCIL_*` 环境变量覆盖用例、预热、样本数、CPU 绑定和超时。
 
+## 自动回写 Profile
+
+完成步骤 2 插件重建后运行：
+
+```bash
+BISHENG_CXX=/path/to/bisheng/bin/clang++ \
+STENCIL_CPU=0 \
+./scripts/04_tune_server_profile.sh
+```
+
+脚本只运行与候选类别相关的用例，读取 `program_time_seconds.tsv`，按每个算子的
+`s1/s2` 最差加速比和几何平均选择类别，并生成 `profiles/server-sme.env`。该文件
+为服务器本地结果，不提交到仓库。选择完成后执行：
+
+```bash
+./scripts/05_validate_tuned_profile.sh
+```
+
+最终验收重新覆盖全部用例的正确性和稳定性能。若调优结果关闭了全部软件预取，
+最终脚本允许预取数为 0，并将其视为“该服务器不采用软件预取”，而不是插入失败。
+
 迁移时必须先适配脚本中的编译器路径、插件扩展名、链接参数和目标特性。
 服务器 Profile 应在固定 CPU 亲和性、频率策略、streaming VL 和问题规模下，
 通过环境变量逐组覆盖距离、类别开关和预算后重新建立。Linux PMU 归因建议使用

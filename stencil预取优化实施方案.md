@@ -437,26 +437,23 @@ stencil_all_sme.prefetch
 
 ### 3.7 步骤 5.2：逐算子性能测试
 
-正确性通过后，同一脚本继续测量性能。每个参数默认：
+默认单次复用模式中，同一次执行同时承担正确性检查和性能记录。每个参数执行：
 
 ```text
 baseline 正确性运行 1 次
 prefetch 正确性运行 1 次
-baseline/prefetch 各预热 2 次
-baseline/prefetch 各正式测量 7 次
 ```
 
 六类算子的 `s1/s2` 共 12 个参数，因此完整流程运行：
 
 ```text
 正确性：12 * 2     = 24 次
-预热：  12 * 2 * 2 = 48 次
-测量：  12 * 7 * 2 = 168 次
-总计：              240 次
+总计：              24 次
 ```
 
-运行时间较长是预期行为。正式样本中 baseline/prefetch 按奇偶轮次交换先后顺序，
-减少频率、温度和系统漂移造成的偏差。
+稳定性能模式显式设置 `STENCIL_SINGLE_RUN=0`。使用 2 次预热和 7 次样本时仍需
+额外运行 216 次，加上正确性共 240 次。正式样本中 baseline/prefetch 按奇偶
+轮次交换先后顺序，减少频率、温度和系统漂移造成的偏差。
 
 快速模式：
 
@@ -466,7 +463,7 @@ STENCIL_SKIP_PERFORMANCE=1 \
 ```
 
 ```bash
-STENCIL_WARMUPS=1 STENCIL_SAMPLES=3 \
+STENCIL_SINGLE_RUN=0 STENCIL_WARMUPS=1 STENCIL_SAMPLES=3 \
   ./scripts/03_validate_server_runtime.sh
 ```
 
@@ -477,7 +474,7 @@ STENCIL_SMOKE=1 \
   ./scripts/03_validate_server_runtime.sh
 ```
 
-smoke 模式只运行六类算子的 `s1`，不预热且每个版本测量 1 次，共运行 24 次；
+smoke 模式只运行六类算子的 `s1`，不预热且每个版本执行 1 次，共运行 12 次；
 它不能替代正式性能测试。脚本会实时打印当前用例、版本和样本进度。
 
 也可以通过 `STENCIL_CASES` 只测部分参数。
@@ -545,6 +542,17 @@ instruction budget
 3D plane far
 ```
 
+类别回写由 `scripts/04_tune_server_profile.sh` 自动执行。脚本分别测量 current-L1、
+row-L1、plane-L1、plane-L2 及组合，对每一种 stencil 独立比较 `s1/s2`：单个
+场景加速比低于门槛时拒绝候选，两个场景的几何平均达到收益门槛时才允许写入。
+最终通过 stencil 位掩码生成 `profiles/server-sme.env`，不直接修改 Pass 源码。
+
+当前自动回写选择预取类别；距离和 KEEP/STRM 仍由第二部分的分析模型给出，并以
+`0/AUTO` 写入 Profile。Pass 已开放四类预取的距离与策略覆盖接口，后续距离扫描
+可以更新同一 Profile，而不需要重新设计插入流程。生成后必须使用
+`scripts/05_validate_tuned_profile.sh` 对组合 Profile 重新进行完整正确性和稳定
+性能验证，避免单独候选的收益在组合后消失。
+
 不能把 Apple M5 的历史参数直接作为服务器结论，也不能把 2D 的 row 策略直接
 用于 3D plane。
 
@@ -560,19 +568,19 @@ instruction budget
 6. 同一 Pass 内边分析边插入。
 7. 29 个 IR intrinsic 与 29 条 `PRFM` 一致。
 8. 使用原始 `main/test` 的 baseline/prefetch 运行脚本。
+9. 12 个 `s1/s2` 场景的初始正确性与三样本性能运行。
+10. 按算子执行类别消融并生成服务器 Profile 的自动脚本。
 
 正在进行：
 
-1. 12 个 `s1/s2` 场景的服务器正确性运行。
-2. 每个场景的预热和 7 轮正式测量。
+1. 在服务器重建带 Profile 覆盖接口的 Pass。
+2. 运行自动类别消融并生成 `profiles/server-sme.env`。
 
 后续工作：
 
-1. 汇总逐算子正确性与加速比。
-2. 对退化算子做流类别消融。
-3. 扫描距离、层级和 KEEP/STRM。
-4. 建立服务器专用 Profile。
-5. 在固定 CPU、频率和系统负载条件下复测。
-6. 有条件时加入 PMU 归因和多线程带宽测试。
+1. 对有效类别扫描距离和 KEEP/STRM。
+2. 使用组合 Profile 完成 2 次预热和 7 轮正式测量。
+3. 在固定 CPU、频率和系统负载条件下复测。
+4. 有条件时加入 PMU 归因和多线程带宽测试。
 
 ### 

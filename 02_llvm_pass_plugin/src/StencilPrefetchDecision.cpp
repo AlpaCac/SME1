@@ -57,6 +57,34 @@ bool is2D(StencilKind Kind) {
 
 bool is3D(StencilKind Kind) { return !is1D(Kind) && !is2D(Kind); }
 
+uint32_t stencilBit(StencilKind Kind) {
+  return uint32_t{1} << static_cast<unsigned>(Kind);
+}
+
+bool stencilEnabled(uint32_t Mask, StencilKind Kind) {
+  return (Mask & stencilBit(Kind)) != 0;
+}
+
+unsigned distanceOverride(const TargetPrefetchProfile &Profile,
+                          StreamKind Stream, CacheLevel Level) {
+  if (Stream == StreamKind::CurrentRow)
+    return Profile.CurrentL1Distance;
+  if (Stream == StreamKind::RowNeighbor)
+    return Profile.RowL1Distance;
+  return Level == CacheLevel::L1 ? Profile.PlaneL1Distance
+                                 : Profile.PlaneL2Distance;
+}
+
+unsigned policyOverride(const TargetPrefetchProfile &Profile,
+                        StreamKind Stream, CacheLevel Level) {
+  if (Stream == StreamKind::CurrentRow)
+    return Profile.CurrentL1Policy;
+  if (Stream == StreamKind::RowNeighbor)
+    return Profile.RowL1Policy;
+  return Level == CacheLevel::L1 ? Profile.PlaneL1Policy
+                                 : Profile.PlaneL2Policy;
+}
+
 unsigned candidatePriority(StencilKind Stencil, StreamKind Stream,
                            CacheLevel Level) {
   if (is1D(Stencil))
@@ -126,7 +154,9 @@ PrefetchDecision makeDecision(const StencilInfo &Stencil,
   Decision.Level = Level;
 
   unsigned Cycles = std::max(1U, usefulCycles(Profile, Stencil.Kind));
-  unsigned RawDistance = divideCeil(latencyFor(Profile, Level), Cycles);
+  unsigned RawDistance = distanceOverride(Profile, Stream.Kind, Level);
+  if (RawDistance == 0)
+    RawDistance = divideCeil(latencyFor(Profile, Level), Cycles);
   unsigned TripCount = estimatedTripCount(Stencil, SE, Profile);
   if (TripCount != 0 && TripCount <= 2 * RawDistance) {
     Decision.Reason = DecisionReason::ShortTripCount;
@@ -163,6 +193,11 @@ PrefetchDecision makeDecision(const StencilInfo &Stencil,
   Decision.Policy = ReuseFits ? LocalityPolicy::Keep
                               : LocalityPolicy::Stream;
   if (isPlaneStream(Stream.Kind) && Level == CacheLevel::L1)
+    Decision.Policy = LocalityPolicy::Stream;
+  unsigned PolicyOverride = policyOverride(Profile, Stream.Kind, Level);
+  if (PolicyOverride == 1)
+    Decision.Policy = LocalityPolicy::Keep;
+  else if (PolicyOverride == 2)
     Decision.Policy = LocalityPolicy::Stream;
   return Decision;
 }
@@ -212,12 +247,16 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
     };
 
     if ((Stream.Kind == StreamKind::CurrentRow && is1D(Stencil.Kind) &&
-         Profile.EnableCurrentL1) ||
-        (isRowStream(Stream.Kind) && Profile.EnableRowL1) ||
-        (isPlaneStream(Stream.Kind) && Profile.EnablePlaneL1))
+         Profile.EnableCurrentL1 &&
+         stencilEnabled(Profile.CurrentL1StencilMask, Stencil.Kind)) ||
+        (isRowStream(Stream.Kind) && Profile.EnableRowL1 &&
+         stencilEnabled(Profile.RowL1StencilMask, Stencil.Kind)) ||
+        (isPlaneStream(Stream.Kind) && Profile.EnablePlaneL1 &&
+         stencilEnabled(Profile.PlaneL1StencilMask, Stencil.Kind)))
       AddCandidate(CacheLevel::L1);
     if (is3D(Stencil.Kind) &&
-        isPlaneStream(Stream.Kind) && Profile.EnablePlaneL2)
+        isPlaneStream(Stream.Kind) && Profile.EnablePlaneL2 &&
+        stencilEnabled(Profile.PlaneL2StencilMask, Stencil.Kind))
       AddCandidate(CacheLevel::L2);
   }
 

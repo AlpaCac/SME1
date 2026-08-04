@@ -57,9 +57,12 @@ stencil_all_sme.cpp
 4. 用独立 LLVM 构建 pass 并通过 `opt` 改写完整 IR，再由 BiSheng 生成汇编；
    检查 IR 中的预取 intrinsic 和汇编中的 `prfm`。
 5. 运行 `./scripts/03_validate_server_runtime.sh`，使用服务器原始 C++ 完整
-   模块中的 test 和 `main` 验证数值正确性，并记录 baseline/prefetch 墙钟时间。
-6. 正确性通过后，通过同一脚本的重复测量模式及预取环境变量逐组调参，建立
-   服务器专用 Profile；需要 PMU 或多线程实验时再按服务器程序入口补充工具。
+   模块中的 test 和 `main` 验证数值正确性，并记录 baseline/prefetch 输出的
+   `Total Time`。
+6. 正确性通过后，运行 `./scripts/04_tune_server_profile.sh` 自动执行类别消融，
+   按算子的 `s1/s2` 共同表现生成本地 `profiles/server-sme.env`。
+7. 运行 `./scripts/05_validate_tuned_profile.sh` 加载 Profile，重新执行全部正确性
+   和稳定性能验收；需要 PMU 或多线程实验时再按服务器程序入口补充工具。
 
 迁移前不要直接沿用 `apple-m5` Profile；预取距离、cache 层级和
 KEEP/STRM 策略必须依据服务器的 cache、SME streaming VL、内存带宽和

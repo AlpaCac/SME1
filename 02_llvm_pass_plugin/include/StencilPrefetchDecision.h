@@ -55,6 +55,19 @@ struct TargetPrefetchProfile {
   unsigned UsefulCycles2D = 8;
   unsigned UsefulCycles3D = 10;
   unsigned MaxDistance = 32;
+  // Zero keeps the analytical distance/policy model active.
+  unsigned CurrentL1Distance = 0;
+  unsigned RowL1Distance = 0;
+  unsigned PlaneL1Distance = 0;
+  unsigned PlaneL2Distance = 0;
+  unsigned CurrentL1Policy = 0;
+  unsigned RowL1Policy = 0;
+  unsigned PlaneL1Policy = 0;
+  unsigned PlaneL2Policy = 0;
+  uint32_t CurrentL1StencilMask = 0x7f;
+  uint32_t RowL1StencilMask = 0x7f;
+  uint32_t PlaneL1StencilMask = 0x7f;
+  uint32_t PlaneL2StencilMask = 0x7f;
   bool EnableCurrentL1 = true;
   bool EnableRowL1 = true;
   bool EnablePlaneL1 = true;

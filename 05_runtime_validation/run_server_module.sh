@@ -3,8 +3,8 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
-build_dir="${script_dir}/build/server-module"
-output_dir="${script_dir}/output/server-module"
+build_dir="${STENCIL_RUNTIME_BUILD_DIR:-${script_dir}/build/server-module}"
+output_dir="${STENCIL_RUNTIME_OUTPUT_DIR:-${script_dir}/output/server-module}"
 
 standalone_llvm="${STANDALONE_LLVM:-${repo_root}/tools/llvm-19.1.7}"
 opt_bin="${LLVM_OPT:-${standalone_llvm}/bin/opt}"
@@ -74,7 +74,8 @@ if [[ "${baseline_prefetches}" -ne 0 ]]; then
     "${baseline_prefetches}" >&2
   exit 1
 fi
-if [[ "${prefetch_prefetches}" -eq 0 ]]; then
+if [[ "${prefetch_prefetches}" -eq 0 &&
+      "${STENCIL_ALLOW_ZERO_PREFETCH:-0}" != "1" ]]; then
   printf 'prefetch IR contains no prefetch calls\n' >&2
   exit 1
 fi

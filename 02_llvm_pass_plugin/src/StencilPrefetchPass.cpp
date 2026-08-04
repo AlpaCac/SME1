@@ -53,6 +53,27 @@ bool applyUnsignedEnvironmentOverride(const char *Name, T &Value) {
   return true;
 }
 
+bool applyPolicyEnvironmentOverride(const char *Name, unsigned &Value) {
+  const char *Raw = std::getenv(Name);
+  if (!Raw)
+    return false;
+
+  StringRef Policy(Raw);
+  if (Policy.equals_insensitive("auto"))
+    Value = 0;
+  else if (Policy.equals_insensitive("keep"))
+    Value = 1;
+  else if (Policy.equals_insensitive("strm") ||
+           Policy.equals_insensitive("stream"))
+    Value = 2;
+  else {
+    errs() << "StencilPrefetchProfile: invalid " << Name << "=" << Raw
+           << " (expected AUTO, KEEP, or STRM)\n";
+    return false;
+  }
+  return true;
+}
+
 sme1::TargetPrefetchProfile getActiveProfile() {
   const char *RequestedProfile = std::getenv("SME_PREFETCH_PROFILE");
   sme1::TargetPrefetchProfile Profile;
@@ -81,6 +102,30 @@ sme1::TargetPrefetchProfile getActiveProfile() {
       "SME_PREFETCH_USEFUL_CYCLES_2D", Profile.UsefulCycles2D);
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_USEFUL_CYCLES_3D", Profile.UsefulCycles3D);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_DISTANCE_CURRENT_L1", Profile.CurrentL1Distance);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_DISTANCE_ROW_L1", Profile.RowL1Distance);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_DISTANCE_PLANE_L1", Profile.PlaneL1Distance);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_DISTANCE_PLANE_L2", Profile.PlaneL2Distance);
+  Overridden |= applyPolicyEnvironmentOverride(
+      "SME_PREFETCH_POLICY_CURRENT_L1", Profile.CurrentL1Policy);
+  Overridden |= applyPolicyEnvironmentOverride(
+      "SME_PREFETCH_POLICY_ROW_L1", Profile.RowL1Policy);
+  Overridden |= applyPolicyEnvironmentOverride(
+      "SME_PREFETCH_POLICY_PLANE_L1", Profile.PlaneL1Policy);
+  Overridden |= applyPolicyEnvironmentOverride(
+      "SME_PREFETCH_POLICY_PLANE_L2", Profile.PlaneL2Policy);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MASK_CURRENT_L1", Profile.CurrentL1StencilMask);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MASK_ROW_L1", Profile.RowL1StencilMask);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MASK_PLANE_L1", Profile.PlaneL1StencilMask);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MASK_PLANE_L2", Profile.PlaneL2StencilMask);
 
   unsigned Toggle = Profile.EnableCurrentL1;
   if (applyUnsignedEnvironmentOverride("SME_PREFETCH_ENABLE_CURRENT_L1",

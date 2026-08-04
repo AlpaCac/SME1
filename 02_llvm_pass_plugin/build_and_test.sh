@@ -111,6 +111,8 @@ idempotent_ir="${build_dir}/stencil_kernels.idempotent.ll"
 idempotency_log="${output_dir}/idempotency_run.log"
 budget_ir="${build_dir}/stencil_kernels.no-prefetch.ll"
 budget_log="${output_dir}/budget_reject_run.log"
+override_ir="${build_dir}/stencil_kernels.profile-override.ll"
+override_log="${output_dir}/profile_override_run.log"
 negative_ir="${script_dir}/tests/non_stencil.ll"
 negative_after_ir="${build_dir}/non_stencil.after.ll"
 negative_log="${output_dir}/negative_run.log"
@@ -206,6 +208,26 @@ SME_PREFETCH_MAX_STREAMS=0 \
   run_pass "${kernel_ir}" "${budget_ir}" "${budget_log}"
 if grep -q 'call void @llvm.aarch64.prefetch' "${budget_ir}"; then
   printf 'zero stream budget unexpectedly inserted a prefetch\n' >&2
+  exit 1
+fi
+
+# Verify that tuning can select one stencil kind and override the model.
+SME_PREFETCH_ENABLE_CURRENT_L1=0 \
+SME_PREFETCH_ENABLE_ROW_L1=1 \
+SME_PREFETCH_ENABLE_PLANE_L1=0 \
+SME_PREFETCH_ENABLE_PLANE_L2=0 \
+SME_PREFETCH_MASK_ROW_L1=4 \
+SME_PREFETCH_DISTANCE_ROW_L1=6 \
+SME_PREFETCH_POLICY_ROW_L1=STRM \
+  run_pass "${kernel_ir}" "${override_ir}" "${override_log}"
+if ! grep -q '^StencilDecision:.*kind=2D9P.*enable=yes.*distance=6.*policy=STRM' \
+    "${override_log}"; then
+  printf 'profile override did not enable the requested 2D9P row strategy\n' >&2
+  exit 1
+fi
+if grep '^StencilDecision:.*enable=yes' "${override_log}" |
+    grep -qv 'kind=2D9P'; then
+  printf 'profile stencil mask enabled an unexpected stencil kind\n' >&2
   exit 1
 fi
 
