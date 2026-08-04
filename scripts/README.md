@@ -29,10 +29,10 @@ test 和 `main`，分别构建无预取 baseline 与带预取版本，先运行�
 export STANDALONE_LLVM=/path/to/llvm-19.1.7
 ```
 
-步骤 4 从 `profiles/tuning_cases.csv` 读取用例，自动运行类别消融。只有 `train`
-场景参与 current-L1、row-L1、plane-L1、plane-L2 组合选择；`validate` 场景留给
-步骤 5。默认要求每个训练场景不退化、加权几何平均至少 1.03，任一版本的相对
-MAD 不超过 0.03。可用 `STENCIL_TUNE_MIN_CASE_SPEEDUP`、
+步骤 4 从 `profiles/tuning_cases.csv` 读取用例，自动运行类别消融。默认将
+`s1/s2` 都作为 `train` 场景，联合选择 current-L1、row-L1、plane-L1、plane-L2
+组合。要求每个已知场景不退化、加权几何平均至少 1.03，任一版本的相对 MAD 不
+超过 0.03。可用 `STENCIL_TUNE_MIN_CASE_SPEEDUP`、
 `STENCIL_TUNE_MIN_GEOMEAN` 和 `STENCIL_TUNE_MAX_RELATIVE_MAD` 覆盖。原始数据保存在：
 
 ```text
@@ -42,20 +42,21 @@ MAD 不超过 0.03。可用 `STENCIL_TUNE_MIN_CASE_SPEEDUP`、
 
 被选参数写入本地忽略文件 `profiles/server-sme.env`。当前自动选择负责按算子回写
 预取类别；距离和 KEEP/STRM 默认保持分析模型的 `0/AUTO`，接口已经开放，可在该
-Profile 中覆盖。步骤 5 加载 Profile 后重新执行全部正确性测试和性能采样，并以
-清单中的 `validate` 场景作为独立验收门槛。步骤 4 默认复用清单、参数和样本数
-完全一致的已完成候选，中断后可直接重跑；设置 `STENCIL_TUNE_RESUME=0` 强制重测。
+Profile 中覆盖。步骤 5 加载 Profile 后重新执行全部正确性测试和性能采样。默认
+清单没有独立留出行，因此复测全部 `train` 场景；未来存在 `validate` 行时则自动
+只用留出场景决定性能是否通过。步骤 4 默认复用清单、参数和样本数完全一致的已
+完成候选，中断后可直接重跑；设置 `STENCIL_TUNE_RESUME=0` 强制重测。
 
 步骤 4 会自动探测 Linux sysfs 中的 L1/L2 容量和 cache line，并把所有实际采用的
 硬件与模型参数纳入候选缓存签名，避免修改参数后错误复用旧数据。无法自动探测的
 streaming VL 和延迟参数可在运行脚本前通过 `SME_PREFETCH_*` 显式设置。
 
-默认清单将 `s1` 用于训练、`s2` 用于留出验证。步骤 4 默认 2 次预热、7 次样本，
-共执行 324 次训练用例。先检查自动化链路时可用：
+默认清单联合调优 `s1/s2`。步骤 4 默认 2 次预热、7 次样本，共执行 648 次训练
+程序。先检查自动化链路时可用：
 
 ```bash
 STENCIL_TUNE_WARMUPS=0 STENCIL_TUNE_SAMPLES=1 \
   ./scripts/04_tune_server_profile.sh
 ```
 
-快速模式执行 36 次，只用于确认脚本和候选选择能够完成，不能直接作为最终 Profile。
+快速模式执行 72 次，只用于确认脚本和候选选择能够完成，不能直接作为最终 Profile。

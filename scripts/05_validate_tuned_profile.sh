@@ -8,7 +8,7 @@ profile_file="${STENCIL_PROFILE_FILE:-${repo_root}/profiles/server-sme.env}"
 manifest="${STENCIL_CASE_MANIFEST:-${repo_root}/profiles/tuning_cases.csv}"
 build_dir="${STENCIL_FINAL_BUILD_DIR:-${repo_root}/05_runtime_validation/build/server-profile-final}"
 output_dir="${STENCIL_FINAL_OUTPUT_DIR:-${repo_root}/05_runtime_validation/output/server-profile-final}"
-validation_csv="${output_dir}/heldout_validation.csv"
+validation_csv="${output_dir}/profile_validation.csv"
 minimum_speedup="${STENCIL_VALIDATE_MIN_SPEEDUP:-1.00}"
 maximum_relative_mad="${STENCIL_VALIDATE_MAX_RELATIVE_MAD:-0.03}"
 
@@ -45,14 +45,35 @@ all_cases="$(awk -F, 'NR > 1 {
 }' "${manifest}")"
 validate_count="$(awk -F, 'NR > 1 && $4 == "validate" { count++ }
   END { print count + 0 }' "${manifest}")"
-if [[ -z "${all_cases}" || "${validate_count}" -eq 0 ]]; then
-  printf 'manifest requires cases and at least one validate row\n' >&2
+if [[ -z "${all_cases}" ]]; then
+  printf 'manifest requires at least one case\n' >&2
   exit 1
+fi
+evaluation_role=train
+evaluation_label='known-workload'
+if [[ "${validate_count}" -gt 0 ]]; then
+  evaluation_role=validate
+  evaluation_label=held-out
 fi
 
 # The generated file contains only export assignments for SME_PREFETCH_*.
 # shellcheck disable=SC1090
 source "${profile_file}"
+
+# Do not apply a performance gate to stencil kinds that deliberately fell back.
+enabled_stencil_mask=0
+if [[ "${SME_PREFETCH_ENABLE_CURRENT_L1:-0}" == "1" ]]; then
+  enabled_stencil_mask=$((enabled_stencil_mask | SME_PREFETCH_MASK_CURRENT_L1))
+fi
+if [[ "${SME_PREFETCH_ENABLE_ROW_L1:-0}" == "1" ]]; then
+  enabled_stencil_mask=$((enabled_stencil_mask | SME_PREFETCH_MASK_ROW_L1))
+fi
+if [[ "${SME_PREFETCH_ENABLE_PLANE_L1:-0}" == "1" ]]; then
+  enabled_stencil_mask=$((enabled_stencil_mask | SME_PREFETCH_MASK_PLANE_L1))
+fi
+if [[ "${SME_PREFETCH_ENABLE_PLANE_L2:-0}" == "1" ]]; then
+  enabled_stencil_mask=$((enabled_stencil_mask | SME_PREFETCH_MASK_PLANE_L2))
+fi
 
 EXPECTED_PREFETCH_COUNT= \
 STENCIL_ALLOW_ZERO_PREFETCH=1 \
@@ -110,22 +131,37 @@ mad_for() {
 }
 
 mkdir -p "${output_dir}"
-printf 'argument,kind,size_class,baseline_median_s,prefetch_median_s,speedup,relative_mad,status\n' \
+printf 'argument,kind,size_class,evaluation_set,baseline_median_s,prefetch_median_s,speedup,relative_mad,status\n' \
   > "${validation_csv}"
 validation_failed=0
 while IFS=, read -r test_case kind size_class role weight row_bytes \
     plane_bytes working_set_bytes; do
-  if [[ "${test_case}" == "argument" || "${role}" != "validate" ]]; then
+  if [[ "${test_case}" == "argument" || "${role}" != "${evaluation_role}" ]]; then
     continue
   fi
   baseline="$(median_for "${test_case}" baseline)"
   prefetch="$(median_for "${test_case}" prefetch)"
   baseline_mad="$(mad_for "${test_case}" baseline "${baseline}")"
   prefetch_mad="$(mad_for "${test_case}" prefetch "${prefetch}")"
+  case "${kind}" in
+    1D3P) stencil_bit=1 ;;
+    2D5P) stencil_bit=2 ;;
+    2D9P) stencil_bit=4 ;;
+    3D7P) stencil_bit=8 ;;
+    3D13P) stencil_bit=16 ;;
+    3D25P) stencil_bit=32 ;;
+    3D27P) stencil_bit=64 ;;
+    *) stencil_bit=0 ;;
+  esac
+  case_mode=baseline
+  if (( enabled_stencil_mask & stencil_bit )); then
+    case_mode=optimized
+  fi
   read -r speedup relative_mad status < <(awk \
     -v baseline="${baseline}" -v prefetch="${prefetch}" \
     -v baseline_mad="${baseline_mad}" -v prefetch_mad="${prefetch_mad}" \
     -v minimum="${minimum_speedup}" -v maximum_mad="${maximum_relative_mad}" \
+    -v case_mode="${case_mode}" \
     'BEGIN {
       speedup = baseline / prefetch
       baseline_relative = 1
@@ -138,22 +174,26 @@ while IFS=, read -r test_case kind size_class role weight row_bytes \
       if (baseline_relative > prefetch_relative)
         relative_mad = baseline_relative
       status = "FAIL"
-      if (speedup >= minimum && relative_mad <= maximum_mad)
+      if (case_mode == "baseline")
+        status = "BASELINE"
+      else if (speedup >= minimum && relative_mad <= maximum_mad)
         status = "PASS"
       printf "%.9f %.9f %s\n", speedup, relative_mad, status
     }')
-  printf '%s,%s,%s,%s,%s,%s,%s,%s\n' \
-    "${test_case}" "${kind}" "${size_class}" "${baseline}" "${prefetch}" \
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "${test_case}" "${kind}" "${size_class}" "${evaluation_label}" \
+    "${baseline}" "${prefetch}" \
     "${speedup}" "${relative_mad}" "${status}" >> "${validation_csv}"
-  if [[ "${status}" != "PASS" ]]; then
+  if [[ "${status}" == "FAIL" ]]; then
     validation_failed=1
   fi
 done < "${manifest}"
 
 cat "${validation_csv}"
 if [[ "${validation_failed}" -ne 0 ]]; then
-  printf 'tuned profile failed held-out validation: %s\n' \
-    "${validation_csv}" >&2
+  printf 'tuned profile failed %s validation: %s\n' \
+    "${evaluation_label}" "${validation_csv}" >&2
   exit 1
 fi
-printf 'tuned profile passed held-out validation: %s\n' "${validation_csv}"
+printf 'tuned profile passed %s validation: %s\n' \
+  "${evaluation_label}" "${validation_csv}"

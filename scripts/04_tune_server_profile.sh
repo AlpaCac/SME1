@@ -127,8 +127,8 @@ fi
 manifest_signature="$(cksum "${manifest}" | awk '{ print $1 ":" $2 }')"
 train_count="$(awk -F, 'NR > 1 && $4 == "train" { count++ } END { print count + 0 }' "${manifest}")"
 validate_count="$(awk -F, 'NR > 1 && $4 == "validate" { count++ } END { print count + 0 }' "${manifest}")"
-if [[ "${train_count}" -eq 0 || "${validate_count}" -eq 0 ]]; then
-  printf 'manifest requires at least one train and one validate case\n' >&2
+if [[ "${train_count}" -eq 0 ]]; then
+  printf 'manifest requires at least one train case\n' >&2
   exit 1
 fi
 
@@ -202,7 +202,7 @@ done
 mkdir -p "${tuning_root}" "$(dirname "${profile_file}")"
 printf 'candidate,argument,kind,size_class,role,weight,row_bytes,plane_bytes,working_set_bytes,baseline_median_s,prefetch_median_s,speedup,relative_mad\n' \
   > "${results_csv}"
-printf 'kind,selected_candidate,weighted_geomean,min_speedup,max_relative_mad,training_cases\n' \
+printf 'kind,selected_candidate,outcome,weighted_geomean,min_speedup,max_relative_mad,training_cases\n' \
   > "${selection_csv}"
 
 {
@@ -442,16 +442,21 @@ choose_candidate() {
   local best_min=1.0
   local best_mad=0.0
   local best_count=0
+  local evaluated_count=0
   local candidate
   local score
   local eligible
   local worst_speedup
   local worst_mad
   local count
+  local outcome
 
   for candidate in "$@"; do
     read -r score eligible worst_speedup worst_mad count < <(
       candidate_score "${candidate}" "${kind}")
+    if (( count > evaluated_count )); then
+      evaluated_count="${count}"
+    fi
     if [[ "${eligible}" == "1" ]] && awk \
         -v score="${score}" -v best="${best_score}" \
         'BEGIN { exit !(score > best) }'; then
@@ -462,8 +467,15 @@ choose_candidate() {
       best_count="${count}"
     fi
   done
-  printf '%s,%s,%s,%s,%s,%s\n' "${kind}" "${best_candidate}" \
-    "${best_score}" "${best_min}" "${best_mad}" "${best_count}" \
+  outcome=selected
+  if [[ "${best_candidate}" == "baseline" && "${evaluated_count}" -eq 0 ]]; then
+    outcome=no-training-data
+  elif [[ "${best_candidate}" == "baseline" ]]; then
+    outcome=no-eligible-candidate
+    best_count="${evaluated_count}"
+  fi
+  printf '%s,%s,%s,%s,%s,%s,%s\n' "${kind}" "${best_candidate}" \
+    "${outcome}" "${best_score}" "${best_min}" "${best_mad}" "${best_count}" \
     >> "${selection_csv}"
   printf '%s' "${best_candidate}"
 }

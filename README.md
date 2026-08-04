@@ -60,13 +60,14 @@ stencil_all_sme.cpp
    模块中的 test 和 `main` 验证数值正确性，并记录 baseline/prefetch 输出的
    `Total Time`。
 6. 正确性通过后，运行 `./scripts/04_tune_server_profile.sh` 自动执行类别消融，
-   使用清单中的训练规模生成本地 `profiles/server-sme.env`。
+   使用清单中的全部已知工作负载生成本地 `profiles/server-sme.env`。
 7. 运行 `./scripts/05_validate_tuned_profile.sh` 加载 Profile，重新执行全部正确性
-   和留出规模的稳定性能验收；需要 PMU 或多线程实验时再补充工具。
+   和稳定性能复测；需要 PMU 或多线程实验时再补充工具。
 
-当前自动调优选择的是每种 stencil 的静态 Profile，训练/留出拆分用于防止只适配
-单个示例，并不等同于运行时按问题规模切换策略。若服务器不同尺寸需要不同方案，
-下一阶段应增加 LLVM loop versioning 和基于实际维度的运行时分派。
+当前默认将 `s1/s2` 联合用于稳健调优，要求同一候选在两个已知规模上都不退化。
+这会生成覆盖已知工作负载的静态 Profile，但不代表对未知规模具有泛化能力。若
+服务器不同尺寸需要不同方案，下一阶段应增加 LLVM loop versioning 和基于实际
+维度的运行时分派。
 
 迁移前不要直接沿用 `apple-m5` Profile；预取距离、cache 层级和
 KEEP/STRM 策略必须依据服务器的 cache、SME streaming VL、内存带宽和

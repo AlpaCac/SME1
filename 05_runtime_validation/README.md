@@ -174,10 +174,12 @@ STENCIL_CPU=0 \
 ./scripts/05_validate_tuned_profile.sh
 ```
 
-最终验收重新覆盖清单中全部用例的正确性和稳定性能，但只有 `role=validate` 的
-留出场景决定 Profile 是否通过。若任一留出场景退化或相对 MAD 超过门槛，脚本
+最终验收重新覆盖清单中全部用例的正确性和稳定性能。默认清单将 `s1/s2` 都作为
+已知工作负载，因此全部场景决定 Profile 是否通过；若未来清单加入 `role=validate`
+行，脚本会自动切换为独立留出验收。任一被评估场景退化或相对 MAD 超过门槛时脚本
 返回失败。若调优结果关闭全部软件预取，最终脚本允许预取数为 0，并将其视为
-“该服务器不采用软件预取”，而不是插入失败。
+“该服务器不采用软件预取”，对应状态记为 `BASELINE`，而不是插入失败。结果写入
+`output/server-profile-final/profile_validation.csv`。
 
 迁移时必须先适配脚本中的编译器路径、插件扩展名、链接参数和目标特性。
 服务器 Profile 应在固定 CPU 亲和性、频率策略、streaming VL 和问题规模下，

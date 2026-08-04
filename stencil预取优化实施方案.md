@@ -508,8 +508,8 @@ speedup = median_time(baseline) / median_time(prefetch)
 1. 检查原始 main/test 的数值正确性。
 2. 从 `program_time_seconds.tsv` 读取原程序 `Total Time`，分别计算 baseline 和
    prefetch 的中位数。
-3. 只用训练场景选择候选，不让留出场景参与参数选择。
-4. 使用留出场景检查组合 Profile，任何退化都视为失败。
+3. 使用全部已知 `s1/s2` 场景联合选择候选，任何一个规模退化都拒绝候选。
+4. 重新运行全部已知场景，检查组合 Profile 的正确性和稳定性。
 5. 最后再使用 PMU 检查 cache miss、TLB miss、内存带宽和预取有效性。
 
 #### 3.8.1 用例清单
@@ -525,16 +525,17 @@ argument,kind,size_class,role,weight,row_bytes,plane_bytes,working_set_bytes
 | `argument` | 传给原始 `main` 的单个测试参数 |
 | `kind` | stencil 类型 |
 | `size_class` | 用例规模类别，例如 L1、L2、DRAM |
-| `role` | `train` 参与选择；`validate` 只做最终留出验收 |
+| `role` | `train` 参与联合选择；`validate` 保留给未来独立留出场景 |
 | `weight` | 该训练场景在综合得分中的权重 |
 | `row_bytes` | 实际行大小；未知时填 0 |
 | `plane_bytes` | 实际平面大小；未知时填 0 |
 | `working_set_bytes` | 总工作集大小；未知时填 0 |
 
-当前服务器入口只有固定的 `s1/s2` 参数，因此默认将每种算子的 `s1` 作为训练集、
-`s2` 作为留出集。这个划分可以防止直接用同一个测试选择和验收，但仍不足以证明
-跨 L1/L2/DRAM 规模泛化。服务器 `main` 增加可变尺寸入口后，应为每种算子补充多个
-规模，并填写实际 row、plane 和工作集字节数；调优脚本不需要随之修改。
+当前服务器入口只有固定的 `s1/s2` 参数，而且两个规模差异明显。若只用 `s1` 选择、
+只用 `s2` 验收，训练数据只覆盖一种规模，容易得到明显偏向 `s1` 的策略。因此默认
+将二者都标记为 `train`，共同选择一个覆盖已知工作负载的 Profile。服务器 `main`
+增加可变尺寸入口后，应为每种算子补充 L1、L2、DRAM 等更多规模；只有规模数量足够
+时，才划出独立 `validate` 场景检验未知规模泛化。
 
 #### 3.8.2 类别消融和候选范围
 
@@ -552,7 +553,8 @@ argument,kind,size_class,role,weight,row_bytes,plane_bytes,working_set_bytes
 current 流不混入 3D 的 `all` 候选，保证测试候选和最终回写的位掩码完全一致。
 每种 stencil 独立选择获胜候选，最终通过七位 stencil mask 合并成一个 Profile；
 没有训练场景的类型保持 baseline，不凭相邻类型推断。例如默认服务器清单没有
-3D7P 参数，因此 3D7P 会安全保持关闭。
+3D7P 参数，因此 3D7P 会安全保持关闭。`profile_selection.csv` 的 `outcome` 使用
+`selected`、`no-eligible-candidate` 和 `no-training-data` 区分三种结果。
 
 #### 3.8.3 统计选择条件
 
@@ -607,7 +609,7 @@ L1/L2 有效容量占比
 预热次数和样本数全部相同，才复用已有测量。正式重测可设置
 `STENCIL_TUNE_RESUME=0`。
 
-#### 3.8.5 Profile 生成和留出验收
+#### 3.8.5 Profile 生成和最终复测
 
 调优输出包括：
 
@@ -623,7 +625,8 @@ profiles/server-sme.env
 扫描，而不需要修改插入流程。
 
 `scripts/05_validate_tuned_profile.sh` 加载组合 Profile，重新执行清单中的全部正确性
-测试和性能采样，但只用 `role=validate` 的场景决定性能是否通过。留出场景默认要求：
+测试和性能采样。默认清单没有 `validate` 行，因此全部 `train` 场景共同决定性能
+是否通过；未来加入独立 `validate` 行后，脚本会自动只使用留出场景执行性能门槛：
 
 ```text
 speedup >= 1.00
@@ -633,22 +636,24 @@ relative_mad <= 0.03
 任一场景不满足条件时脚本返回非零。结果保存在：
 
 ```text
-05_runtime_validation/output/server-profile-final/heldout_validation.csv
+05_runtime_validation/output/server-profile-final/profile_validation.csv
 05_runtime_validation/output/server-profile-final/runtime_validation_report.md
 ```
 
 若最终 Profile 关闭全部软件预取，验证流程允许 IR 中预取数为 0，这代表该服务器
-选择 baseline，而不是 Pass 插入失败。
+选择 baseline，而不是 Pass 插入失败；结果状态记为 `BASELINE`，不再用两个等价
+版本的计时噪声触发性能失败。
 
 #### 3.8.6 当前泛化边界
 
-目前得到的仍是“每种 stencil 一套静态 Profile”。训练/留出拆分能够降低针对单个
-样例过拟合的风险，但不会在程序运行时根据尺寸切换策略。不能把 Apple M5 的参数
-直接用于服务器，也不能把 2D row 的结果直接推广到 3D plane。
+目前得到的仍是“每种 stencil 一套静态 Profile”。`s1/s2` 联合调优减少了只针对
+单个已知规模的偏差，但最终复测仍使用参与选择的数据，所以结果只能说明 Profile
+覆盖当前已知工作负载，不能证明未知规模泛化。不能把 Apple M5 的参数直接用于
+服务器，也不能把 2D row 的结果直接推广到 3D plane。
 
 若不同尺寸确实需要不同 cache 层级或策略，下一阶段需要从函数参数和 SCEV 恢复
 实际 row、plane 与工作集范围，使用 LLVM loop versioning 生成多个循环版本，并在
-函数入口按规模分派。在实现多版本化前，不能通过全部留出规模的候选必须回退。
+函数入口按规模分派。在实现多版本化前，不能同时通过全部已知规模的候选必须回退。
 
 ### 3.9 当前完成情况和剩余工作
 
@@ -663,25 +668,25 @@ relative_mad <= 0.03
 7. 29 个 IR intrinsic 与 29 条 `PRFM` 一致。
 8. 使用原始 `main/test` 的 baseline/prefetch 运行脚本。
 9. 12 个 `s1/s2` 场景的原始 main/test 正确性和性能运行入口。
-10. 基于 manifest 的训练/留出划分和可扩展多规模接口。
+10. 基于 manifest 的已知工作负载联合调优和可选留出接口。
 11. 按算子执行 current/row/plane 类别消融并自动生成服务器 Profile。
 12. 中位数、加权几何平均、最差场景和相对 MAD 联合门槛。
 13. Linux cache 参数探测、完整决策输入回写和候选签名恢复。
-14. 组合 Profile 的留出集正确性与性能验收。
+14. 组合 Profile 的正确性与稳定性能复测。
 15. Pass 的 cache、VL、延迟、容量比例、row/plane 大小和距离覆盖接口。
 16. 服务器快速与正式调优临时脚本 `tmp0.sh` 至 `tmp3.sh`。
 
 服务器当前待执行：
 
 1. 拉取最新迁移分支并重新构建带扩展 Profile 接口的 Pass。
-2. 运行快速调优和快速留出验证，确认自动化链路。
+2. 运行快速调优和快速复测，确认自动化链路。
 3. 运行正式调优，生成服务器本地 `profiles/server-sme.env`。
-4. 完成正式留出验证并检查所有场景是否为 PASS。
+4. 完成正式复测并检查所有场景是否为 PASS。
 
 后续工作：
 
 1. 对有效类别扫描距离和 KEEP/STRM。
-2. 为每种算子增加 L1、L2、DRAM 多规模训练与留出用例。
+2. 为每种算子增加 L1、L2、DRAM 多规模用例，再恢复独立留出集。
 3. 在固定 CPU、频率和系统负载条件下复测。
 4. 有条件时加入 PMU 归因和多线程带宽测试。
 5. 若静态 Profile 无法跨规模稳定获益，实现 loop versioning 和运行时分派。
@@ -705,12 +710,12 @@ export BISHENG_CXX=/path/to/bisheng/bin/clang++
 
 ```bash
 ./scripts/tmp0.sh  # 0 次预热、1 个样本的快速调优
-./scripts/tmp1.sh  # 0 次预热、1 个样本的快速留出验证
+./scripts/tmp1.sh  # 单样本链路和正确性检查，不执行正式性能门槛
 ./scripts/tmp2.sh  # 1 次预热、3 个样本的正式调优
-./scripts/tmp3.sh  # 1 次预热、3 个样本的正式留出验证
+./scripts/tmp3.sh  # 1 次预热、3 个样本的正式稳定性能复测
 ```
 
-默认清单下，`tmp0.sh` 执行 36 次训练程序；`tmp2.sh` 执行 144 次。最终验证还会
+默认清单下，`tmp0.sh` 执行 72 次训练程序；`tmp2.sh` 执行 288 次。最终验证还会
 运行原 main/test 的正确性阶段，因此 `tmp1.sh` 和 `tmp3.sh` 分别约执行 48 次和
 120 次程序。单个服务器 test 本身较大时，这些步骤仍可能持续较长时间。
 
@@ -719,7 +724,7 @@ export BISHENG_CXX=/path/to/bisheng/bin/clang++
 1. `profile_selection.csv` 中每种算子的选择是否合理。
 2. `hardware_metadata.txt` 中 cache 和有效模型参数是否符合服务器。
 3. `server-sme.env` 中启用 mask 是否与选择结果一致。
-4. `heldout_validation.csv` 是否全部为 `PASS`。
+4. `profile_validation.csv` 是否为 `PASS`，或明确回退为 `BASELINE`。
 5. `runtime_validation_report.md` 中 baseline/prefetch 正确性是否通过。
 
 只有上述检查全部满足，生成的 `profiles/server-sme.env` 才作为当前服务器的可用
