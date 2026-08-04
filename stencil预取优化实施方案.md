@@ -484,6 +484,7 @@ smoke 模式只运行六类算子的 `s1`，不预热且每个版本执行 1 次
 ```text
 05_runtime_validation/output/server-module/runtime_validation_report.md
 05_runtime_validation/output/server-module/correctness_summary.tsv
+05_runtime_validation/output/server-module/program_time_seconds.tsv
 05_runtime_validation/output/server-module/wall_time_seconds.tsv
 ```
 
@@ -501,74 +502,153 @@ speedup = median_time(baseline) / median_time(prefetch)
 
 ### 3.8 性能结果的解释和 Profile 回写
 
-当前 29 条 `PRFM` 只证明插入链路正确，不证明全部预取都有收益。性能报告完成后
-按以下顺序分析：
+当前 29 条 `PRFM` 只证明插入链路正确，不证明全部预取都有收益。性能分析按以下
+顺序进行：
 
-1. 先检查 12 个 test 的数值正确性。
-2. 分别比较每个 `s1/s2` 的中位数，不只看总时间。
-3. 同一算子两个场景都受益，才认为策略具有初步稳定性。
-4. 若某类算子退化，按 current/row/plane-L1/plane-L2 做消融。
-5. 再扫描距离，不同时改变距离、层级和 policy。
-6. 最后使用 PMU 检查 cache miss、TLB miss、内存带宽和预取有效性。
+1. 检查原始 main/test 的数值正确性。
+2. 从 `program_time_seconds.tsv` 读取原程序 `Total Time`，分别计算 baseline 和
+   prefetch 的中位数。
+3. 只用训练场景选择候选，不让留出场景参与参数选择。
+4. 使用留出场景检查组合 Profile，任何退化都视为失败。
+5. 最后再使用 PMU 检查 cache miss、TLB miss、内存带宽和预取有效性。
 
-推荐实验顺序：
+#### 3.8.1 用例清单
 
-```text
-关闭所有软件预取
--> 仅 row L1
--> 仅 plane L1
--> 仅 plane L2
--> plane L1 + L2
--> 当前 29 条组合
-```
-
-对每个有效组合扫描：
+`profiles/tuning_cases.csv` 是调优和验证的共同输入：
 
 ```text
-distance
-cache level
-KEEP/STRM
-stream budget
-instruction budget
+argument,kind,size_class,role,weight,row_bytes,plane_bytes,working_set_bytes
 ```
 
-最终服务器 Profile 至少应区分：
+| 列 | 含义 |
+|---|---|
+| `argument` | 传给原始 `main` 的单个测试参数 |
+| `kind` | stencil 类型 |
+| `size_class` | 用例规模类别，例如 L1、L2、DRAM |
+| `role` | `train` 参与选择；`validate` 只做最终留出验收 |
+| `weight` | 该训练场景在综合得分中的权重 |
+| `row_bytes` | 实际行大小；未知时填 0 |
+| `plane_bytes` | 实际平面大小；未知时填 0 |
+| `working_set_bytes` | 总工作集大小；未知时填 0 |
+
+当前服务器入口只有固定的 `s1/s2` 参数，因此默认将每种算子的 `s1` 作为训练集、
+`s2` 作为留出集。这个划分可以防止直接用同一个测试选择和验收，但仍不足以证明
+跨 L1/L2/DRAM 规模泛化。服务器 `main` 增加可变尺寸入口后，应为每种算子补充多个
+规模，并填写实际 row、plane 和工作集字节数；调优脚本不需要随之修改。
+
+#### 3.8.2 类别消融和候选范围
+
+`scripts/04_tune_server_profile.sh` 自动运行以下候选：
+
+| 候选 | 测试范围 | 启用类别 |
+|---|---|---|
+| `current` | 1D 训练场景 | current-L1 |
+| `row` | 2D/3D 训练场景 | row-L1 |
+| `plane-l1` | 3D 训练场景 | plane-L1 |
+| `plane-l2` | 3D 训练场景 | plane-L2 |
+| `plane-l1-l2` | 3D 训练场景 | plane-L1 + plane-L2 |
+| `all` | 3D 训练场景 | row-L1 + plane-L1 + plane-L2 |
+
+current 流不混入 3D 的 `all` 候选，保证测试候选和最终回写的位掩码完全一致。
+每种 stencil 独立选择获胜候选，最终通过七位 stencil mask 合并成一个 Profile；
+没有训练场景的类型保持 baseline，不凭相邻类型推断。例如默认服务器清单没有
+3D7P 参数，因此 3D7P 会安全保持关闭。
+
+#### 3.8.3 统计选择条件
+
+每个场景先计算：
 
 ```text
-1D current
-2D row
-3D row
-3D plane near
-3D plane far
+speedup(case) = median(baseline_time) / median(prefetch_time)
+
+relative_mad(case)
+  = max(MAD(baseline) / median(baseline),
+        MAD(prefetch) / median(prefetch))
+
+weighted_geomean(candidate)
+  = exp(sum(weight_i * ln(speedup_i)) / sum(weight_i))
 ```
 
-类别回写由 `scripts/04_tune_server_profile.sh` 自动执行。用例来自
-`profiles/tuning_cases.csv`，其中 `train` 场景参与 current-L1、row-L1、
-plane-L1、plane-L2 及组合选择，`validate` 场景不参与选择。单个训练场景退化、
-加权几何平均未达到收益门槛或相对 MAD 超限时拒绝候选。最终通过 stencil 位掩码
-生成 `profiles/server-sme.env`，不直接修改 Pass 源码。
+候选默认必须同时满足：
 
-当前自动回写选择预取类别；距离和 KEEP/STRM 仍由第二部分的分析模型给出，并以
-`0/AUTO` 写入 Profile。Pass 已开放四类预取的距离与策略覆盖接口，后续距离扫描
-可以更新同一 Profile，而不需要重新设计插入流程。生成后必须使用
-`scripts/05_validate_tuned_profile.sh` 对组合 Profile 重新进行完整正确性和稳定
-性能验证，并只使用留出的 `validate` 规模决定是否通过，避免把训练样本的重复
-测量误认为泛化能力。清单还记录 size class、row bytes、plane bytes 和工作集大小；
-服务器程序增加新尺寸参数后，只需追加清单行即可扩充覆盖范围。
+```text
+每个训练场景 speedup >= 1.00
+加权几何平均 speedup >= 1.03
+最大 relative_mad <= 0.03
+```
 
-脚本从 Linux sysfs 自动获取 L1/L2 容量和 cache line，并将 streaming VL、
-预取延迟、容量占比、代表性 row/plane 大小、预算等全部决策输入同时用于候选编译、
-恢复签名和最终 Profile。清单提供非零 row/plane 字节数时，脚本按训练权重计算代表
-值；显式 `SME_PREFETCH_*` 覆盖始终优先。这样可以避免调优时使用一组模型参数、
-最终编译却使用另一组参数。
+对应覆盖变量为 `STENCIL_TUNE_MIN_CASE_SPEEDUP`、
+`STENCIL_TUNE_MIN_GEOMEAN` 和 `STENCIL_TUNE_MAX_RELATIVE_MAD`。单样本运行时
+MAD 恒为 0，只能验证自动化链路，不能作为稳定性能结论。
 
-这里得到的仍是“每种 stencil 一套静态 Profile”，留出规模用于检验泛化而不是
-运行时选择。若实测表明 L1、L2、DRAM 规模必须采用不同策略，需要进一步从函数参数
-和 SCEV 恢复实际 row、plane 与工作集范围，使用 loop versioning 生成多个循环版本，
-并在函数入口按规模选择；在完成该工作前，未通过全部留出规模的候选必须回退。
+#### 3.8.4 硬件参数和结果复用
 
-不能把 Apple M5 的历史参数直接作为服务器结论，也不能把 2D 的 row 策略直接
-用于 3D plane。
+调优脚本在 Linux sysfs 中自动读取 L1/L2 容量和 cache line。以下不能可靠自动
+推导的参数由 generic SME 默认值起步，也可通过 `SME_PREFETCH_*` 覆盖：
+
+```text
+streaming VL
+L1/L2/内存预取延迟
+L1/L2 有效容量占比
+代表性 row/plane 大小
+每次向量迭代的有效计算周期
+最大距离、流预算、指令预算和字节预算
+```
+
+清单提供非零 `row_bytes/plane_bytes` 时，脚本按训练权重形成代表值；显式环境变量
+优先级更高。所有有效参数同时用于候选编译、候选缓存签名和最终 Profile，避免
+“调优时一组参数、最终编译另一组参数”。实际硬件信息和有效值记录在：
+
+```text
+05_runtime_validation/output/server-profile-tuning/hardware_metadata.txt
+```
+
+默认启用 `STENCIL_TUNE_RESUME=1`。只有清单校验和、候选开关、硬件模型参数、用例、
+预热次数和样本数全部相同，才复用已有测量。正式重测可设置
+`STENCIL_TUNE_RESUME=0`。
+
+#### 3.8.5 Profile 生成和留出验收
+
+调优输出包括：
+
+```text
+05_runtime_validation/output/server-profile-tuning/candidate_results.csv
+05_runtime_validation/output/server-profile-tuning/profile_selection.csv
+profiles/server-sme.env
+```
+
+`server-sme.env` 按算子回写预取类别 mask，并保存距离、KEEP/STRM、硬件模型和预算。
+当前自动搜索负责类别组合；距离和策略默认写为 `0/AUTO`，表示继续采用第二部分的
+分析模型。Pass 已开放四类预取的距离和策略覆盖接口，后续可以在同一 Profile 中
+扫描，而不需要修改插入流程。
+
+`scripts/05_validate_tuned_profile.sh` 加载组合 Profile，重新执行清单中的全部正确性
+测试和性能采样，但只用 `role=validate` 的场景决定性能是否通过。留出场景默认要求：
+
+```text
+speedup >= 1.00
+relative_mad <= 0.03
+```
+
+任一场景不满足条件时脚本返回非零。结果保存在：
+
+```text
+05_runtime_validation/output/server-profile-final/heldout_validation.csv
+05_runtime_validation/output/server-profile-final/runtime_validation_report.md
+```
+
+若最终 Profile 关闭全部软件预取，验证流程允许 IR 中预取数为 0，这代表该服务器
+选择 baseline，而不是 Pass 插入失败。
+
+#### 3.8.6 当前泛化边界
+
+目前得到的仍是“每种 stencil 一套静态 Profile”。训练/留出拆分能够降低针对单个
+样例过拟合的风险，但不会在程序运行时根据尺寸切换策略。不能把 Apple M5 的参数
+直接用于服务器，也不能把 2D row 的结果直接推广到 3D plane。
+
+若不同尺寸确实需要不同 cache 层级或策略，下一阶段需要从函数参数和 SCEV 恢复
+实际 row、plane 与工作集范围，使用 LLVM loop versioning 生成多个循环版本，并在
+函数入口按规模分派。在实现多版本化前，不能通过全部留出规模的候选必须回退。
 
 ### 3.9 当前完成情况和剩余工作
 
@@ -582,19 +662,65 @@ plane-L1、plane-L2 及组合选择，`validate` 场景不参与选择。单个�
 6. 同一 Pass 内边分析边插入。
 7. 29 个 IR intrinsic 与 29 条 `PRFM` 一致。
 8. 使用原始 `main/test` 的 baseline/prefetch 运行脚本。
-9. 12 个 `s1/s2` 场景的初始正确性与三样本性能运行。
-10. 按算子执行类别消融并生成服务器 Profile 的自动脚本。
+9. 12 个 `s1/s2` 场景的原始 main/test 正确性和性能运行入口。
+10. 基于 manifest 的训练/留出划分和可扩展多规模接口。
+11. 按算子执行 current/row/plane 类别消融并自动生成服务器 Profile。
+12. 中位数、加权几何平均、最差场景和相对 MAD 联合门槛。
+13. Linux cache 参数探测、完整决策输入回写和候选签名恢复。
+14. 组合 Profile 的留出集正确性与性能验收。
+15. Pass 的 cache、VL、延迟、容量比例、row/plane 大小和距离覆盖接口。
+16. 服务器快速与正式调优临时脚本 `tmp0.sh` 至 `tmp3.sh`。
 
-正在进行：
+服务器当前待执行：
 
-1. 在服务器重建带 Profile 覆盖接口的 Pass。
-2. 运行自动类别消融并生成 `profiles/server-sme.env`。
+1. 拉取最新迁移分支并重新构建带扩展 Profile 接口的 Pass。
+2. 运行快速调优和快速留出验证，确认自动化链路。
+3. 运行正式调优，生成服务器本地 `profiles/server-sme.env`。
+4. 完成正式留出验证并检查所有场景是否为 PASS。
 
 后续工作：
 
 1. 对有效类别扫描距离和 KEEP/STRM。
-2. 使用组合 Profile 完成 2 次预热和 7 轮正式测量。
+2. 为每种算子增加 L1、L2、DRAM 多规模训练与留出用例。
 3. 在固定 CPU、频率和系统负载条件下复测。
 4. 有条件时加入 PMU 归因和多线程带宽测试。
+5. 若静态 Profile 无法跨规模稳定获益，实现 loop versioning 和运行时分派。
 
-### 
+### 3.10 服务器执行顺序
+
+服务器拉取 `codex/offline-aarch64-migration` 后，先设置毕昇 C++ 驱动：
+
+```bash
+export BISHENG_CXX=/path/to/bisheng/bin/clang++
+```
+
+若步骤 1 生成的完整 IR 仍然存在且原 C++ 未变化，只需重新构建 Pass：
+
+```bash
+./scripts/01_check_standalone_llvm_ir.sh
+./scripts/02_build_and_test_pass.sh
+```
+
+随后按顺序执行：
+
+```bash
+./scripts/tmp0.sh  # 0 次预热、1 个样本的快速调优
+./scripts/tmp1.sh  # 0 次预热、1 个样本的快速留出验证
+./scripts/tmp2.sh  # 1 次预热、3 个样本的正式调优
+./scripts/tmp3.sh  # 1 次预热、3 个样本的正式留出验证
+```
+
+默认清单下，`tmp0.sh` 执行 36 次训练程序；`tmp2.sh` 执行 144 次。最终验证还会
+运行原 main/test 的正确性阶段，因此 `tmp1.sh` 和 `tmp3.sh` 分别约执行 48 次和
+120 次程序。单个服务器 test 本身较大时，这些步骤仍可能持续较长时间。
+
+正式验收依次检查：
+
+1. `profile_selection.csv` 中每种算子的选择是否合理。
+2. `hardware_metadata.txt` 中 cache 和有效模型参数是否符合服务器。
+3. `server-sme.env` 中启用 mask 是否与选择结果一致。
+4. `heldout_validation.csv` 是否全部为 `PASS`。
+5. `runtime_validation_report.md` 中 baseline/prefetch 正确性是否通过。
+
+只有上述检查全部满足，生成的 `profiles/server-sme.env` 才作为当前服务器的可用
+Profile。该文件是服务器本地结果并已加入 `.gitignore`，不应提交为通用默认值。
