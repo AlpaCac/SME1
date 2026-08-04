@@ -542,16 +542,30 @@ instruction budget
 3D plane far
 ```
 
-类别回写由 `scripts/04_tune_server_profile.sh` 自动执行。脚本分别测量 current-L1、
-row-L1、plane-L1、plane-L2 及组合，对每一种 stencil 独立比较 `s1/s2`：单个
-场景加速比低于门槛时拒绝候选，两个场景的几何平均达到收益门槛时才允许写入。
-最终通过 stencil 位掩码生成 `profiles/server-sme.env`，不直接修改 Pass 源码。
+类别回写由 `scripts/04_tune_server_profile.sh` 自动执行。用例来自
+`profiles/tuning_cases.csv`，其中 `train` 场景参与 current-L1、row-L1、
+plane-L1、plane-L2 及组合选择，`validate` 场景不参与选择。单个训练场景退化、
+加权几何平均未达到收益门槛或相对 MAD 超限时拒绝候选。最终通过 stencil 位掩码
+生成 `profiles/server-sme.env`，不直接修改 Pass 源码。
 
 当前自动回写选择预取类别；距离和 KEEP/STRM 仍由第二部分的分析模型给出，并以
 `0/AUTO` 写入 Profile。Pass 已开放四类预取的距离与策略覆盖接口，后续距离扫描
 可以更新同一 Profile，而不需要重新设计插入流程。生成后必须使用
 `scripts/05_validate_tuned_profile.sh` 对组合 Profile 重新进行完整正确性和稳定
-性能验证，避免单独候选的收益在组合后消失。
+性能验证，并只使用留出的 `validate` 规模决定是否通过，避免把训练样本的重复
+测量误认为泛化能力。清单还记录 size class、row bytes、plane bytes 和工作集大小；
+服务器程序增加新尺寸参数后，只需追加清单行即可扩充覆盖范围。
+
+脚本从 Linux sysfs 自动获取 L1/L2 容量和 cache line，并将 streaming VL、
+预取延迟、容量占比、代表性 row/plane 大小、预算等全部决策输入同时用于候选编译、
+恢复签名和最终 Profile。清单提供非零 row/plane 字节数时，脚本按训练权重计算代表
+值；显式 `SME_PREFETCH_*` 覆盖始终优先。这样可以避免调优时使用一组模型参数、
+最终编译却使用另一组参数。
+
+这里得到的仍是“每种 stencil 一套静态 Profile”，留出规模用于检验泛化而不是
+运行时选择。若实测表明 L1、L2、DRAM 规模必须采用不同策略，需要进一步从函数参数
+和 SCEV 恢复实际 row、plane 与工作集范围，使用 loop versioning 生成多个循环版本，
+并在函数入口按规模选择；在完成该工作前，未通过全部留出规模的候选必须回退。
 
 不能把 Apple M5 的历史参数直接作为服务器结论，也不能把 2D 的 row 策略直接
 用于 3D plane。

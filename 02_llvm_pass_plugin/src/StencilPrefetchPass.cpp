@@ -99,6 +99,27 @@ sme1::TargetPrefetchProfile getActiveProfile() {
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_L2_CAPACITY_BYTES", Profile.L2CapacityBytes);
   Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_CACHE_LINE_BYTES", Profile.CacheLineBytes);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_STREAMING_VL_BYTES", Profile.AssumedStreamingVLBytes);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_EXPECTED_ROW_BYTES", Profile.ExpectedRowBytes);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_EXPECTED_PLANE_BYTES",
+      Profile.ExpectedPlaneOrTileBytes);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_L1_LATENCY_CYCLES", Profile.L1PrefetchLatencyCycles);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_L2_LATENCY_CYCLES", Profile.L2PrefetchLatencyCycles);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MEMORY_LATENCY_CYCLES", Profile.MemoryLatencyCycles);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_L1_CAPACITY_PERCENT", Profile.L1CapacityPercent);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_L2_CAPACITY_PERCENT", Profile.L2CapacityPercent);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MAX_DISTANCE", Profile.MaxDistance);
+  Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_USEFUL_CYCLES_2D", Profile.UsefulCycles2D);
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_USEFUL_CYCLES_3D", Profile.UsefulCycles3D);

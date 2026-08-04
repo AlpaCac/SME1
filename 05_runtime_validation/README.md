@@ -165,16 +165,19 @@ STENCIL_CPU=0 \
 ./scripts/04_tune_server_profile.sh
 ```
 
-脚本只运行与候选类别相关的用例，读取 `program_time_seconds.tsv`，按每个算子的
-`s1/s2` 最差加速比和几何平均选择类别，并生成 `profiles/server-sme.env`。该文件
-为服务器本地结果，不提交到仓库。选择完成后执行：
+脚本从 `profiles/tuning_cases.csv` 读取训练用例，只运行与候选类别相关的场景，
+读取 `program_time_seconds.tsv`，使用加权几何平均、最差场景和相对 MAD 选择类别，
+并生成 `profiles/server-sme.env`。该文件为服务器本地结果，不提交到仓库。选择
+完成后执行：
 
 ```bash
 ./scripts/05_validate_tuned_profile.sh
 ```
 
-最终验收重新覆盖全部用例的正确性和稳定性能。若调优结果关闭了全部软件预取，
-最终脚本允许预取数为 0，并将其视为“该服务器不采用软件预取”，而不是插入失败。
+最终验收重新覆盖清单中全部用例的正确性和稳定性能，但只有 `role=validate` 的
+留出场景决定 Profile 是否通过。若任一留出场景退化或相对 MAD 超过门槛，脚本
+返回失败。若调优结果关闭全部软件预取，最终脚本允许预取数为 0，并将其视为
+“该服务器不采用软件预取”，而不是插入失败。
 
 迁移时必须先适配脚本中的编译器路径、插件扩展名、链接参数和目标特性。
 服务器 Profile 应在固定 CPU 亲和性、频率策略、streaming VL 和问题规模下，

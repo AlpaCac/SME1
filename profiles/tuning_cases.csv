@@ -1,0 +1,13 @@
+argument,kind,size_class,role,weight,row_bytes,plane_bytes,working_set_bytes
+--1d3p-s1,1D3P,server-s1,train,1,0,0,0
+--1d3p-s2,1D3P,server-s2,validate,1,0,0,0
+--2d5p-s1,2D5P,server-s1,train,1,0,0,0
+--2d5p-s2,2D5P,server-s2,validate,1,0,0,0
+--2d9p-s1,2D9P,server-s1,train,1,0,0,0
+--2d9p-s2,2D9P,server-s2,validate,1,0,0,0
+--3d13p-s1,3D13P,server-s1,train,1,0,0,0
+--3d13p-s2,3D13P,server-s2,validate,1,0,0,0
+--3d25p-s1,3D25P,server-s1,train,1,0,0,0
+--3d25p-s2,3D25P,server-s2,validate,1,0,0,0
+--3d27p-s1,3D27P,server-s1,train,1,0,0,0
+--3d27p-s2,3D27P,server-s2,validate,1,0,0,0
