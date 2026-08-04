@@ -177,12 +177,44 @@ if [[ "${STENCIL_SKIP_CORRECTNESS:-0}" == "1" ]]; then
   single_run=0
 fi
 
-timings="${output_dir}/wall_time_seconds.tsv"
-: > "${timings}"
+program_timings="${output_dir}/program_time_seconds.tsv"
+wall_timings="${output_dir}/wall_time_seconds.tsv"
+: > "${program_timings}"
+: > "${wall_timings}"
 if [[ ! -r /proc/uptime ]]; then
   printf 'missing readable monotonic clock: /proc/uptime\n' >&2
   exit 1
 fi
+
+extract_program_time() {
+  local output_file="$1"
+
+  sed -nE \
+    's/^.*Total Time[^0-9]*([0-9]+([.][0-9]+)?)[[:space:]]*s.*$/\1/p' \
+    "${output_file}" | tail -n 1
+}
+
+record_timing() {
+  local test_case="$1"
+  local variant="$2"
+  local sample="$3"
+  local wall_elapsed="$4"
+  local output_file="$5"
+  local program_elapsed
+
+  program_elapsed="$(extract_program_time "${output_file}")"
+  if [[ -z "${program_elapsed}" ]]; then
+    printf 'missing "Total Time: <seconds> s" in %s\n' \
+      "${output_file}" >&2
+    return 1
+  fi
+  printf '%s\t%s\t%s\t%s\n' \
+    "${test_case}" "${variant}" "${sample}" "${program_elapsed}" \
+    >> "${program_timings}"
+  printf '%s\t%s\t%s\t%s\n' \
+    "${test_case}" "${variant}" "${sample}" "${wall_elapsed}" \
+    >> "${wall_timings}"
+}
 
 run_original_test() {
   local variant="$1"
@@ -192,25 +224,31 @@ run_original_test() {
   local status
   local start_time
   local end_time
-  local elapsed
+  local wall_elapsed
+  local output_file
+  local error_file
 
   if [[ ! "${case_name}" =~ ^[a-z0-9-]+$ ]]; then
     printf 'invalid test case argument: %s\n' "${test_case}" >&2
     return 2
   fi
+  output_file="${output_dir}/correctness_${case_name}_${variant}.out"
+  error_file="${output_dir}/correctness_${case_name}_${variant}.err"
   start_time="$(awk '{ print $1 }' /proc/uptime)"
   set +e
   run_binary "${binary}" "${test_case}" \
-    > "${output_dir}/correctness_${case_name}_${variant}.out" \
-    2> "${output_dir}/correctness_${case_name}_${variant}.err"
+    > "${output_file}" 2> "${error_file}"
   status=$?
   set -e
   end_time="$(awk '{ print $1 }' /proc/uptime)"
-  elapsed="$(awk -v start="${start_time}" -v end="${end_time}" \
+  wall_elapsed="$(awk -v start="${start_time}" -v end="${end_time}" \
     'BEGIN { printf "%.6f", end - start }')"
-  if [[ "${single_run}" == "1" ]]; then
-    printf '%s\t%s\t1\t%s\n' \
-      "${test_case}" "${variant}" "${elapsed}" >> "${timings}"
+  if [[ "${status}" -eq 0 && "${single_run}" == "1" ]]; then
+    if ! record_timing "${test_case}" "${variant}" 1 \
+        "${wall_elapsed}" "${output_file}"; then
+      printf '3'
+      return
+    fi
   fi
   printf '%s' "${status}"
 }
@@ -305,12 +343,22 @@ timed_run() {
   local sample="$4"
   local start_time
   local end_time
-  local elapsed
+  local wall_elapsed
   local status
+  local case_name="${test_case#--}"
+  local output_file
+  local error_file
 
+  if [[ ! "${case_name}" =~ ^[a-z0-9-]+$ ]]; then
+    printf 'invalid test case argument: %s\n' "${test_case}" >&2
+    return 2
+  fi
+  output_file="${output_dir}/performance_${case_name}_${variant}_sample_${sample}.out"
+  error_file="${output_dir}/performance_${case_name}_${variant}_sample_${sample}.err"
   start_time="$(awk '{ print $1 }' /proc/uptime)"
   set +e
-  run_binary "${binary}" "${test_case}" >/dev/null 2>/dev/null
+  run_binary "${binary}" "${test_case}" \
+    > "${output_file}" 2> "${error_file}"
   status=$?
   set -e
   if [[ "${status}" -ne 0 ]]; then
@@ -319,10 +367,10 @@ timed_run() {
     return "${status}"
   fi
   end_time="$(awk '{ print $1 }' /proc/uptime)"
-  elapsed="$(awk -v start="${start_time}" -v end="${end_time}" \
+  wall_elapsed="$(awk -v start="${start_time}" -v end="${end_time}" \
     'BEGIN { printf "%.6f", end - start }')"
-  printf '%s\t%s\t%s\t%s\n' \
-    "${test_case}" "${variant}" "${sample}" "${elapsed}" >> "${timings}"
+  record_timing "${test_case}" "${variant}" "${sample}" \
+    "${wall_elapsed}" "${output_file}"
 }
 
 if [[ "${STENCIL_SKIP_PERFORMANCE:-0}" != "1" &&
@@ -354,7 +402,7 @@ median_for() {
   local variant="$2"
   awk -F '\t' -v test_case="${test_case}" -v variant="${variant}" \
     '$1 == test_case && $2 == variant { print $4 }' \
-    "${timings}" |
+    "${program_timings}" |
     sort -n |
     awk '{ value[NR] = $1 } END {
       if (NR == 0)
@@ -378,9 +426,10 @@ report="${output_dir}/runtime_validation_report.md"
   printf -- '- 测试入口：原始 `main`，每次只传入一个算子 test 参数\n'
   printf -- '- CPU 绑定：`%s`\n' "${STENCIL_CPU:-未绑定}"
   printf -- '- 单次复用模式：`%s`\n' "${single_run}"
-  printf -- '- 每个用例预热/样本数：`%s / %s`\n\n' \
+  printf -- '- 每个用例预热/样本数：`%s / %s`\n' \
     "${warmups}" "${samples}"
-  printf '| 参数 | baseline 状态 | prefetch 状态 | 输出一致 | baseline 中位时间/s | prefetch 中位时间/s | 加速比 |\n'
+  printf -- '- 性能时间来源：原程序输出的 `Total Time`\n\n'
+  printf '| 参数 | baseline 状态 | prefetch 状态 | 输出一致 | baseline Total Time 中位数/s | prefetch Total Time 中位数/s | 加速比 |\n'
   printf '|---|---:|---:|---|---:|---:|---:|\n'
   while IFS=$'\t' read -r test_case baseline_status \
       prefetch_status outputs_match; do

@@ -16,7 +16,8 @@
 
 | 文件 | 作用 |
 |---|---|
-| `run_server_module.sh` | 用完整服务器 IR 中原有的 test/main 验证正确性和整体墙钟性能 |
+| `run_server_module.sh` | 用完整服务器 IR 中原有的 test/main 验证正确性和程序报告的 kernel 时间 |
+| `server_results.csv`（本地忽略） | 汇总服务器各参数的 baseline/prefetch 中位时间和加速比 |
 | `README.md` | 说明当前验证入口、运行模式、输出及调优方法 |
 
 `build/` 和 `output/` 都是运行时生成目录，不提交到仓库。
@@ -46,8 +47,10 @@ baseline 和 prefetch 各执行一次，同一次执行既用于检查正确性�
 `STENCIL_REQUIRE_IDENTICAL_OUTPUT=1`，要求 baseline 与 prefetch 的标准输出
 和标准错误完全一致。
 
-墙钟测量读取 Linux `/proc/uptime` 的单调时钟，不依赖 GNU
-`/usr/bin/time`。
+性能报告从每次原程序标准输出的 `Total Time: <seconds> s` 行提取时间，因此
+比较的是原 test 定义的计时区间。脚本同时读取 Linux `/proc/uptime`，单独保存
+整个进程的墙钟时间用于交叉检查，不依赖 GNU `/usr/bin/time`。冒号可以是 ASCII
+或全角形式。
 
 脚本默认在标准错误中打印当前正确性用例和性能样本进度。设置
 `STENCIL_PROGRESS=0` 可关闭。只需确认完整链路能够运行时，使用：
@@ -143,7 +146,9 @@ STENCIL_TIMEOUT_SECONDS=1800 \
 |---|---|
 | `runtime_validation_report.md` | 本次构建、正确性和性能结果总览 |
 | `correctness_summary.tsv` | 每个命令行用例和版本的退出状态及输出比较结果 |
-| `wall_time_seconds.tsv` | baseline/prefetch 的逐次墙钟时间 |
+| `program_time_seconds.tsv` | 从每次 `Total Time` 提取的逐样本时间，也是报告和加速比的数据源 |
+| `wall_time_seconds.tsv` | 同一次运行的完整进程墙钟时间，仅用于交叉检查 |
+| `performance_*_sample_*.out/.err` | 每次性能样本的原始输出，用于核对内部与外层时间 |
 | `pass_run.log` | Pass 的识别、决策、跳过原因和插入日志 |
 | `baseline_link_plan.log` | BiSheng 实际链接计划，用于排查 SME ABI 运行时问题 |
 

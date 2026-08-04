@@ -11,6 +11,7 @@ __pycache__/
 /01_llvm_ir_analysis/output/
 /02_llvm_pass_plugin/output/
 /05_runtime_validation/output/
+/05_runtime_validation/server_results.csv
 /stencil_sme_kernels.ll
 /stencil_sme_kernels.s
 /stencil_benchmark
