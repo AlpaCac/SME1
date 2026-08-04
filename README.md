@@ -21,7 +21,7 @@
 | `stencil_sme_kernels.c` | 本地 2D5P、3D7P 回归 fixture |
 | `01_llvm_ir_analysis/` | 从 C++ 生成完整 IR，提取 kernel-only IR 并检查向量访存结构 |
 | `02_llvm_pass_plugin/` | LLVM pass 源码、决策模型、测试输入和构建脚本 |
-| `05_runtime_validation/` | 正确性、配对性能、距离扫描、消融和多线程测试 |
+| `05_runtime_validation/` | 复用服务器原始 test/main 的全模块正确性与性能验证 |
 | `scripts/` | 服务器上依次执行的独立 LLVM IR 检查与 pass 构建脚本 |
 | `stencil预取优化实施方案.md` | 预取模型、决策算法和 LLVM 实施步骤 |
 | `断网AArch64服务器迁移指南.md` | 离线工具链准备、服务器适配与验收方法 |
@@ -57,9 +57,9 @@ stencil_all_sme.cpp
 4. 用独立 LLVM 构建 pass 并通过 `opt` 改写完整 IR，再由 BiSheng 生成汇编；
    检查 IR 中的预取 intrinsic 和汇编中的 `prfm`。
 5. 运行 `./scripts/03_validate_server_runtime.sh`，使用服务器原始 C++ 完整
-   模块中的 test 和 `main` 验证数值正确性，并测量 baseline/prefetch 中位时间。
-6. 正确性通过后再进行距离扫描、类别消融和多线程测试，建立服务器专用
-   Profile。
+   模块中的 test 和 `main` 验证数值正确性，并记录 baseline/prefetch 墙钟时间。
+6. 正确性通过后，通过同一脚本的重复测量模式及预取环境变量逐组调参，建立
+   服务器专用 Profile；需要 PMU 或多线程实验时再按服务器程序入口补充工具。
 
 迁移前不要直接沿用 `apple-m5` Profile；预取距离、cache 层级和
 KEEP/STRM 策略必须依据服务器的 cache、SME streaming VL、内存带宽和

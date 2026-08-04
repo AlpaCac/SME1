@@ -45,7 +45,7 @@ uname -m 输出 aarch64
 
 还需要确认 Linux 内核和用户态允许保存、恢复 SME 线程状态。最直接的
 验收方式不是只看 feature 字符串，而是最终成功运行
-`05_runtime_validation/build/sme_runtime_info` 和正确性测试。
+`05_runtime_validation/build/server-module/` 中的完整模块和原始正确性测试。
 
 ### 2. 不能直接复制当前 macOS 构建产物
 
@@ -491,72 +491,60 @@ grep -E 'prfm|prfum' \
   02_llvm_pass_plugin/output/stencil_sme_kernels.s
 ```
 
-### 4. 先运行 generic Profile 正确性
+### 4. 构建并运行完整模块验证
 
-服务器 CPU 未经调优时先使用 `generic-sme`：
-
-```bash
-SME_RUNTIME_PROFILE=generic-sme \
-RUNTIME_CLANG="${LLVM_HOME}/bin/clang" \
-  ./05_runtime_validation/build_and_run.sh
-```
-
-如果脚本未能从 `/proc/cpuinfo` 检测到 SME，但已经通过其他方式确认 CPU
-和内核支持 SME，可以临时加入：
+使用独立 LLVM 的 `opt` 加载 Pass，再由 BiSheng 编译和链接 baseline/prefetch
+完整 IR。两个版本都保留服务器私有 `stencil_all_sme.cpp` 原有的 test、辅助函数
+和 `main`：
 
 ```bash
-FORCE_SME_RUN=1
+STANDALONE_LLVM="${LLVM_HOME}" \
+BISHENG_CXX="${BISHENG_HOME}/bin/clang++" \
+STENCIL_CPU=0 \
+STENCIL_TIMEOUT_SECONDS=1800 \
+  ./scripts/03_validate_server_runtime.sh
 ```
 
-不要在 CPU 不支持 SME 时强制运行，否则会触发非法指令。
-
-验收：
-
-```bash
-cat 05_runtime_validation/output/runtime_info.log
-cat 05_runtime_validation/output/correctness_report.md
-```
-
-必须确认：
+具体 CPU 编号应根据服务器拓扑选择，不应机械使用 CPU 0。默认运行 12 个命令行
+用例，baseline/prefetch 各执行一次，共 24 次；同一次执行同时用于正确性检查和
+单次墙钟记录。完整结果位于：
 
 ```text
-正确性状态为 PASS
-baseline 与 prefetch 都通过
-streaming_vl_bytes 是有效正数
+05_runtime_validation/output/server-module/runtime_validation_report.md
+05_runtime_validation/output/server-module/correctness_summary.tsv
+05_runtime_validation/output/server-module/wall_time_seconds.tsv
+05_runtime_validation/output/server-module/pass_run.log
 ```
 
-### 5. 运行配对性能基线
+必须确认 baseline 和 prefetch 的原始 test 均成功、baseline IR 不含预取、
+prefetch IR 的 intrinsic 数量符合预期，且 BiSheng 成功提供 SME ABI 运行时。
+
+### 5. 获取稳定性能数据
+
+默认的单次数据只能发现明显退化。正确性通过后，关闭单次复用模式并增加样本：
 
 ```bash
-SME_RUNTIME_PROFILE=generic-sme \
-RUNTIME_CLANG="${LLVM_HOME}/bin/clang" \
-  ./05_runtime_validation/run_paired_benchmark.sh
+STANDALONE_LLVM="${LLVM_HOME}" \
+BISHENG_CXX="${BISHENG_HOME}/bin/clang++" \
+STENCIL_CPU=0 \
+STENCIL_SINGLE_RUN=0 \
+STENCIL_WARMUPS=2 \
+STENCIL_SAMPLES=7 \
+STENCIL_TIMEOUT_SECONDS=1800 \
+  ./scripts/03_validate_server_runtime.sh
 ```
 
-固定 CPU 和 NUMA 节点后再做正式测量，例如：
-
-```bash
-taskset -c 0 \
-  env SME_RUNTIME_PROFILE=generic-sme \
-      RUNTIME_CLANG="${LLVM_HOME}/bin/clang" \
-  ./05_runtime_validation/run_paired_benchmark.sh
-```
-
-具体 CPU 编号应根据服务器拓扑选择，不应机械使用 CPU 0。
+若原始 test 很慢，可先用 `STENCIL_CASES` 选择一个命令行用例定位问题，但最终
+验收仍应覆盖全部用例。固定 CPU 后还应固定 NUMA 节点、频率策略、问题规模和
+streaming VL。
 
 ### 6. 为服务器重新调优
 
-依次运行：
-
-```bash
-RUNTIME_CLANG="${LLVM_HOME}/bin/clang" \
-LLVM_CLANG="${LLVM_HOME}/bin/clang" \
-  ./05_runtime_validation/run_profile_sweep.sh
-
-RUNTIME_CLANG="${LLVM_HOME}/bin/clang" \
-LLVM_CLANG="${LLVM_HOME}/bin/clang" \
-  ./05_runtime_validation/run_ablation.sh
-```
+不再使用另一套固定 C ABI 扫描脚本。保持完整模块入口不变，每次只覆盖一组
+Pass 环境变量并重新运行 `scripts/03_validate_server_runtime.sh`，例如
+`SME_PREFETCH_USEFUL_CYCLES_2D/3D`、`SME_PREFETCH_ENABLE_CURRENT_L1`、
+`SME_PREFETCH_ENABLE_ROW_L1`、`SME_PREFETCH_ENABLE_PLANE_L1/L2` 以及流数、
+指令数和字节预算。每组实验都应同时保存 `pass_run.log` 和墙钟结果。
 
 根据以下数据建立服务器 Profile：
 
@@ -572,7 +560,8 @@ PMU cache miss 和带宽变化
 
 在服务器 Profile 固化之前，实验参数可以通过现有
 `SME_PREFETCH_USEFUL_CYCLES_*`、`SME_PREFETCH_ENABLE_*` 和预算环境变量
-覆盖。
+覆盖。自动扫描只应围绕服务器实际命令行入口另行编写，避免恢复已经删除的
+2D5P/3D7P 固定 ABI 驱动。
 
 ## 七、Linux PMU 替代方案
 
@@ -587,13 +576,13 @@ PMU cache miss 和带宽变化
 它们依赖 macOS Xcode `xctrace` 和 Instruments 用户模板。Linux 服务器应
 使用 `perf` 或服务器厂商提供的 PMU 工具。
 
-先构建供 `perf` 启动的两个独立可执行文件：
+先只构建供 `perf` 启动的两个完整模块可执行文件：
 
 ```bash
-SME_RUNTIME_PROFILE=generic-sme \
+STANDALONE_LLVM="${LLVM_HOME}" \
+BISHENG_CXX="${BISHENG_HOME}/bin/clang++" \
 STENCIL_BUILD_ONLY=1 \
-RUNTIME_CLANG="${LLVM_HOME}/bin/clang" \
-  ./05_runtime_validation/run_benchmark.sh
+  ./scripts/03_validate_server_runtime.sh
 ```
 
 先查看可用事件：
@@ -608,8 +597,8 @@ perf stat -- true
 ```bash
 perf stat \
   -e cycles,instructions,cache-references,cache-misses \
-  -- ./05_runtime_validation/build/stencil_benchmark.baseline \
-  3d 512 32 1024 32 7
+  -- ./05_runtime_validation/build/server-module/stencil_all_sme.baseline \
+  --3d13p-s1
 ```
 
 然后对预取版本使用完全相同的事件、规模和线程绑定：
@@ -617,8 +606,8 @@ perf stat \
 ```bash
 perf stat \
   -e cycles,instructions,cache-references,cache-misses \
-  -- ./05_runtime_validation/build/stencil_benchmark.prefetch \
-  3d 512 32 1024 32 7
+  -- ./05_runtime_validation/build/server-module/stencil_all_sme.prefetch \
+  --3d13p-s1
 ```
 
 不同 Arm CPU 的 L1D、L2、LLC 和内存控制器原始事件编号不同。不要直接把
@@ -707,7 +696,7 @@ docker run --rm -it \
 
 - [ ] `uname -m` 为 `aarch64`。
 - [ ] CPU 和 Linux 内核实际支持 SME。
-- [ ] `sme_runtime_info` 能执行并返回 streaming VL。
+- [ ] baseline/prefetch 完整模块均能执行 SME test。
 - [ ] 性能测试固定了 CPU/NUMA 和问题规模。
 
 ### 项目流水线
@@ -719,7 +708,7 @@ docker run --rm -it \
 - [ ] 插件、识别和预取决策测试通过。
 - [ ] 正确性报告为 `PASS`。
 - [ ] baseline/prefetch checksum 一致。
-- [ ] 先完成配对墙钟测试，再解释 PMU 数据。
+- [ ] 先完成固定环境下的重复墙钟测试，再解释 PMU 数据。
 - [ ] 服务器 Profile 经过距离、类别和多线程复测。
 
 完成以上检查后，才可以认为当前方案已经从 Apple M5 开发环境可靠迁移到

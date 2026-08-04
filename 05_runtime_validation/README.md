@@ -8,28 +8,16 @@
 `run_server_module.sh`。该脚本处理步骤 1 生成的完整 IR，baseline 和 prefetch
 版本都会保留原始 test、`main` 及辅助函数，唯一差异是是否运行预取 Pass。
 
-步骤 1/2 可以处理 1D3P、2D5P/9P、3D7P/13P/25P/27P 的 kernel-only IR。
-本目录现有 C 驱动只定义了 `stencil_2d5p_sme_f32` 和
-`stencil_3d7p_sme_f32` 的参考实现与函数原型，因此当前只能运行这两个算子
-的正确性和性能测试。为其他服务器 kernel 建立性能数据前，需要按其 C ABI
-签名新增对应的参考函数和 benchmark driver。
+步骤 1/2 可以处理 1D3P、2D5P/9P、3D7P/13P/25P/27P。运行时验证不再维护
+另一套固定 C ABI 驱动，而是直接复用服务器原程序的 test 和命令行入口，避免
+测试规模、初始化方式或正确性判据与真实程序不一致。
 
 ## 文件说明
 
 | 文件 | 作用 |
 |---|---|
 | `run_server_module.sh` | 用完整服务器 IR 中原有的 test/main 验证正确性和整体墙钟性能 |
-| `build_and_run.sh` | 构建基线/预取版本，探测 SME 与 streaming VL，并运行正确性测试 |
-| `run_benchmark.sh` | 分进程运行 2D5P、3D7P 墙钟基准 |
-| `run_paired_benchmark.sh` | 同进程交替测量基线与预取版本，降低系统漂移 |
-| `run_profile_sweep.sh` | 分别扫描 2D row-L1 和 3D plane-L1 预取距离 |
-| `run_ablation.sh` | 关闭或单独保留 row、plane-L1、plane-L2，测量各类预取贡献 |
-| `run_threaded_benchmark.sh` | 测试共享 cache 和内存带宽竞争下的多线程收益 |
-| `stencil_correctness.c` | 标量参考与 guard-page 正确性驱动 |
-| `stencil_benchmark.c` | 独立进程 2D5P/3D7P 基准驱动 |
-| `stencil_paired_benchmark.c` | 单进程配对基准驱动 |
-| `stencil_threaded_benchmark.c` | pthread 多线程 3D7P 配对驱动 |
-| `sme_runtime_info.c` | 在 locally-streaming 函数中读取 streaming vector length |
+| `README.md` | 说明当前验证入口、运行模式、输出及调优方法 |
 
 `build/` 和 `output/` 都是运行时生成目录，不提交到仓库。
 
@@ -149,22 +137,21 @@ STENCIL_TIMEOUT_SECONDS=1800 \
 缩短它。此时应让服务器私有 C++ 的 test 接受网格尺寸和内部重复次数参数，或者将
 原始 test 只用于一次正确性验证，另写可调规模 benchmark driver 做性能测试。
 
-以下命令仅用于旧的固定 C ABI 2D5P/3D7P 驱动：
+主要输出位于 `output/server-module/`：
 
-```bash
-./05_runtime_validation/build_and_run.sh
-./05_runtime_validation/run_paired_benchmark.sh
-./05_runtime_validation/run_profile_sweep.sh
-./05_runtime_validation/run_ablation.sh
-./05_runtime_validation/run_threaded_benchmark.sh
-```
+| 输出 | 内容 |
+|---|---|
+| `runtime_validation_report.md` | 本次构建、正确性和性能结果总览 |
+| `correctness_summary.tsv` | 每个命令行用例和版本的退出状态及输出比较结果 |
+| `wall_time_seconds.tsv` | baseline/prefetch 的逐次墙钟时间 |
+| `pass_run.log` | Pass 的识别、决策、跳过原因和插入日志 |
+| `baseline_link_plan.log` | BiSheng 实际链接计划，用于排查 SME ABI 运行时问题 |
 
-正确性测试覆盖空内部区域、最小尺寸、不规则宽度、谓词尾部和前后
-guard page。性能测试支持通过 `STENCIL_*` 环境变量覆盖网格规模、重复
-次数、样本数和轮数。
+正确性覆盖范围由服务器私有 C++ 中原有的 test 决定。性能模式支持通过
+`STENCIL_*` 环境变量覆盖用例、预热、样本数、CPU 绑定和超时。
 
-迁移时必须先适配脚本中的目标三元组、编译器路径、插件扩展名、链接参数和
-SME feature 探测方式。服务器 Profile 应在固定 CPU 亲和性、频率策略、
-streaming VL 和问题规模下通过距离扫描与类别消融重新建立。Linux PMU
-归因建议在联网环境预先准备 `perf`，或使用服务器厂商提供的离线性能工具；
-本仓库不保留 macOS `xctrace` 专用脚本。
+迁移时必须先适配脚本中的编译器路径、插件扩展名、链接参数和目标特性。
+服务器 Profile 应在固定 CPU 亲和性、频率策略、streaming VL 和问题规模下，
+通过环境变量逐组覆盖距离、类别开关和预算后重新建立。Linux PMU 归因建议使用
+`perf` 或服务器厂商工具；本目录不再保留与当前完整模块入口脱节的旧扫描、消融、
+多线程脚本和固定 C ABI 驱动。
