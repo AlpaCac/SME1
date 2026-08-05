@@ -13,6 +13,9 @@ results_csv="${tuning_root}/candidate_results.csv"
 selection_csv="${tuning_root}/profile_selection.csv"
 thresholds_file="${tuning_root}/score_thresholds.txt"
 hardware_file="${tuning_root}/hardware_metadata.txt"
+decision_inventory_csv="${tuning_root}/decision_inventory.csv"
+threshold_diagnostics_csv="${tuning_root}/threshold_diagnostics.csv"
+diagnostic_report="${tuning_root}/diagnostic_report.md"
 
 warmups="${STENCIL_TUNE_WARMUPS:-2}"
 samples="${STENCIL_TUNE_SAMPLES:-7}"
@@ -21,6 +24,8 @@ minimum_geomean="${STENCIL_TUNE_MIN_GEOMEAN:-1.03}"
 maximum_relative_mad="${STENCIL_TUNE_MAX_RELATIVE_MAD:-0.03}"
 timeout_seconds="${STENCIL_TIMEOUT_SECONDS:-1800}"
 resume="${STENCIL_TUNE_RESUME:-1}"
+diagnostic_change_tolerance="${STENCIL_DIAGNOSTIC_CHANGE_TOLERANCE:-0.01}"
+diagnostic_zero_prefetch_tolerance="${STENCIL_DIAGNOSTIC_ZERO_PREFETCH_TOLERANCE:-0.02}"
 
 if [[ -f "${model_input_file}" ]]; then
   if grep -Ev '^(#.*|[[:space:]]*|export SME_PREFETCH_[A-Z0-9_]+=[0-9]*)$' \
@@ -134,7 +139,8 @@ for value in "${warmups}" "${samples}" "${timeout_seconds}"; do
   }
 done
 for value in "${minimum_speedup}" "${minimum_geomean}" \
-    "${maximum_relative_mad}"; do
+    "${maximum_relative_mad}" "${diagnostic_change_tolerance}" \
+    "${diagnostic_zero_prefetch_tolerance}"; do
   [[ "${value}" =~ ^[0-9]+([.][0-9]+)?$ ]] || {
     printf 'speedup and MAD thresholds must be non-negative numbers\n' >&2
     exit 1
@@ -232,6 +238,33 @@ fi
   ' "${discovery_log}"
 } | sort -n -u > "${thresholds_file}"
 disable_threshold="$(tail -n 1 "${thresholds_file}")"
+
+printf 'function,kind,stream,level,distance,policy,score,confidence,benefit,cost,enable,reason\n' \
+  > "${decision_inventory_csv}"
+awk '
+  /^StencilDecision:/ {
+    function_name=kind=stream=level=distance=policy=score=confidence=""
+    benefit=cost=enabled=reason=""
+    for (i=1; i<=NF; ++i) {
+      split($i, pair, "=")
+      if (pair[1] == "function") function_name=pair[2]
+      else if (pair[1] == "kind") kind=pair[2]
+      else if (pair[1] == "stream") stream=pair[2]
+      else if (pair[1] == "level") level=pair[2]
+      else if (pair[1] == "distance") distance=pair[2]
+      else if (pair[1] == "policy") policy=pair[2]
+      else if (pair[1] == "score") score=pair[2]
+      else if (pair[1] == "confidence") confidence=pair[2]
+      else if (pair[1] == "benefit") benefit=pair[2]
+      else if (pair[1] == "cost") cost=pair[2]
+      else if (pair[1] == "enable") enabled=pair[2]
+      else if (pair[1] == "reason") reason=pair[2]
+    }
+    printf "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n", function_name,
+           kind, stream, level, distance, policy, score, confidence, benefit,
+           cost, enabled, reason
+  }
+' "${discovery_log}" >> "${decision_inventory_csv}"
 
 printf 'candidate,min_profit_score,argument,kind,size_class,role,weight,baseline_median_s,prefetch_median_s,speedup,relative_mad\n' > "${results_csv}"
 printf 'scope,min_profit_score,outcome,geomean_speedup,worst_speedup,worst_relative_mad,training_cases,prefetch_count\n' > "${selection_csv}"
@@ -339,6 +372,62 @@ candidate_score() {
     }' "${results_csv}"
 }
 
+decision_counts() {
+  local pass_log="$1"
+  if [[ ! -f "${pass_log}" ]]; then
+    printf '0 0 0 0 0\n'
+    return
+  fi
+  awk '
+    /^StencilDecision:/ {
+      stream=level=enabled=""
+      for (i=1; i<=NF; ++i) {
+        split($i, pair, "=")
+        if (pair[1] == "stream") stream=pair[2]
+        else if (pair[1] == "level") level=pair[2]
+        else if (pair[1] == "enable") enabled=pair[2]
+      }
+      if (enabled != "yes") next
+      total++
+      if (stream == "current-row" && level == "L1") current_l1++
+      else if (stream == "row-neighbor" && level == "L1") row_l1++
+      else if (stream == "plane-neighbor" && level == "L1") plane_l1++
+      else if (stream == "plane-neighbor" && level == "L2") plane_l2++
+    }
+    END { print total+0, current_l1+0, row_l1+0, plane_l1+0, plane_l2+0 }
+  ' "${pass_log}"
+}
+
+printf 'min_profit_score,prefetch_count,enabled_decisions,current_l1,row_l1,plane_l1,plane_l2,geomean_speedup,worst_speedup,worst_relative_mad,improved_cases,neutral_cases,regressed_cases,eligible\n' \
+  > "${threshold_diagnostics_csv}"
+while IFS= read -r threshold; do
+  candidate_dir="${tuning_root}/score-${threshold}"
+  candidate_ir="${candidate_dir}/build/stencil_all_sme.prefetch.ll"
+  candidate_log="${candidate_dir}/pass_run.log"
+  prefetch_count="$(grep -c 'call void @llvm.aarch64.prefetch' "${candidate_ir}" 2>/dev/null || true)"
+  read -r enabled_decisions current_l1 row_l1 plane_l1 plane_l2 < <(
+    decision_counts "${candidate_log}"
+  )
+  read -r geomean eligible worst_speedup worst_mad training_cases < <(
+    candidate_score "${threshold}"
+  )
+  read -r improved neutral regressed < <(awk -F, -v threshold="${threshold}" \
+    -v tolerance="${diagnostic_change_tolerance}" '
+      NR > 1 && $2 == threshold && $6 == "train" {
+        if ($10 > 1 + tolerance) improved++
+        else if ($10 < 1 - tolerance) regressed++
+        else neutral++
+      }
+      END { print improved+0, neutral+0, regressed+0 }
+    ' "${results_csv}")
+  printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "${threshold}" "${prefetch_count:-0}" "${enabled_decisions}" \
+    "${current_l1}" "${row_l1}" "${plane_l1}" "${plane_l2}" \
+    "${geomean}" "${worst_speedup}" "${worst_mad}" "${improved}" \
+    "${neutral}" "${regressed}" "${eligible}" \
+    >> "${threshold_diagnostics_csv}"
+done < "${thresholds_file}"
+
 best_threshold="${disable_threshold}"
 best_score=1.0
 best_worst=1.0
@@ -408,8 +497,70 @@ mv "${profile_work_file}" "${profile_file}"
   cat "${profile_file}"
 } > "${hardware_file}"
 
+{
+  printf 'PREFETCH_DIAG_V1\n'
+  printf 'SEL T=%s O=%s P=%s G=%s W=%s M=%s\n' \
+    "${best_threshold}" "${outcome}" "${selected_prefetch_count:-0}" \
+    "${best_score}" "${best_worst}" "${best_mad}"
+  printf 'TOL CHANGE=%s ZERO=%s\n' "${diagnostic_change_tolerance}" \
+    "${diagnostic_zero_prefetch_tolerance}"
+  awk -F, 'NR > 1 {
+      score=$7; candidates[score]++
+      signatures[score SUBSEP $3 ":" $4]=1
+      kinds[score SUBSEP $2]=1
+      if (!(score in min_confidence) || $8 < min_confidence[score]) min_confidence[score]=$8
+      if (!(score in max_confidence) || $8 > max_confidence[score]) max_confidence[score]=$8
+    }
+    END {
+      for (score in candidates) {
+        signature_count=kind_count=0
+        for (key in signatures) { split(key, part, SUBSEP); if (part[1] == score) signature_count++ }
+        for (key in kinds) { split(key, part, SUBSEP); if (part[1] == score) kind_count++ }
+        printf "SCORE S=%s N=%d ST=%d K=%d C=%s-%s\n", score, candidates[score],
+               signature_count, kind_count, min_confidence[score], max_confidence[score]
+      }
+    }' "${decision_inventory_csv}" | sort -t= -k2,2n
+  awk -F, 'NR > 1 {
+    printf "THR T=%s P=%s A=%s F=%s/%s/%s/%s G=%s W=%s M=%s C=%s/%s/%s E=%s\n",
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,($14 ? "Y" : "N")
+  }' "${threshold_diagnostics_csv}"
+  finding_count=0
+  while IFS= read -r finding; do
+    [[ -z "${finding}" ]] || { printf '%s\n' "${finding}"; finding_count=$((finding_count + 1)); }
+  done < <(
+    awk -F, -v zero_tolerance="${diagnostic_zero_prefetch_tolerance}" '
+      NR > 1 {
+        if ($2 == 0 && ($8 < 1-zero_tolerance || $8 > 1+zero_tolerance))
+          printf "ALERT Z T=%s G=%s\n", $1, $8
+        if ($2 != $3)
+          printf "ALERT M T=%s P=%s A=%s\n", $1, $2, $3
+        if ($11 > 0 && $13 > 0)
+          printf "ALERT X T=%s I=%s R=%s\n", $1, $11, $13
+        if ($2 > 0 && $13 > 0 && $11 == 0)
+          printf "ALERT N T=%s P=%s R=%s\n", $1, $2, $13
+      }' "${threshold_diagnostics_csv}"
+    awk -F, 'NR > 1 {
+        score=$7; signatures[score SUBSEP $3 ":" $4]=1
+      }
+      END {
+        for (score_key in signatures) {
+          split(score_key, first, SUBSEP); score=first[1]; count[score]++
+        }
+        for (score in count)
+          if (count[score] > 1)
+            printf "ALERT C S=%s ST=%s\n", score, count[score]
+      }' "${decision_inventory_csv}"
+  )
+  if [[ "${finding_count}" -eq 0 ]]; then
+    printf 'ALERT NONE\n'
+  fi
+  printf 'LEGEND F=cur/row/pL1/pL2 C=improve/neutral/regress\n'
+  printf 'ALERT Z=zero-drift M=count-mismatch X=mixed-cases N=no-gain C=score-collision\n'
+} > "${diagnostic_report}"
+
 printf '[profile-tuning] profile=%s\n' "${profile_file}"
 printf '[profile-tuning] candidates=%s\n' "${results_csv}"
 printf '[profile-tuning] selection=%s\n' "${selection_csv}"
 printf '[profile-tuning] thresholds=%s\n' "${thresholds_file}"
-cat "${selection_csv}"
+printf '[profile-tuning] diagnostics=%s\n' "${diagnostic_report}"
+cat "${diagnostic_report}"

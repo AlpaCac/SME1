@@ -669,8 +669,18 @@ unknown_trip_count_penalty = ceil(l2_latency / 2)
 ```text
 05_runtime_validation/output/server-profile-tuning/candidate_results.csv
 05_runtime_validation/output/server-profile-tuning/profile_selection.csv
+05_runtime_validation/output/server-profile-tuning/decision_inventory.csv
+05_runtime_validation/output/server-profile-tuning/threshold_diagnostics.csv
+05_runtime_validation/output/server-profile-tuning/diagnostic_report.md
 profiles/server-sme.env
 ```
+
+诊断报告自动关联 score、stream/cache 结构、threshold、admitted 数、IR PRFM 数和逐用例
+性能。默认告警包括：最高 threshold 已无预取但仍明显偏离 baseline、决策与实际插入
+数量不一致、一个 threshold 同时改善和退化不同训练用例，以及同一 score 桶包含多种
+结构而无法被全局 threshold 分离。终端打印版本使用紧凑的 `SEL/SCORE/THR/ALERT`
+单行格式，便于手工抄写；CSV 保留完整数据。该报告用于判断下一步应先修复测量链路、
+插入链路还是评分模型，不能用来放宽正式性能门槛。
 
 `server-sme.env` 回写全局 `min_profit_score`、`min_confidence` 和硬件校准得到的成本
 参数，不包含算子 mask 或类别开关。距离保持 `0`、策略保持 `AUTO`，Pass 对每个函数

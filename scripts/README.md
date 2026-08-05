@@ -40,7 +40,21 @@ export STANDALONE_LLVM=/path/to/llvm-19.1.7
 ```text
 05_runtime_validation/output/server-profile-tuning/candidate_results.csv
 05_runtime_validation/output/server-profile-tuning/profile_selection.csv
+05_runtime_validation/output/server-profile-tuning/decision_inventory.csv
+05_runtime_validation/output/server-profile-tuning/threshold_diagnostics.csv
+05_runtime_validation/output/server-profile-tuning/diagnostic_report.md
 ```
+
+`decision_inventory.csv` 保存阈值 0 时每条候选的 stream、层级、距离、score、置信度、
+收益和成本；`threshold_diagnostics.csv` 关联每个 threshold 的实际 PRFM、admitted
+决策、四类流数量和逐用例改善/退化计数。`diagnostic_report.md` 自动检查：0 预取版本
+是否仍偏离 baseline、admitted 与 IR PRFM 是否一致、同一 threshold 是否同时改善和
+退化不同用例，以及同一 score 是否混入不同 stream/cache 结构。该报告采用紧凑的
+`SEL/SCORE/THR/ALERT` 单行格式，便于无法导出服务器文件时手工抄写；详细数据仍保留
+在两个 CSV 中。变化分类默认使用
+1% 容差，0 预取一致性默认使用 2% 容差，可分别通过
+`STENCIL_DIAGNOSTIC_CHANGE_TOLERANCE` 和
+`STENCIL_DIAGNOSTIC_ZERO_PREFETCH_TOLERANCE` 覆盖。
 
 获胜的全局 `SME_PREFETCH_MIN_PROFIT_SCORE` 与硬件校准得到的成本参数写入本地
 忽略文件 `profiles/server-sme.env`。Profile 不包含算子 mask 或类别开关。距离保持
