@@ -103,11 +103,6 @@ sme1::TargetPrefetchProfile getActiveProfile() {
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_STREAMING_VL_BYTES", Profile.AssumedStreamingVLBytes);
   Overridden |= applyUnsignedEnvironmentOverride(
-      "SME_PREFETCH_EXPECTED_ROW_BYTES", Profile.ExpectedRowBytes);
-  Overridden |= applyUnsignedEnvironmentOverride(
-      "SME_PREFETCH_EXPECTED_PLANE_BYTES",
-      Profile.ExpectedPlaneOrTileBytes);
-  Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_L1_LATENCY_CYCLES", Profile.L1PrefetchLatencyCycles);
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_L2_LATENCY_CYCLES", Profile.L2PrefetchLatencyCycles);
@@ -253,9 +248,8 @@ public:
              << " profile=" << Profile.Name
              << " cache-line=" << Profile.CacheLineBytes
              << " assumed-vl=" << Profile.AssumedStreamingVLBytes
-             << " row-bytes=" << Profile.ExpectedRowBytes
-             << " plane-or-tile-bytes="
-             << Profile.ExpectedPlaneOrTileBytes
+             << " policy-model=physical-stream-reuse"
+             << " capacity-model=prefetch-frontier"
              << " max-streams=" << Profile.MaxPrefetchStreams
              << " current-l1=" << (Profile.EnableCurrentL1 ? "on" : "off")
              << " row-l1=" << (Profile.EnableRowL1 ? "on" : "off")
@@ -275,7 +269,6 @@ public:
                << " policy=" << sme1::toString(Decision.Policy)
                << " live-bytes=" << Decision.LiveBytes
                << " reuse-count=" << Decision.ReuseCount
-               << " reuse-distance=" << Decision.ReuseDistanceBytes
                << " reason=" << sme1::toString(Decision.Reason) << "\n";
       }
 

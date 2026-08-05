@@ -50,8 +50,6 @@ struct TargetPrefetchProfile {
   unsigned L1CapacityPercent = 60;
   unsigned L2CapacityPercent = 60;
   uint64_t AssumedStreamingVLBytes = 64;
-  uint64_t ExpectedRowBytes = 4096;
-  uint64_t ExpectedPlaneOrTileBytes = 128 * 1024;
   unsigned UsefulCycles2D = 8;
   unsigned UsefulCycles3D = 10;
   unsigned MaxDistance = 32;
@@ -83,7 +81,6 @@ struct PrefetchDecision {
   DecisionReason Reason = DecisionReason::Admitted;
   uint64_t LiveBytes = 0;
   unsigned ReuseCount = 0;
-  uint64_t ReuseDistanceBytes = 0;
 };
 
 const TargetPrefetchProfile &getDefaultPrefetchProfile();

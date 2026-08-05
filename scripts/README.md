@@ -55,9 +55,9 @@ export STANDALONE_LLVM=/path/to/llvm-19.1.7
 必须通过 `SME_PREFETCH_*` 提供实测值，不再静默回退 generic 默认值。
 
 其余模型输入从服务器本地 `profiles/server-model.env` 加载，模板为
-`profiles/server-model.env.example`。`row_bytes/plane_bytes` 在用例清单中为非零值
-时会按权重自动推导；否则也必须在模型文件中提供。缺少 latency、useful cycles、
-容量比例或资源预算时脚本会列出全部缺项并停止，不再使用内建初始值继续运行。
+`profiles/server-model.env.example`。缺少 latency、useful cycles、容量比例或资源
+预算时脚本会列出全部缺项并停止，不再使用内建初始值继续运行。矩阵 row/plane
+字节数不再是模型输入，也不需要人工填写或校准。
 
 `calibrate_server_model.sh` 可自动生成该文件。它通过 `perf_event_open` 读取真实 CPU
 cycle PMU：随机依赖加载分别使用 L1、L2 和超过末级 cache 的工作集；2D5P/3D7P

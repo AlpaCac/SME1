@@ -55,7 +55,7 @@ SME/SVE ACLE C++
 | 语义对应层级 | 当前使用状态 | 当前方案实际使用的语义 | 主要缺失 |
 |---|---|---|---|
 | Linalg/Tensor | 间接恢复 | 按 masked load 数和地址拓扑恢复 Stencil 类型；区分输入 load 与唯一输出 store；恢复 current/row/plane 逻辑角色 | 显式 `x/y/z`、shape、indexing map、邻域半径和 star/box 算子属性 |
-| Tiling/Bufferization/MemRef | 少量近似 | 从 GEP 获取实际指针；用 Profile 的 `ExpectedRowBytes` 和 `ExpectedPlaneOrTileBytes` 估算工作集 | tile、subview、真实 memref shape/stride、allocation 边界、buffer 生命周期和下一 tile |
+| Tiling/Bufferization/MemRef | 少量恢复 | 从 GEP 获取实际指针和符号地址关系；当前决策不读取具体 shape/row/plane 字节数 | tile、subview、真实 memref shape/stride、allocation 边界、buffer 生命周期和下一 tile |
 | SCF/Affine | 使用 LLVM 等价分析 | 用 `LoopInfo` 找最内层循环；用 PHI/SCEV 获取归纳变量、地址递推、部分 trip count、row/plane 地址差 | 结构化 `x/y/z` 外层循环、精确 affine map、跨外层循环复用、tile 切换位置 |
 | Vector | 直接使用低层等价信息 | masked load/store、元素大小、可伸缩向量类型、同一物理连续流及逻辑 load 去重 | 向量化前后的对应关系、通用 stride/gather 分类和完整 cache-line 发射去重 |
 | ArmSVE | 直接使用 LLVM intrinsic | `vscale` 相关向量步长、`whilelo/whilelt` 谓词、尾部归纳变量、未来 `x` 上界保护 | 高层 predicate 来源、硬件预取器模型和目标 CPU 上 hint 的精确收益 |
@@ -76,7 +76,7 @@ SME/SVE ACLE C++
   masked load/store、共同谓词、whilelo/whilelt、GEP 地址、支配关系、尾部上界
 
 缓存和决策：
-  cache line、L1/L2 容量与延迟、假定 VL、代表性 row/plane 大小、预取预算
+  cache line、L1/L2 容量与延迟、假定 VL、直接复用证据、预取预算
 
 运行反馈：
   PMU 周期校准、正确性、耗时、加速比和流类别消融

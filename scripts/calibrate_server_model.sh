@@ -4,7 +4,6 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/.." && pwd)"
 source_file="${script_dir}/calibration/server_model_calibration.cpp"
-manifest="${STENCIL_CASE_MANIFEST:-${repo_root}/profiles/tuning_cases.csv}"
 output_file="${SME_PREFETCH_MODEL_INPUT_FILE:-${repo_root}/profiles/server-model.env}"
 output_dir="${SME_CALIBRATION_OUTPUT_DIR:-${repo_root}/05_runtime_validation/output/server-model-calibration}"
 binary="${output_dir}/server_model_calibration"
@@ -56,14 +55,6 @@ detect_last_cache_capacity() {
   printf '%s' "${largest}"
 }
 
-representative_bytes() {
-  local column="$1"
-  awk -F, -v column="${column}" 'NR > 1 && $4 == "train" && $column > 0 {
-    sum += $column * $5
-    weight += $5
-  } END { if (weight > 0) printf "%.0f", sum / weight }' "${manifest}"
-}
-
 round_up() {
   awk -v value="$1" 'BEGIN { rounded = int(value); if (value > rounded) rounded++; print rounded }'
 }
@@ -76,7 +67,7 @@ if [[ "${samples}" == 0 || "${accesses}" == 0 ]]; then
   exit 1
 fi
 [[ -x "${BISHENG_CXX}" ]] || { printf 'missing BiSheng clang++: %s\n' "${BISHENG_CXX}" >&2; exit 1; }
-[[ -f "${source_file}" && -f "${manifest}" ]] || { printf 'missing calibration source or manifest\n' >&2; exit 1; }
+[[ -f "${source_file}" ]] || { printf 'missing calibration source: %s\n' "${source_file}" >&2; exit 1; }
 command -v taskset >/dev/null 2>&1 || { printf 'calibration requires taskset\n' >&2; exit 1; }
 
 l1_capacity="${SME_PREFETCH_L1_CAPACITY_BYTES:-$(detect_cache_value 1 size)}"
@@ -104,14 +95,6 @@ for specification in \
 done
 if (( l1_ways < 2 || l2_ways < 2 )); then
   printf 'cache associativity must be at least two to reserve one way\n' >&2
-  exit 1
-fi
-
-expected_row="${SME_PREFETCH_EXPECTED_ROW_BYTES:-$(representative_bytes 6)}"
-expected_plane="${SME_PREFETCH_EXPECTED_PLANE_BYTES:-$(representative_bytes 7)}"
-if [[ -z "${expected_row}" || -z "${expected_plane}" ]]; then
-  printf 'row/plane bytes cannot be calibrated from synthetic hardware tests\n' >&2
-  printf 'fill nonzero row_bytes/plane_bytes in %s or export overrides\n' "${manifest}" >&2
   exit 1
 fi
 
@@ -173,8 +156,6 @@ export SME_PREFETCH_L2_CAPACITY_PERCENT=${l2_capacity_percent}
 export SME_PREFETCH_L1_LATENCY_CYCLES=${l1_latency}
 export SME_PREFETCH_L2_LATENCY_CYCLES=${l2_latency}
 export SME_PREFETCH_MEMORY_LATENCY_CYCLES=${memory_latency}
-export SME_PREFETCH_EXPECTED_ROW_BYTES=${expected_row}
-export SME_PREFETCH_EXPECTED_PLANE_BYTES=${expected_plane}
 export SME_PREFETCH_USEFUL_CYCLES_2D=${useful_cycles_2d}
 export SME_PREFETCH_USEFUL_CYCLES_3D=${useful_cycles_3d}
 export SME_PREFETCH_MAX_DISTANCE=${max_distance}

@@ -137,18 +137,17 @@ if [[ ! -f "${manifest}" ]]; then
   exit 1
 fi
 if [[ "$(sed -n '1p' "${manifest}")" != \
-      'argument,kind,size_class,role,weight,row_bytes,plane_bytes,working_set_bytes' ]]; then
+      'argument,kind,size_class,role,weight' ]]; then
   printf 'unexpected tuning manifest header: %s\n' "${manifest}" >&2
   exit 1
 fi
 if ! awk -F, '
     NR == 1 { next }
-    NF != 8 { exit 1 }
+    NF != 5 { exit 1 }
     $1 !~ /^--[a-z0-9-]+$/ { exit 1 }
     $2 !~ /^(1D3P|2D5P|2D9P|3D7P|3D13P|3D25P|3D27P)$/ { exit 1 }
     $4 !~ /^(train|validate)$/ { exit 1 }
     $5 !~ /^[0-9]+([.][0-9]+)?$/ || $5 <= 0 { exit 1 }
-    $6 !~ /^[0-9]+$/ || $7 !~ /^[0-9]+$/ || $8 !~ /^[0-9]+$/ { exit 1 }
     END { if (NR < 3) exit 1 }
   ' "${manifest}"; then
   printf 'invalid row in tuning case manifest: %s\n' "${manifest}" >&2
@@ -163,22 +162,6 @@ if [[ "${train_count}" -eq 0 ]]; then
   exit 1
 fi
 
-representative_bytes() {
-  local column="$1"
-  awk -F, -v column="${column}" '
-    NR > 1 && $4 == "train" && $column > 0 {
-      weighted_sum += $column * $5
-      total_weight += $5
-    }
-    END {
-      if (total_weight > 0)
-        printf "%.0f", weighted_sum / total_weight
-    }' "${manifest}"
-}
-
-profile_expected_row="${SME_PREFETCH_EXPECTED_ROW_BYTES:-$(representative_bytes 6)}"
-profile_expected_plane="${SME_PREFETCH_EXPECTED_PLANE_BYTES:-$(representative_bytes 7)}"
-
 missing_model_inputs=()
 for specification in \
     "SME_PREFETCH_L1_CAPACITY_PERCENT:${profile_l1_capacity_percent}" \
@@ -186,8 +169,6 @@ for specification in \
     "SME_PREFETCH_L1_LATENCY_CYCLES:${profile_l1_latency}" \
     "SME_PREFETCH_L2_LATENCY_CYCLES:${profile_l2_latency}" \
     "SME_PREFETCH_MEMORY_LATENCY_CYCLES:${profile_memory_latency}" \
-    "SME_PREFETCH_EXPECTED_ROW_BYTES:${profile_expected_row}" \
-    "SME_PREFETCH_EXPECTED_PLANE_BYTES:${profile_expected_plane}" \
     "SME_PREFETCH_USEFUL_CYCLES_2D:${profile_useful_cycles_2d}" \
     "SME_PREFETCH_USEFUL_CYCLES_3D:${profile_useful_cycles_3d}" \
     "SME_PREFETCH_MAX_DISTANCE:${profile_max_distance}" \
@@ -212,8 +193,7 @@ for value in "${profile_l1_capacity}" "${profile_l2_capacity}" \
     "${profile_cache_line}" "${profile_streaming_vl}" \
     "${profile_l1_capacity_percent}" "${profile_l2_capacity_percent}" \
     "${profile_l1_latency}" "${profile_l2_latency}" \
-    "${profile_memory_latency}" "${profile_expected_row}" \
-    "${profile_expected_plane}" "${profile_useful_cycles_2d}" \
+    "${profile_memory_latency}" "${profile_useful_cycles_2d}" \
     "${profile_useful_cycles_3d}" "${profile_max_distance}" \
     "${profile_max_streams}" "${profile_max_instructions}" \
     "${profile_max_bytes}"; do
@@ -257,7 +237,7 @@ for scope in current row plane; do
 done
 
 mkdir -p "${tuning_root}" "$(dirname "${profile_file}")"
-printf 'candidate,argument,kind,size_class,role,weight,row_bytes,plane_bytes,working_set_bytes,baseline_median_s,prefetch_median_s,speedup,relative_mad\n' \
+printf 'candidate,argument,kind,size_class,role,weight,baseline_median_s,prefetch_median_s,speedup,relative_mad\n' \
   > "${results_csv}"
 printf 'kind,selected_candidate,outcome,weighted_geomean,min_speedup,max_relative_mad,training_cases\n' \
   > "${selection_csv}"
@@ -269,8 +249,6 @@ printf 'kind,selected_candidate,outcome,weighted_geomean,min_speedup,max_relativ
   printf 'effective_streaming_vl_bytes=%s\n' "${profile_streaming_vl}"
   printf 'effective_l1_capacity_bytes=%s\n' "${profile_l1_capacity}"
   printf 'effective_l2_capacity_bytes=%s\n' "${profile_l2_capacity}"
-  printf 'effective_expected_row_bytes=%s\n' "${profile_expected_row}"
-  printf 'effective_expected_plane_bytes=%s\n' "${profile_expected_plane}"
   printf 'uname='; uname -a
   if [[ -r /proc/cpuinfo ]]; then
     grep -m1 -E '^(model name|CPU part|Hardware)[[:space:]]*:' /proc/cpuinfo || true
@@ -350,7 +328,7 @@ append_results() {
   for test_case in ${cases}; do
     metadata="$(awk -F, -v test_case="${test_case}" \
       'NR > 1 && $1 == test_case {
-        printf "%s,%s,%s,%s,%s,%s,%s", $2, $3, $4, $5, $6, $7, $8
+        printf "%s,%s,%s,%s", $2, $3, $4, $5
         exit
       }' "${manifest}")"
     if [[ -z "${metadata}" ]]; then
@@ -377,7 +355,7 @@ append_results() {
           relative_mad = baseline_relative
         printf "%.9f", relative_mad
       }')"
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
       "${candidate}" "${test_case}" "${metadata}" "${baseline}" \
       "${prefetch}" "${speedup}" "${relative_mad}" >> "${results_csv}"
   done
@@ -397,7 +375,7 @@ run_candidate() {
   local expected_rows
   local actual_rows=0
 
-  signature="manifest=${manifest_signature};current=${current};row=${row};plane_l1=${plane_l1};plane_l2=${plane_l2};cases=${cases};warmups=${warmups};samples=${samples};streams=${profile_max_streams};instructions=${profile_max_instructions};bytes=${profile_max_bytes};line=${profile_cache_line};vl=${profile_streaming_vl};l1=${profile_l1_capacity};l2=${profile_l2_capacity};l1pct=${profile_l1_capacity_percent};l2pct=${profile_l2_capacity_percent};l1lat=${profile_l1_latency};l2lat=${profile_l2_latency};memlat=${profile_memory_latency};rowbytes=${profile_expected_row};planebytes=${profile_expected_plane};cycles2d=${profile_useful_cycles_2d};cycles3d=${profile_useful_cycles_3d};maxdistance=${profile_max_distance}"
+  signature="manifest=${manifest_signature};current=${current};row=${row};plane_l1=${plane_l1};plane_l2=${plane_l2};cases=${cases};warmups=${warmups};samples=${samples};streams=${profile_max_streams};instructions=${profile_max_instructions};bytes=${profile_max_bytes};line=${profile_cache_line};vl=${profile_streaming_vl};l1=${profile_l1_capacity};l2=${profile_l2_capacity};l1pct=${profile_l1_capacity_percent};l2pct=${profile_l2_capacity_percent};l1lat=${profile_l1_latency};l2lat=${profile_l2_latency};memlat=${profile_memory_latency};cycles2d=${profile_useful_cycles_2d};cycles3d=${profile_useful_cycles_3d};maxdistance=${profile_max_distance}"
   expected_rows=$(( $(wc -w <<< "${cases}") * 2 * samples ))
   if [[ -f "${timing_file}" ]]; then
     actual_rows="$(wc -l < "${timing_file}")"
@@ -439,8 +417,6 @@ run_candidate() {
   SME_PREFETCH_L1_LATENCY_CYCLES="${profile_l1_latency}" \
   SME_PREFETCH_L2_LATENCY_CYCLES="${profile_l2_latency}" \
   SME_PREFETCH_MEMORY_LATENCY_CYCLES="${profile_memory_latency}" \
-  SME_PREFETCH_EXPECTED_ROW_BYTES="${profile_expected_row}" \
-  SME_PREFETCH_EXPECTED_PLANE_BYTES="${profile_expected_plane}" \
   SME_PREFETCH_USEFUL_CYCLES_2D="${profile_useful_cycles_2d}" \
   SME_PREFETCH_USEFUL_CYCLES_3D="${profile_useful_cycles_3d}" \
   SME_PREFETCH_MAX_DISTANCE="${profile_max_distance}" \
@@ -470,8 +446,8 @@ candidate_score() {
     NR > 1 && $1 == candidate && $3 == kind && $5 == "train" {
       count++
       weight = $6
-      speedup = $12
-      relative_mad = $13
+      speedup = $9
+      relative_mad = $10
       sum += weight * log(speedup)
       total_weight += weight
       if (count == 1 || speedup < worst_speedup)
@@ -624,8 +600,6 @@ export SME_PREFETCH_L2_CAPACITY_PERCENT=${profile_l2_capacity_percent}
 export SME_PREFETCH_L1_LATENCY_CYCLES=${profile_l1_latency}
 export SME_PREFETCH_L2_LATENCY_CYCLES=${profile_l2_latency}
 export SME_PREFETCH_MEMORY_LATENCY_CYCLES=${profile_memory_latency}
-export SME_PREFETCH_EXPECTED_ROW_BYTES=${profile_expected_row}
-export SME_PREFETCH_EXPECTED_PLANE_BYTES=${profile_expected_plane}
 export SME_PREFETCH_USEFUL_CYCLES_2D=${profile_useful_cycles_2d}
 export SME_PREFETCH_USEFUL_CYCLES_3D=${profile_useful_cycles_3d}
 export SME_PREFETCH_MAX_DISTANCE=${profile_max_distance}

@@ -134,8 +134,7 @@ mkdir -p "${output_dir}"
 printf 'argument,kind,size_class,evaluation_set,baseline_median_s,prefetch_median_s,speedup,relative_mad,status\n' \
   > "${validation_csv}"
 validation_failed=0
-while IFS=, read -r test_case kind size_class role weight row_bytes \
-    plane_bytes working_set_bytes; do
+while IFS=, read -r test_case kind size_class role weight; do
   if [[ "${test_case}" == "argument" || "${role}" != "${evaluation_role}" ]]; then
     continue
   fi

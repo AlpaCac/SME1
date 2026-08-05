@@ -106,16 +106,15 @@ raw_distance = ceil(96 / 10) = 10 次向量迭代
 
 ### 3.2 已使用的复用语义
 
-当前复用模型使用两个近似量：
+当前复用模型只使用 LLVM IR 中直接可见的物理流分组：
 
 ```text
 reuse_count = 同一物理流合并后的逻辑 load 数
-reuse_distance = Profile 中的代表性 row 或 plane 大小
 ```
 
-若 `reuse_count > 1`，且代表性复用距离不超过目标 cache 的有效容量，则选择
-`KEEP`；否则选择 `STRM`。plane 流预取到 L1 时强制使用 `STRM`，避免大平面污染
-L1。
+若 `reuse_count > 1`，说明同一递增地址流在当前循环体内有直接复用，选择 `KEEP`；
+否则选择 `STRM`。plane 流预取到 L1 时强制使用 `STRM`，避免近层级污染。模型不再
+读取或估算 row/plane 的具体字节数。
 
 ## 4. 访问模式与合法性语义
 
@@ -161,7 +160,6 @@ cache line 大小
 L1/L2 容量和可使用比例
 L1/L2/内存预取延迟
 假定的 streaming VL
-代表性 row 和 plane/tile 大小
 2D/3D 每次向量迭代的有效周期
 最大预取距离
 最大预取流数
@@ -174,8 +172,8 @@ current/row/plane-L1/plane-L2 开关
 
 - 用延迟和有效周期计算预取距离；
 - 用 cache line 和 VL 计算预取粒度、指令数及字节数；
-- 用 L1/L2 有效容量检查在途预取数据；
-- 用 row/plane 代表尺寸估算复用距离；
+- 用 L1/L2 有效容量检查 `distance * VL` 构成的预取前沿；
+- 用同一物理流的逻辑 load 数判断直接复用；
 - 按流数、指令数和字节数限制预取压力；
 - 对 row、plane near 和 plane far 候选设置优先级；
 - 选择 L1 或 L2 以及 `KEEP/STRM`。

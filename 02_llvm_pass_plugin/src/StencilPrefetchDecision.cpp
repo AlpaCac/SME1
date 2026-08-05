@@ -176,22 +176,12 @@ PrefetchDecision makeDecision(const StencilInfo &Stencil,
 
   Decision.DistanceIterations = Distance;
   Decision.LiveBytes = Distance * Profile.AssumedStreamingVLBytes;
+  // Physical-stream deduplication groups loads that consume the same advancing
+  // address stream. Multiple grouped loads are direct reuse evidence available
+  // in LLVM IR; a row or plane byte size is neither required nor guessed.
   Decision.ReuseCount = std::max<unsigned>(1, Stream.Loads.size());
-  if (isRowStream(Stream.Kind)) {
-    uint64_t RowMultiplier = is2D(Stencil.Kind) ? 3 : 5;
-    Decision.ReuseDistanceBytes =
-        RowMultiplier * Profile.ExpectedRowBytes;
-  } else if (Stream.Kind == StreamKind::CurrentRow) {
-    Decision.ReuseDistanceBytes = Profile.ExpectedRowBytes;
-  } else {
-    Decision.ReuseDistanceBytes = Profile.ExpectedPlaneOrTileBytes;
-  }
-
-  bool ReuseFits =
-      Decision.ReuseCount > 1 &&
-      Decision.ReuseDistanceBytes <= effectiveCapacity(Profile, Level);
-  Decision.Policy = ReuseFits ? LocalityPolicy::Keep
-                              : LocalityPolicy::Stream;
+  Decision.Policy = Decision.ReuseCount > 1 ? LocalityPolicy::Keep
+                                             : LocalityPolicy::Stream;
   if (isPlaneStream(Stream.Kind) && Level == CacheLevel::L1)
     Decision.Policy = LocalityPolicy::Stream;
   unsigned PolicyOverride = policyOverride(Profile, Stream.Kind, Level);
@@ -272,10 +262,7 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
       std::max(Profile.CacheLineBytes, Profile.AssumedStreamingVLBytes);
   uint64_t L1Used =
       Stencil.Streams.size() * FrontierBytes;
-  uint64_t L2Used =
-      is3D(Stencil.Kind)
-          ? 3 * Profile.ExpectedPlaneOrTileBytes
-          : 0;
+  uint64_t L2Used = 0;
   uint64_t InstructionCount = 0;
   uint64_t PrefetchBytes = 0;
   uint64_t LinesPerVector =

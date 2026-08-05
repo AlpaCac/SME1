@@ -137,54 +137,52 @@ inner_trip_count > 2 * d_iterations
 
 ### 2.4 Cache 层级模型
 
-目标 cache 层级回答“数据先放到哪里”。估算预取数据在使用前的在途占用：
+目标 cache 层级回答“数据先放到哪里”。当前模型不估算完整 row/plane 工作集，只
+计算已经准入的预取前沿在数据被使用前可能占用的字节：
 
 ```text
 prefetch_live_bytes(stream, level)
   = d_iterations(stream, level)
   * bytes_per_vector_iteration(stream)
 
-required_bytes(level)
-  = active_working_set(level)
+prefetch_frontier_bytes(level)
+  = base_frontier_bytes(level)
   + sum(prefetch_live_bytes(stream, level))
 ```
 
 层级候选需满足：
 
 ```text
-required_bytes(level) <= effective_cache_budget(level)
+prefetch_frontier_bytes(level) <= effective_cache_budget(level)
 ```
 
 初始规则：
 
-1. 即将使用的 row/plane 前沿可预取到 L1。
-2. 距离较远的 plane warming 优先进入 L2，避免过早污染 L1。
+1. row 邻域生成 L1 候选，plane 邻域可生成 L1 near 和 L2 warming 候选。
+2. plane warming 的 L2 候选使用更长延迟计算距离，避免过早占用 L1。
 3. 当前不默认使用 L3，因为服务器共享末级 cache 的可控性和竞争情况尚未测定。
 4. 一条 plane 流可同时具有远距离 L2 和近距离 L1 两个候选。
 
 ### 2.5 KEEP/STRM 模型
 
-KEEP/STRM 决策依据是复用，不是“地址是否连续”：
+KEEP/STRM 决策依据是 LLVM IR 中可证明的直接复用，不是“地址是否连续”，也不
+依赖 row/plane 的具体字节数：
 
 ```text
-reuse_fits(stream, level)
-  = reuse_count(stream) > 1
-  && reuse_distance_bytes(stream)
-       <= effective_cache_budget(level)
-
 policy(stream, level)
-  = KEEP, if reuse_fits
+  = KEEP, if grouped_load_count(stream) > 1
   = STRM, otherwise
 ```
 
 当前原则：
 
-1. 单次使用或复用距离过大时选择 STRM。
-2. 同一 cache line 在有效 cache 容量内会被多次使用时选择 KEEP。
+1. 去重后只有一个逻辑 load 的单调流选择 STRM。
+2. 同一物理流在当前循环体内被多个逻辑 load 消费时选择 KEEP。
 3. 2D9P 和 3D27P 的同一物理流包含更多相邻逻辑 load，复用计数高于 5P/star
    中的单邻居流。
-4. 平面流即使随 `z` 推进会再次出现，完整平面过大时仍可能选择 STRM。
-5. L1 与 L2 对同一流可以得到不同 policy。
+4. 不能仅凭跨外层循环“可能再次出现”选择 KEEP，因为 LLVM IR 层尚未证明其复用
+   窗口；这类平面流保守选择 STRM。
+5. plane-L1 强制 STRM；显式 Profile 覆盖仍可用于受控实验，但 AUTO 不猜测尺寸。
 
 ### 2.6 联合决策
 
@@ -205,7 +203,7 @@ PrefetchDecision {
 
 1. 计算距离候选。
 2. 选择 cache 层级。
-3. 根据该层级的复用窗口选择 KEEP/STRM。
+3. 根据物理流内的直接复用证据选择 KEEP/STRM。
 4. 按优先级执行流预算和指令预算准入。
 5. 对未准入候选保留拒绝原因，但不插入 IR。
 
@@ -214,8 +212,8 @@ PrefetchDecision {
 ```text
 enabled_streams <= max_streams
 inserted_prefetches <= instruction_budget
-required_bytes(L1) <= L1_budget
-required_bytes(L2) <= L2_budget
+prefetch_frontier_bytes(L1) <= L1_budget
+prefetch_frontier_bytes(L2) <= L2_budget
 future_address_is_safe == true
 ```
 
@@ -244,8 +242,8 @@ enabled decisions == inserted IR prefetches == assembly PRFM
 | 3D star | plane L1、row L1、plane L2 warming |
 | 3D box | 按预算选择高复用 row/plane 流，再考虑 L2 warming |
 
-这些优先级是确定性的初始模型，不是最终服务器最优参数。最终距离、层级和策略
-必须通过第三部分的逐算子性能实验回写。
+这些优先级是确定性的初始模型，不依赖具体矩阵大小。距离和 AUTO 策略由分析模型
+产生；第三部分的逐算子性能实验只验证并关闭无收益类别，不用示例尺寸替换模型。
 
 ---
 
@@ -520,7 +518,7 @@ speedup = median_time(baseline) / median_time(prefetch)
 `profiles/tuning_cases.csv` 是调优和验证的共同输入：
 
 ```text
-argument,kind,size_class,role,weight,row_bytes,plane_bytes,working_set_bytes
+argument,kind,size_class,role,weight
 ```
 
 | 列 | 含义 |
@@ -530,9 +528,6 @@ argument,kind,size_class,role,weight,row_bytes,plane_bytes,working_set_bytes
 | `size_class` | 用例规模类别，例如 L1、L2、DRAM |
 | `role` | `train` 参与联合选择；`validate` 保留给未来独立留出场景 |
 | `weight` | 该训练场景在综合得分中的权重 |
-| `row_bytes` | 实际行大小；未知时填 0 |
-| `plane_bytes` | 实际平面大小；未知时填 0 |
-| `working_set_bytes` | 总工作集大小；未知时填 0 |
 
 当前服务器入口只有固定的 `s1/s2` 参数，而且两个规模差异明显。若只用 `s1` 选择、
 只用 `s2` 验收，训练数据只覆盖一种规模，容易得到明显偏向 `s1` 的策略。因此默认
@@ -591,20 +586,19 @@ MAD 恒为 0，只能验证自动化链路，不能作为稳定性能结论。
 调优脚本在 Linux sysfs 中读取 L1/L2 容量和 cache line，并从
 `/proc/sys/abi/sme_default_vector_length` 读取进程 exec 后采用的 streaming VL。
 任一硬件值无法读取时必须显式提供实测值，脚本不再静默回退。以下硬件与分析输入
-直接提供给分析模型，用于逐函数生成具体距离、策略和准入结果：
+直接提供给分析模型，用于逐函数生成具体距离和准入结果：
 
 ```text
 streaming VL
 L1/L2/内存预取延迟
 L1/L2 有效容量占比
-代表性 row/plane 大小
 每次向量迭代的有效计算周期
 初始最大距离、流预算、指令预算和字节预算
 ```
 
-这些输入按来源分为三类：Cache 容量、cache line 和 streaming VL 从 Linux 接口
-自动读取；row/plane 大小从用例真实维度推导；latency 和 useful cycles 需要目标机
-微基准或 PMU 校准。容量比例与资源预算是模型约束，不是可从 sysfs 读取的硬件事实，
+这些输入按来源分为两类：Cache 容量、cache line 和 streaming VL 从 Linux 接口
+自动读取；latency 和 useful cycles 由目标机微基准或 PMU 校准。容量比例与资源预算
+是模型约束，不是可从 sysfs 读取的硬件事实，
 必须在服务器模型文件中明确记录其依据和值。模板为
 `profiles/server-model.env.example`，本地结果写入被忽略的 `profiles/server-model.env`。
 任何必需输入缺失时步骤 4 直接停止，不再使用 generic SME 回退值。
@@ -616,8 +610,8 @@ L1/L2 有效容量占比
 cache way，最大流数取当前支持算子的最大物理流拓扑 17，指令和字节预算再由
 `ceil(streaming_VL/cache_line)` 推导。PMU 不可访问时校准失败，不回退墙钟估算。
 
-清单提供非零 `row_bytes/plane_bytes` 时，脚本按训练权重形成代表值；显式环境变量
-优先级更高。所有有效参数同时用于候选编译、候选缓存签名和最终 Profile，避免
+矩阵 row/plane/working-set 字节数不再出现在清单、校准输入或最终 Profile 中。
+所有有效硬件参数同时用于候选编译、候选缓存签名和最终 Profile，避免
 “调优时一组参数、最终编译另一组参数”。实际硬件信息和有效值记录在：
 
 ```text
@@ -671,14 +665,13 @@ relative_mad <= 0.03
 
 #### 3.8.6 当前泛化边界
 
-目前得到的仍是“每种 stencil 一套静态 Profile”。`s1/s2` 联合调优减少了只针对
-单个已知规模的偏差，但最终复测仍使用参与选择的数据，所以结果只能说明 Profile
-覆盖当前已知工作负载，不能证明未知规模泛化。不能把 Apple M5 的参数直接用于
-服务器，也不能把 2D row 的结果直接推广到 3D plane。
+目前得到的仍是“每种 stencil 一套静态类别 Profile”。模型本身不读取具体矩阵
+尺寸，因此不会把某个 `s1/s2` 的 row/plane 大小固化进 Pass；但类别 mask 仍由已知
+用例选择，最终复测也使用参与选择的数据，所以不能据此证明未知规模泛化。不能把
+Apple M5 的硬件参数直接用于服务器，也不能把 2D row 的结果直接推广到 3D plane。
 
-若不同尺寸确实需要不同 cache 层级或策略，下一阶段需要从函数参数和 SCEV 恢复
-实际 row、plane 与工作集范围，使用 LLVM loop versioning 生成多个循环版本，并在
-函数入口按规模分派。在实现多版本化前，不能同时通过全部已知规模的候选必须回退。
+若一个类别不能同时通过全部已知规模，必须关闭并回退 baseline。扩展泛化能力应优先
+增加不同规模和不同边界形态的用例，而不是重新引入矩阵具体尺寸或按尺寸多版本化。
 
 ### 3.9 当前完成情况和剩余工作
 
@@ -698,7 +691,7 @@ relative_mad <= 0.03
 12. 中位数、加权几何平均、最差场景和相对 MAD 联合门槛。
 13. Linux cache 参数探测、完整决策输入回写和候选签名恢复。
 14. 组合 Profile 的正确性与稳定性能复测。
-15. Pass 的 cache、VL、延迟、容量比例、row/plane 大小和距离覆盖接口。
+15. Pass 的 cache、VL、延迟、容量比例和距离覆盖接口；具体矩阵大小已移除。
 16. 服务器快速与正式调优临时脚本 `tmp0.sh` 至 `tmp3.sh`。
 17. 分析模型主导的距离/策略决策与类别级实测 Profile 写回。
 

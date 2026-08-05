@@ -220,14 +220,13 @@ SME_PREFETCH_MASK_ROW_L1=4 \
 SME_PREFETCH_DISTANCE_ROW_L1=6 \
 SME_PREFETCH_POLICY_ROW_L1=STRM \
 SME_PREFETCH_STREAMING_VL_BYTES=128 \
-SME_PREFETCH_EXPECTED_ROW_BYTES=8192 \
   run_pass "${kernel_ir}" "${override_ir}" "${override_log}"
 if ! grep -q '^StencilDecision:.*kind=2D9P.*enable=yes.*distance=6.*policy=STRM' \
     "${override_log}"; then
   printf 'profile override did not enable the requested 2D9P row strategy\n' >&2
   exit 1
 fi
-if ! grep -q '^StencilDecisionProfile:.*assumed-vl=128.*row-bytes=8192' \
+if ! grep -q '^StencilDecisionProfile:.*assumed-vl=128.*policy-model=physical-stream-reuse.*capacity-model=prefetch-frontier' \
     "${override_log}"; then
   printf 'profile hardware override was not applied\n' >&2
   exit 1
