@@ -119,6 +119,18 @@ sme1::TargetPrefetchProfile getActiveProfile() {
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_USEFUL_CYCLES_3D", Profile.UsefulCycles3D);
   Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MIN_PROFIT_SCORE", Profile.MinProfitScore);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_MIN_CONFIDENCE", Profile.MinConfidencePercent);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_ISSUE_COST", Profile.PrefetchIssueCost);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_CACHE_PRESSURE_WEIGHT", Profile.CachePressureWeight);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_BANDWIDTH_WEIGHT", Profile.BandwidthWeight);
+  Overridden |= applyUnsignedEnvironmentOverride(
+      "SME_PREFETCH_UNKNOWN_TRIP_PENALTY", Profile.UnknownTripCountPenalty);
+  Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_DISTANCE_CURRENT_L1", Profile.CurrentL1Distance);
   Overridden |= applyUnsignedEnvironmentOverride(
       "SME_PREFETCH_DISTANCE_ROW_L1", Profile.RowL1Distance);
@@ -134,38 +146,6 @@ sme1::TargetPrefetchProfile getActiveProfile() {
       "SME_PREFETCH_POLICY_PLANE_L1", Profile.PlaneL1Policy);
   Overridden |= applyPolicyEnvironmentOverride(
       "SME_PREFETCH_POLICY_PLANE_L2", Profile.PlaneL2Policy);
-  Overridden |= applyUnsignedEnvironmentOverride(
-      "SME_PREFETCH_MASK_CURRENT_L1", Profile.CurrentL1StencilMask);
-  Overridden |= applyUnsignedEnvironmentOverride(
-      "SME_PREFETCH_MASK_ROW_L1", Profile.RowL1StencilMask);
-  Overridden |= applyUnsignedEnvironmentOverride(
-      "SME_PREFETCH_MASK_PLANE_L1", Profile.PlaneL1StencilMask);
-  Overridden |= applyUnsignedEnvironmentOverride(
-      "SME_PREFETCH_MASK_PLANE_L2", Profile.PlaneL2StencilMask);
-
-  unsigned Toggle = Profile.EnableCurrentL1;
-  if (applyUnsignedEnvironmentOverride("SME_PREFETCH_ENABLE_CURRENT_L1",
-                                       Toggle)) {
-    Profile.EnableCurrentL1 = Toggle != 0;
-    Overridden = true;
-  }
-  Toggle = Profile.EnableRowL1;
-  if (applyUnsignedEnvironmentOverride("SME_PREFETCH_ENABLE_ROW_L1", Toggle)) {
-    Profile.EnableRowL1 = Toggle != 0;
-    Overridden = true;
-  }
-  Toggle = Profile.EnablePlaneL1;
-  if (applyUnsignedEnvironmentOverride("SME_PREFETCH_ENABLE_PLANE_L1",
-                                       Toggle)) {
-    Profile.EnablePlaneL1 = Toggle != 0;
-    Overridden = true;
-  }
-  Toggle = Profile.EnablePlaneL2;
-  if (applyUnsignedEnvironmentOverride("SME_PREFETCH_ENABLE_PLANE_L2",
-                                       Toggle)) {
-    Profile.EnablePlaneL2 = Toggle != 0;
-    Overridden = true;
-  }
   if (Overridden)
     Profile.Name = "environment-override";
   return Profile;
@@ -251,10 +231,12 @@ public:
              << " policy-model=physical-stream-reuse"
              << " capacity-model=prefetch-frontier"
              << " max-streams=" << Profile.MaxPrefetchStreams
-             << " current-l1=" << (Profile.EnableCurrentL1 ? "on" : "off")
-             << " row-l1=" << (Profile.EnableRowL1 ? "on" : "off")
-             << " plane-l1=" << (Profile.EnablePlaneL1 ? "on" : "off")
-             << " plane-l2=" << (Profile.EnablePlaneL2 ? "on" : "off")
+             << " min-profit=" << Profile.MinProfitScore
+             << " min-confidence=" << Profile.MinConfidencePercent
+             << " issue-cost=" << Profile.PrefetchIssueCost
+             << " pressure-weight=" << Profile.CachePressureWeight
+             << " bandwidth-weight=" << Profile.BandwidthWeight
+             << " unknown-trip-penalty=" << Profile.UnknownTripCountPenalty
              << "\n";
 
       SmallVector<sme1::PrefetchDecision, 32> Decisions =
@@ -269,6 +251,11 @@ public:
                << " policy=" << sme1::toString(Decision.Policy)
                << " live-bytes=" << Decision.LiveBytes
                << " reuse-count=" << Decision.ReuseCount
+               << " hidden-cycles=" << Decision.HiddenCycles
+               << " benefit=" << Decision.BenefitScore
+               << " cost=" << Decision.CostScore
+               << " score=" << Decision.ProfitScore
+               << " confidence=" << Decision.ConfidencePercent
                << " reason=" << sme1::toString(Decision.Reason) << "\n";
       }
 

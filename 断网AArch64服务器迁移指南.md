@@ -557,9 +557,10 @@ streaming VL。
 
 不再使用另一套固定 C ABI 扫描脚本。保持完整模块入口不变，每次只覆盖一组
 Pass 环境变量并重新运行 `scripts/03_validate_server_runtime.sh`，例如
-`SME_PREFETCH_USEFUL_CYCLES_2D/3D`、`SME_PREFETCH_ENABLE_CURRENT_L1`、
-`SME_PREFETCH_ENABLE_ROW_L1`、`SME_PREFETCH_ENABLE_PLANE_L1/L2` 以及流数、
-指令数和字节预算。每组实验都应同时保存 `pass_run.log` 和墙钟结果。
+`SME_PREFETCH_USEFUL_CYCLES_2D/3D`、`SME_PREFETCH_MIN_PROFIT_SCORE`、
+`SME_PREFETCH_MIN_CONFIDENCE`、成本权重以及流数、指令数和字节预算。正常流程应由
+步骤 04 从 Pass score 自动生成阈值边界，而不是手工设置算子开关。每组实验都应
+同时保存 `pass_run.log` 和墙钟结果。
 
 根据以下数据建立服务器 Profile：
 

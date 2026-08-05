@@ -57,14 +57,6 @@ bool is2D(StencilKind Kind) {
 
 bool is3D(StencilKind Kind) { return !is1D(Kind) && !is2D(Kind); }
 
-uint32_t stencilBit(StencilKind Kind) {
-  return uint32_t{1} << static_cast<unsigned>(Kind);
-}
-
-bool stencilEnabled(uint32_t Mask, StencilKind Kind) {
-  return (Mask & stencilBit(Kind)) != 0;
-}
-
 unsigned distanceOverride(const TargetPrefetchProfile &Profile,
                           StreamKind Stream, CacheLevel Level) {
   if (Stream == StreamKind::CurrentRow)
@@ -189,6 +181,34 @@ PrefetchDecision makeDecision(const StencilInfo &Stencil,
     Decision.Policy = LocalityPolicy::Keep;
   else if (PolicyOverride == 2)
     Decision.Policy = LocalityPolicy::Stream;
+
+  Decision.HiddenCycles =
+      std::min(latencyFor(Profile, Level), Distance * Cycles);
+  unsigned ReuseMultiplier =
+      100 + 25 * (std::min(Decision.ReuseCount, 4U) - 1);
+  Decision.BenefitScore =
+      static_cast<uint64_t>(Decision.HiddenCycles) * ReuseMultiplier / 100;
+
+  uint64_t Capacity = std::max<uint64_t>(1, effectiveCapacity(Profile, Level));
+  uint64_t PressurePercent = divideCeil(Decision.LiveBytes * 100, Capacity);
+  uint64_t LinesPerVector =
+      divideCeil(Profile.AssumedStreamingVLBytes, Profile.CacheLineBytes);
+  uint64_t CandidateBytes = LinesPerVector * Profile.CacheLineBytes;
+  uint64_t BandwidthPercent = divideCeil(
+      CandidateBytes * 100,
+      std::max<uint64_t>(1, Profile.MaxPrefetchBytesPerIteration));
+  Decision.CostScore = Profile.PrefetchIssueCost +
+      divideCeil(PressurePercent * Profile.CachePressureWeight, uint64_t{100}) +
+      divideCeil(BandwidthPercent * Profile.BandwidthWeight, uint64_t{100});
+  if (TripCount == 0)
+    Decision.CostScore += Profile.UnknownTripCountPenalty;
+
+  Decision.ProfitScore = static_cast<int64_t>(Decision.BenefitScore) -
+                         static_cast<int64_t>(Decision.CostScore);
+  Decision.ConfidencePercent = TripCount == 0 ? 70 : 100;
+  if (Level == CacheLevel::L2)
+    Decision.ConfidencePercent =
+        Decision.ConfidencePercent > 10 ? Decision.ConfidencePercent - 10 : 0;
   return Decision;
 }
 
@@ -216,9 +236,6 @@ const TargetPrefetchProfile &getAppleM5PrefetchProfile() {
     TargetPrefetchProfile Result;
     Result.Name = "apple-m5";
     Result.UsefulCycles3D = 32;
-    Result.EnableRowL1 = false;
-    Result.EnablePlaneL1 = true;
-    Result.EnablePlaneL2 = false;
     return Result;
   }();
   return Profile;
@@ -236,21 +253,18 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
       Candidates.push_back(C);
     };
 
-    if ((Stream.Kind == StreamKind::CurrentRow && is1D(Stencil.Kind) &&
-         Profile.EnableCurrentL1 &&
-         stencilEnabled(Profile.CurrentL1StencilMask, Stencil.Kind)) ||
-        (isRowStream(Stream.Kind) && Profile.EnableRowL1 &&
-         stencilEnabled(Profile.RowL1StencilMask, Stencil.Kind)) ||
-        (isPlaneStream(Stream.Kind) && Profile.EnablePlaneL1 &&
-         stencilEnabled(Profile.PlaneL1StencilMask, Stencil.Kind)))
+    if ((Stream.Kind == StreamKind::CurrentRow && is1D(Stencil.Kind)) ||
+        isRowStream(Stream.Kind) || isPlaneStream(Stream.Kind))
       AddCandidate(CacheLevel::L1);
-    if (is3D(Stencil.Kind) &&
-        isPlaneStream(Stream.Kind) && Profile.EnablePlaneL2 &&
-        stencilEnabled(Profile.PlaneL2StencilMask, Stencil.Kind))
+    if (is3D(Stencil.Kind) && isPlaneStream(Stream.Kind))
       AddCandidate(CacheLevel::L2);
   }
 
   llvm::stable_sort(Candidates, [](const Candidate &A, const Candidate &B) {
+    if (A.Decision.ProfitScore != B.Decision.ProfitScore)
+      return A.Decision.ProfitScore > B.Decision.ProfitScore;
+    if (A.Decision.ConfidencePercent != B.Decision.ConfidencePercent)
+      return A.Decision.ConfidencePercent > B.Decision.ConfidencePercent;
     if (A.Priority != B.Priority)
       return A.Priority < B.Priority;
     if (A.Decision.Level != B.Decision.Level)
@@ -273,6 +287,16 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
   for (Candidate &Candidate : Candidates) {
     PrefetchDecision &Decision = Candidate.Decision;
     if (Decision.Reason == DecisionReason::ShortTripCount) {
+      Results.push_back(Decision);
+      continue;
+    }
+    if (Decision.ConfidencePercent < Profile.MinConfidencePercent) {
+      Decision.Reason = DecisionReason::LowConfidence;
+      Results.push_back(Decision);
+      continue;
+    }
+    if (Decision.ProfitScore < Profile.MinProfitScore) {
+      Decision.Reason = DecisionReason::Unprofitable;
       Results.push_back(Decision);
       continue;
     }
@@ -457,6 +481,10 @@ const char *toString(DecisionReason Reason) {
     return "Admitted";
   case DecisionReason::ShortTripCount:
     return "ShortTripCount";
+  case DecisionReason::LowConfidence:
+    return "LowConfidence";
+  case DecisionReason::Unprofitable:
+    return "Unprofitable";
   case DecisionReason::CapacityReject:
     return "CapacityReject";
   case DecisionReason::StreamBudgetReject:

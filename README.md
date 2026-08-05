@@ -62,8 +62,8 @@ stencil_all_sme.cpp
 6. 运行 `./scripts/calibrate_server_model.sh`，自动探测 Cache/VL，并使用 PMU 微基准
    校准 latency、useful cycles 和可持续预取流数，生成本地
    `profiles/server-model.env`；流程不需要 row/plane 的具体字节数。
-7. 正确性通过后，运行 `./scripts/04_tune_server_profile.sh` 自动执行类别消融，
-   使用全部已知工作负载选择需要启用的预取类别并生成本地
+7. 正确性通过后，运行 `./scripts/04_tune_server_profile.sh`，从分析模型实际 score
+   自动生成边界并使用全部已知工作负载选择一个全局收益阈值，生成本地
    `profiles/server-sme.env`；距离和 KEEP/STRM 仍由分析模型逐函数计算。
 8. 运行 `./scripts/05_validate_tuned_profile.sh` 加载 Profile，重新执行全部正确性
    和稳定性能复测；需要 PMU 或多线程实验时再补充工具。

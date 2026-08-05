@@ -196,6 +196,11 @@ PrefetchDecision {
   distance_iterations
   cache_level
   policy
+  hidden_cycles
+  benefit_score
+  cost_score
+  profit_score
+  confidence_percent
   reject_reason
 }
 ```
@@ -205,8 +210,12 @@ PrefetchDecision {
 1. 计算距离候选。
 2. 选择 cache 层级。
 3. 根据物理流内的直接复用证据选择 KEEP/STRM。
-4. 按优先级执行流预算和指令预算准入。
-5. 对未准入候选保留拒绝原因，但不插入 IR。
+4. 根据隐藏延迟和复用计算收益，根据发射、cache 压力、带宽及未知 trip count 计算
+   成本。
+5. 检查全局最低收益和最低置信度。
+6. 候选先按收益分数、置信度排序，结构优先级只用于同分候选，再执行容量、流、
+   指令和字节预算准入。
+7. 对未准入候选保留 `LowConfidence`、`Unprofitable` 或资源拒绝原因，但不插入 IR。
 
 联合约束：
 
@@ -216,9 +225,12 @@ inserted_prefetches <= instruction_budget
 prefetch_frontier_bytes(L1) <= L1_budget
 prefetch_frontier_bytes(L2) <= L2_budget
 future_address_is_safe == true
+profit_score >= min_profit_score
+confidence_percent >= min_confidence
 ```
 
-因此“预取决策数”不是最终插入数。例如当前服务器报告：
+因此“预取决策数”不是最终插入数。以下是引入统一评分模型前的历史服务器报告，
+更新后的数量必须在服务器重新执行步骤 04 后确认：
 
 ```text
 候选预取决策：45
@@ -538,24 +550,36 @@ argument,kind,size_class,role,weight
 增加可变尺寸入口后，应为每种算子补充 L1、L2、DRAM 等更多规模；只有规模数量足够
 时，才划出独立 `validate` 场景检验未知规模泛化。
 
-#### 3.8.2 类别消融和候选范围
+#### 3.8.2 统一收益模型和阈值范围
 
-`scripts/04_tune_server_profile.sh` 自动运行以下候选：
+Pass 对每个结构候选计算：
 
-| 候选 | 测试范围 | 启用类别 |
-|---|---|---|
-| `current` | 1D 训练场景 | current-L1 |
-| `row` | 2D/3D 训练场景 | row-L1 |
-| `plane-l1` | 3D 训练场景 | plane-L1 |
-| `plane-l2` | 3D 训练场景 | plane-L2 |
-| `plane-l1-l2` | 3D 训练场景 | plane-L1 + plane-L2 |
-| `all` | 3D 训练场景 | row-L1 + plane-L1 + plane-L2 |
+```text
+hidden_cycles = min(target_latency, distance * useful_cycles)
+benefit = hidden_cycles * reuse_multiplier
 
-current 流不混入 3D 的 `all` 候选，保证测试候选和最终回写的位掩码完全一致。
-每种 stencil 独立选择获胜候选，最终通过七位 stencil mask 合并成一个 Profile；
-没有训练场景的类型保持 baseline，不凭相邻类型推断。例如默认服务器清单没有
-3D7P 参数，因此 3D7P 会安全保持关闭。`profile_selection.csv` 的 `outcome` 使用
-`selected`、`no-eligible-candidate` 和 `no-training-data` 区分三种结果。
+cost = issue_cost
+     + cache_pressure_percent * cache_pressure_weight
+     + bandwidth_percent * bandwidth_weight
+     + unknown_trip_count_penalty
+
+profit_score = benefit - cost
+```
+
+已知 trip count 的候选置信度为 100；未知 trip count 的候选降低为 70，L2 warming
+候选再降低 10。候选只有满足 `profit_score >= min_profit_score`、
+`confidence >= min_confidence`，并继续通过容量、流数、指令数和字节预算时才插入。
+
+`scripts/04_tune_server_profile.sh` 不再枚举 current/row/plane 类别组合，也不生成
+算子 mask。它先以阈值 0 仅编译一次，从 `pass_run.log` 收集分析模型实际产生的整数
+score。若唯一 score 为 `s1 < s2 < ...`，实测阈值集合自动构造为：
+
+```text
+0, s1 + 1, s2 + 1, ...
+```
+
+每个边界只会排除一组由模型判为更低收益的候选，因此候选值来自分析模型，而不是
+脚本人为定义。最高 score 加一对应统一关闭全部候选，可作为安全 baseline 回退。
 
 #### 3.8.3 统计选择条件
 
@@ -572,7 +596,7 @@ weighted_geomean(candidate)
   = exp(sum(weight_i * ln(speedup_i)) / sum(weight_i))
 ```
 
-候选默认必须同时满足：
+每个全局阈值默认必须同时满足：
 
 ```text
 每个训练场景 speedup >= 1.00
@@ -618,14 +642,23 @@ cache way。资源微基准扫描 1 至 17 条独立随机内存流，记录每�
 PMU 不可访问时校准失败，不回退墙钟估算。
 
 矩阵 row/plane/working-set 字节数不再出现在清单、校准输入或最终 Profile 中。
-所有有效硬件参数同时用于候选编译、候选缓存签名和最终 Profile，避免
+校准还根据实测周期和流数生成 `issue_cost`、`cache_pressure_weight`、
+`bandwidth_weight` 和 `unknown_trip_count_penalty`。这些参数与其余硬件参数同时用于
+候选编译、候选缓存签名和最终 Profile，避免
 “调优时一组参数、最终编译另一组参数”。实际硬件信息和有效值记录在：
+
+```text
+issue_cost = ceil(min(useful_cycles_2d, useful_cycles_3d) / max_streams)
+cache_pressure_weight = l1_latency
+bandwidth_weight = ceil(memory_latency / max_streams)
+unknown_trip_count_penalty = ceil(l2_latency / 2)
+```
 
 ```text
 05_runtime_validation/output/server-profile-tuning/hardware_metadata.txt
 ```
 
-默认启用 `STENCIL_TUNE_RESUME=1`。只有清单校验和、候选开关、硬件模型参数、用例、
+默认启用 `STENCIL_TUNE_RESUME=1`。只有清单校验和、全局阈值、硬件模型参数、用例、
 预热次数和样本数全部相同，才复用已有测量。正式重测可设置
 `STENCIL_TUNE_RESUME=0`。
 
@@ -639,14 +672,13 @@ PMU 不可访问时校准失败，不回退墙钟估算。
 profiles/server-sme.env
 ```
 
-`server-sme.env` 只按算子回写经过实测的预取类别 mask。距离保持 `0`、策略保持
-`AUTO`：这两个值是“启用分析模型”的控制语义，Pass 会对每个函数和每条物理流
-计算一个具体距离与策略。调优不再人为提供 `1 2 4 6 8` 或 `KEEP STRM` 等候选，
-也不枚举容量比例和资源预算；它只通过原 main/test 判断模型生成的 current-L1、
-row-L1、plane-L1、plane-L2 类别是否值得启用。因此分析模型是决策主体，实测是
-类别级验证和关闭机制。
+`server-sme.env` 回写全局 `min_profit_score`、`min_confidence` 和硬件校准得到的成本
+参数，不包含算子 mask 或类别开关。距离保持 `0`、策略保持 `AUTO`，Pass 对每个函数
+和每条物理流计算具体距离、策略和评分。调优不人为提供距离、策略、容量比例或类别
+组合，只在模型自身形成的 score 边界中选择一个全局阈值。因此分析模型是决策主体，
+实测只校准统一准入边界。
 
-搜索期间先写 `server-sme.env.tuning`，类别选择成功后才原子替换最终 Profile，
+搜索期间先写 `server-sme.env.tuning`，全局阈值选择成功后才原子替换最终 Profile，
 因此中断不会破坏已有结果。具体模型决策可在每次构建输出的 `pass_run.log` 中查看，
 其中包含 function、stream、distance、level、policy 和准入原因。
 
@@ -666,19 +698,17 @@ relative_mad <= 0.03
 05_runtime_validation/output/server-profile-final/runtime_validation_report.md
 ```
 
-若最终 Profile 关闭全部软件预取，验证流程允许 IR 中预取数为 0，这代表该服务器
+若最终全局阈值关闭全部软件预取，验证流程允许 IR 中预取数为 0，这代表该服务器
 选择 baseline，而不是 Pass 插入失败；结果状态记为 `BASELINE`，不再用两个等价
 版本的计时噪声触发性能失败。
 
 #### 3.8.6 当前泛化边界
 
-目前得到的仍是“每种 stencil 一套静态类别 Profile”。模型本身不读取具体矩阵
-尺寸，因此不会把某个 `s1/s2` 的 row/plane 大小固化进 Pass；但类别 mask 仍由已知
-用例选择，最终复测也使用参与选择的数据，所以不能据此证明未知规模泛化。不能把
-Apple M5 的硬件参数直接用于服务器，也不能把 2D row 的结果直接推广到 3D plane。
-
-若一个类别不能同时通过全部已知规模，必须关闭并回退 baseline。扩展泛化能力应优先
-增加不同规模和不同边界形态的用例，而不是重新引入矩阵具体尺寸或按尺寸多版本化。
+当前 Profile 已不再记忆 stencil 类型，只保存硬件参数和统一评分阈值，因此新增算子
+只要能被物理流分析识别，就可直接使用同一规则。但阈值仍由已知 `s1/s2` 用例选择，
+最终复测也使用参与选择的数据，所以不能据此证明未知规模或跨机器泛化。扩展泛化
+能力仍应优先增加不同规模、边界形态和新算子的 `validate` 用例，而不是重新引入
+矩阵具体尺寸或按算子位图。
 
 ### 3.9 当前完成情况和剩余工作
 
@@ -694,13 +724,13 @@ Apple M5 的硬件参数直接用于服务器，也不能把 2D row 的结果直
 8. 使用原始 `main/test` 的 baseline/prefetch 运行脚本。
 9. 12 个 `s1/s2` 场景的原始 main/test 正确性和性能运行入口。
 10. 基于 manifest 的已知工作负载联合调优和可选留出接口。
-11. 按算子执行 current/row/plane 类别消融并自动生成服务器 Profile。
+11. 从 Pass score 自动生成全局阈值边界并自动生成无算子 mask 的服务器 Profile。
 12. 中位数、加权几何平均、最差场景和相对 MAD 联合门槛。
 13. Linux cache 参数探测、完整决策输入回写和候选签名恢复。
 14. 组合 Profile 的正确性与稳定性能复测。
 15. Pass 的 cache、VL、延迟、容量比例和距离覆盖接口；具体矩阵大小已移除。
 16. 服务器快速与正式调优临时脚本 `tmp0.sh` 至 `tmp3.sh`。
-17. 分析模型主导的距离/策略决策与类别级实测 Profile 写回。
+17. 分析模型主导的距离、策略、收益和置信度决策与全局阈值写回。
 18. 预取尾部保护改为共享条件和 branchless safe-address select，不再为每条预取
     拆分最内层循环控制流。
 19. 流、指令和字节预算改由目标机独立流 PMU 扫描测量，不再固定采用 17 条拓扑上限。
@@ -737,21 +767,22 @@ export BISHENG_CXX=/path/to/bisheng/bin/clang++
 随后按顺序执行：
 
 ```bash
-./scripts/tmp0.sh  # 0 次预热、1 个样本的快速类别调优
+./scripts/tmp0.sh  # 0 次预热、1 个样本的快速全局阈值调优
 ./scripts/tmp1.sh  # 单样本链路和正确性检查，不执行正式性能门槛
 ./scripts/tmp2.sh  # 1 次预热、3 个样本的正式调优
 ./scripts/tmp3.sh  # 1 次预热、3 个样本的正式稳定性能复测
 ```
 
-`tmp0.sh/tmp2.sh` 只执行预取类别消融，不再扫描距离、策略或资源参数。`tmp2.sh`
+`tmp0.sh/tmp2.sh` 只测试分析模型自动生成的 score 边界，不扫描距离、策略、类别组合
+或资源参数。`tmp2.sh`
 默认启用候选签名复用，样本数或模型输入改变时会自动失效，因此中断后可以直接
 续跑。
 
 正式验收依次检查：
 
-1. `profile_selection.csv` 中每种算子的选择是否合理。
+1. `profile_selection.csv` 中全局收益阈值和预取数量是否合理。
 2. `hardware_metadata.txt` 中 cache 和有效模型参数是否符合服务器。
-3. `server-sme.env` 中启用 mask 是否与选择结果一致。
+3. `server-sme.env` 中全局评分参数是否与选择结果一致，且不存在算子 mask。
 4. `profile_validation.csv` 是否为 `PASS`，或明确回退为 `BASELINE`。
 5. `runtime_validation_report.md` 中 baseline/prefetch 正确性是否通过。
 

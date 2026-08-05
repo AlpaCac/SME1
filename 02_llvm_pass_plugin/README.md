@@ -19,40 +19,23 @@ test 已在步骤 1 被排除，因此 pass 不依赖函数名前缀，也不会
 3D25P/27P 的对角邻域会合并到相应 row 或 plane 流；当候选流多于硬件预算时，
 决策器按 L1/L2 容量、流数、指令数与带宽预算筛选。
 
-1D3P 的 current-row L1 预取默认开启，以便在服务器上与其余算子一起验证。若硬件
-流预取器已经覆盖该连续流，可在性能实验中关闭：
-
-```bash
-SME_PREFETCH_ENABLE_CURRENT_L1=0
-```
-
 ## Profile 调优接口
 
-自动调优脚本通过环境变量覆盖默认分析模型，不修改 C++ 源文件：
-
-| 类别 | 开关 | 算子掩码 | 距离 | 策略 |
-|---|---|---|---|---|
-| current L1 | `SME_PREFETCH_ENABLE_CURRENT_L1` | `SME_PREFETCH_MASK_CURRENT_L1` | `SME_PREFETCH_DISTANCE_CURRENT_L1` | `SME_PREFETCH_POLICY_CURRENT_L1` |
-| row L1 | `SME_PREFETCH_ENABLE_ROW_L1` | `SME_PREFETCH_MASK_ROW_L1` | `SME_PREFETCH_DISTANCE_ROW_L1` | `SME_PREFETCH_POLICY_ROW_L1` |
-| plane L1 | `SME_PREFETCH_ENABLE_PLANE_L1` | `SME_PREFETCH_MASK_PLANE_L1` | `SME_PREFETCH_DISTANCE_PLANE_L1` | `SME_PREFETCH_POLICY_PLANE_L1` |
-| plane L2 | `SME_PREFETCH_ENABLE_PLANE_L2` | `SME_PREFETCH_MASK_PLANE_L2` | `SME_PREFETCH_DISTANCE_PLANE_L2` | `SME_PREFETCH_POLICY_PLANE_L2` |
-
-距离为 0、策略为 `AUTO` 时保留分析模型。策略覆盖接受 `AUTO`、`KEEP`、`STRM`。
-掩码按 `StencilKind` 位编号组合：
+Pass 不再提供按算子或按类别启用的 mask。current-L1、row-L1、plane-L1、plane-L2
+候选都由 IR 物理流结构产生，然后统一计算隐藏周期、复用收益、发射成本、cache
+压力、带宽成本和置信度。候选只有同时满足全局收益与置信度阈值并通过资源预算才会
+插入；资源不足时优先保留 score 和置信度更高的候选。全局接口为：
 
 ```text
-1D3P=1, 2D5P=2, 2D9P=4, 3D7P=8,
-3D13P=16, 3D25P=32, 3D27P=64
+SME_PREFETCH_MIN_PROFIT_SCORE
+SME_PREFETCH_MIN_CONFIDENCE
+SME_PREFETCH_ISSUE_COST
+SME_PREFETCH_CACHE_PRESSURE_WEIGHT
+SME_PREFETCH_BANDWIDTH_WEIGHT
+SME_PREFETCH_UNKNOWN_TRIP_PENALTY
 ```
 
-例如仅对 2D9P 启用 row-L1：
-
-```bash
-SME_PREFETCH_ENABLE_ROW_L1=1 \
-SME_PREFETCH_MASK_ROW_L1=4 \
-SME_PREFETCH_DISTANCE_ROW_L1=6 \
-SME_PREFETCH_POLICY_ROW_L1=STRM
-```
+距离为 0、策略为 `AUTO` 时保留分析模型；显式距离和策略覆盖仅用于受控实验。
 
 分析模型的硬件输入也可由服务器 Profile 覆盖：
 

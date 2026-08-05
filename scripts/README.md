@@ -30,9 +30,10 @@ test 和 `main`，分别构建无预取 baseline 与带预取版本，先运行�
 export STANDALONE_LLVM=/path/to/llvm-19.1.7
 ```
 
-步骤 4 从 `profiles/tuning_cases.csv` 读取用例，先运行类别消融。默认将
-`s1/s2` 都作为 `train` 场景，联合选择 current-L1、row-L1、plane-L1、plane-L2
-组合。要求每个已知场景不退化、加权几何平均至少 1.03，任一版本的相对 MAD 不
+步骤 4 从 `profiles/tuning_cases.csv` 读取用例。它先用阈值 0 仅编译一次，从
+`pass_run.log` 收集分析模型实际生成的 score，并以每个唯一 score 的下一整数作为
+全局阈值边界。随后在全部训练场景上测试这些边界，不再枚举预取类别组合。要求每个
+已知场景不退化、加权几何平均至少 1.03，任一版本的相对 MAD 不
 超过 0.03。可用 `STENCIL_TUNE_MIN_CASE_SPEEDUP`、
 `STENCIL_TUNE_MIN_GEOMEAN` 和 `STENCIL_TUNE_MAX_RELATIVE_MAD` 覆盖。原始数据保存在：
 
@@ -41,10 +42,10 @@ export STANDALONE_LLVM=/path/to/llvm-19.1.7
 05_runtime_validation/output/server-profile-tuning/profile_selection.csv
 ```
 
-类别实测只选择各算子启用 current-L1、row-L1、plane-L1、plane-L2 中的哪些类别，
-并把获胜 mask 写入本地忽略文件 `profiles/server-sme.env`。距离保持 `0`、策略保持
-`AUTO`，其含义是 Pass 在每次编译时根据当前函数的循环、物理流、cache 和 VL 计算
-具体距离与 KEEP/STRM，而不是使用未验证的固定值。步骤 5 加载 Profile 后重新执行全部正确性测试和性能采样。默认
+获胜的全局 `SME_PREFETCH_MIN_PROFIT_SCORE` 与硬件校准得到的成本参数写入本地
+忽略文件 `profiles/server-sme.env`。Profile 不包含算子 mask 或类别开关。距离保持
+`0`、策略保持 `AUTO`，Pass 在每次编译时根据当前函数的循环、物理流、cache 和 VL
+计算具体距离与 KEEP/STRM。步骤 5 加载 Profile 后重新执行全部正确性测试和性能采样。默认
 清单没有独立留出行，因此复测全部 `train` 场景；未来存在 `validate` 行时则自动
 只用留出场景决定性能是否通过。步骤 4 默认复用清单、参数和样本数完全一致的已
 完成候选，中断后可直接重跑；设置 `STENCIL_TUNE_RESUME=0` 强制重测。
@@ -79,6 +80,6 @@ cache 时，可显式提供 `SME_CALIBRATION_L1_WAYS`、`SME_CALIBRATION_L2_WAYS
 STENCIL_TUNE_WARMUPS=0 STENCIL_TUNE_SAMPLES=1 ./scripts/04_tune_server_profile.sh
 ```
 
-单样本只用于确认类别选择和写回链路，正式 Profile 必须使用多样本稳定性门槛。
-`tmp2.sh` 默认开启候选复用；样本数、模型输入或当前类别发生变化时签名会
+单样本只用于确认阈值发现和写回链路，正式 Profile 必须使用多样本稳定性门槛。
+`tmp2.sh` 默认开启候选复用；样本数、模型输入或评分边界发生变化时签名会
 自动失效，因此无需用 `STENCIL_TUNE_RESUME=0` 来保证正式数据的新鲜度。

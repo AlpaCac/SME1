@@ -165,7 +165,8 @@ L1/L2/内存预取延迟
 最大预取流数
 每迭代最大预取指令数
 每迭代最大预取字节数
-current/row/plane-L1/plane-L2 开关
+全局最低收益分数与最低置信度
+发射、cache 压力、带宽和未知 trip-count 成本参数
 ```
 
 这些参数参与以下决策：
@@ -188,13 +189,13 @@ current/row/plane-L1/plane-L2 开关
 - baseline 与 prefetch 数值正确性比较；
 - 依赖加载和轻量 2D/3D stencil 的 CPU cycle PMU 校准；
 - 每个算子和规模的耗时、中位数及加速比；
-- row、plane-L1、plane-L2 流类别消融；
+- 从分析模型 score 自动生成全局阈值边界并实测选择；
 - 距离由目标机校准输入和分析模型计算；
 - 跨问题规模复测；
 
-校准脚本自动生成服务器模型输入，类别调优脚本自动回写 enable/mask；Pass 使用模型
-输入逐函数计算距离、层级和策略。运行结果不用于枚举距离或 KEEP/STRM，只用于关闭
-在已知工作负载上无收益的预取类别。
+校准脚本自动生成服务器模型输入和成本参数，调优脚本只回写全局最低收益阈值；Pass
+使用模型输入逐函数计算距离、层级、策略、收益和置信度。运行结果不枚举距离或
+KEEP/STRM，也不记忆算子类型。
 
 语义文档中列出的 L1/L2/LLC miss、backend stall、TLB miss、实际内存带宽和 cache
 pollution proxy 尚未接入自动流程；PMU 仍是后续归因手段。

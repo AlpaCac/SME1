@@ -30,6 +30,8 @@ enum class LocalityPolicy {
 enum class DecisionReason {
   Admitted,
   ShortTripCount,
+  LowConfidence,
+  Unprofitable,
   CapacityReject,
   StreamBudgetReject,
   InstructionBudgetReject,
@@ -62,14 +64,12 @@ struct TargetPrefetchProfile {
   unsigned RowL1Policy = 0;
   unsigned PlaneL1Policy = 0;
   unsigned PlaneL2Policy = 0;
-  uint32_t CurrentL1StencilMask = 0x7f;
-  uint32_t RowL1StencilMask = 0x7f;
-  uint32_t PlaneL1StencilMask = 0x7f;
-  uint32_t PlaneL2StencilMask = 0x7f;
-  bool EnableCurrentL1 = true;
-  bool EnableRowL1 = true;
-  bool EnablePlaneL1 = true;
-  bool EnablePlaneL2 = true;
+  int64_t MinProfitScore = 0;
+  unsigned MinConfidencePercent = 60;
+  unsigned PrefetchIssueCost = 2;
+  unsigned CachePressureWeight = 64;
+  unsigned BandwidthWeight = 32;
+  unsigned UnknownTripCountPenalty = 12;
 };
 
 struct PrefetchDecision {
@@ -81,6 +81,11 @@ struct PrefetchDecision {
   DecisionReason Reason = DecisionReason::Admitted;
   uint64_t LiveBytes = 0;
   unsigned ReuseCount = 0;
+  unsigned HiddenCycles = 0;
+  uint64_t BenefitScore = 0;
+  uint64_t CostScore = 0;
+  int64_t ProfitScore = 0;
+  unsigned ConfidencePercent = 0;
 };
 
 const TargetPrefetchProfile &getDefaultPrefetchProfile();

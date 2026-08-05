@@ -151,6 +151,12 @@ fi
 lines_per_vector=$(((streaming_vl + cache_line - 1) / cache_line))
 max_instructions=$((max_streams * lines_per_vector))
 max_bytes=$((max_instructions * cache_line))
+# Convert measured cycles into conservative score costs. Step 04 tunes only the
+# final global admission threshold; it does not replace these model inputs.
+prefetch_issue_cost=$(((minimum_useful_cycles + max_streams - 1) / max_streams))
+cache_pressure_weight="${l1_latency}"
+bandwidth_weight=$(((memory_latency + max_streams - 1) / max_streams))
+unknown_trip_penalty=$(((l2_latency + 1) / 2))
 
 temporary="${output_file}.tmp"
 cat > "${temporary}" <<EOF
@@ -170,6 +176,12 @@ export SME_PREFETCH_MAX_DISTANCE=${max_distance}
 export SME_PREFETCH_MAX_STREAMS=${max_streams}
 export SME_PREFETCH_MAX_INSTRUCTIONS=${max_instructions}
 export SME_PREFETCH_MAX_BYTES=${max_bytes}
+export SME_PREFETCH_MIN_PROFIT_SCORE=0
+export SME_PREFETCH_MIN_CONFIDENCE=60
+export SME_PREFETCH_ISSUE_COST=${prefetch_issue_cost}
+export SME_PREFETCH_CACHE_PRESSURE_WEIGHT=${cache_pressure_weight}
+export SME_PREFETCH_BANDWIDTH_WEIGHT=${bandwidth_weight}
+export SME_PREFETCH_UNKNOWN_TRIP_PENALTY=${unknown_trip_penalty}
 EOF
 mv "${temporary}" "${output_file}"
 

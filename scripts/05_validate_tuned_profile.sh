@@ -60,21 +60,6 @@ fi
 # shellcheck disable=SC1090
 source "${profile_file}"
 
-# Do not apply a performance gate to stencil kinds that deliberately fell back.
-enabled_stencil_mask=0
-if [[ "${SME_PREFETCH_ENABLE_CURRENT_L1:-0}" == "1" ]]; then
-  enabled_stencil_mask=$((enabled_stencil_mask | SME_PREFETCH_MASK_CURRENT_L1))
-fi
-if [[ "${SME_PREFETCH_ENABLE_ROW_L1:-0}" == "1" ]]; then
-  enabled_stencil_mask=$((enabled_stencil_mask | SME_PREFETCH_MASK_ROW_L1))
-fi
-if [[ "${SME_PREFETCH_ENABLE_PLANE_L1:-0}" == "1" ]]; then
-  enabled_stencil_mask=$((enabled_stencil_mask | SME_PREFETCH_MASK_PLANE_L1))
-fi
-if [[ "${SME_PREFETCH_ENABLE_PLANE_L2:-0}" == "1" ]]; then
-  enabled_stencil_mask=$((enabled_stencil_mask | SME_PREFETCH_MASK_PLANE_L2))
-fi
-
 EXPECTED_PREFETCH_COUNT= \
 STENCIL_ALLOW_ZERO_PREFETCH=1 \
 STENCIL_RUNTIME_BUILD_DIR="${build_dir}" \
@@ -84,6 +69,21 @@ STENCIL_SINGLE_RUN=0 \
 STENCIL_WARMUPS="${STENCIL_FINAL_WARMUPS:-2}" \
 STENCIL_SAMPLES="${STENCIL_FINAL_SAMPLES:-7}" \
   "${validation_script}"
+
+pass_log="${output_dir}/pass_run.log"
+if [[ ! -f "${pass_log}" ]]; then
+  printf 'missing final pass decision log: %s\n' "${pass_log}" >&2
+  exit 1
+fi
+enabled_kinds="$(awk '
+  /^StencilDecision:/ {
+    kind=""; enabled=""
+    for (i=1; i<=NF; ++i) {
+      if ($i ~ /^kind=/) { split($i, value, "="); kind=value[2] }
+      if ($i ~ /^enable=/) { split($i, value, "="); enabled=value[2] }
+    }
+    if (kind != "" && enabled == "yes") print kind
+  }' "${pass_log}" | sort -u)"
 
 timing_file="${output_dir}/program_time_seconds.tsv"
 if [[ ! -f "${timing_file}" ]]; then
@@ -142,18 +142,8 @@ while IFS=, read -r test_case kind size_class role weight; do
   prefetch="$(median_for "${test_case}" prefetch)"
   baseline_mad="$(mad_for "${test_case}" baseline "${baseline}")"
   prefetch_mad="$(mad_for "${test_case}" prefetch "${prefetch}")"
-  case "${kind}" in
-    1D3P) stencil_bit=1 ;;
-    2D5P) stencil_bit=2 ;;
-    2D9P) stencil_bit=4 ;;
-    3D7P) stencil_bit=8 ;;
-    3D13P) stencil_bit=16 ;;
-    3D25P) stencil_bit=32 ;;
-    3D27P) stencil_bit=64 ;;
-    *) stencil_bit=0 ;;
-  esac
   case_mode=baseline
-  if (( enabled_stencil_mask & stencil_bit )); then
+  if grep -Fxq "${kind}" <<< "${enabled_kinds}"; then
     case_mode=optimized
   fi
   read -r speedup relative_mad status < <(awk \

@@ -26,17 +26,18 @@
 候选必须在两个规模上都不退化，避免只针对其中一个规模。当前结果属于部署调优，
 不构成未知规模的泛化验证。服务器 `main` 增加更多尺寸参数后，只需追加清单行；
 拥有足够的 L1、L2、DRAM 场景后，再保留独立的 `validate` 行做真正的留出验收。
-`profile_selection.csv` 的 `outcome` 会区分正常选中、候选均不合格和缺少训练数据。
+`profile_selection.csv` 的 `outcome` 会区分正常选中和没有合格全局阈值；清单没有
+训练数据时脚本会在运行候选前直接停止。
 
 调优脚本在 Linux 上从 `/sys/devices/system/cpu/cpu0/cache/` 自动读取 L1/L2
 容量和 cache line 大小，并从 `/proc/sys/abi/sme_default_vector_length` 读取
 streaming VL；读取失败时必须显式提供实测值。距离和 KEEP/STRM 在 Profile 中保持
-`0/AUTO`，表示由 Pass 根据每个函数的分析结果计算，而不是未设置的默认值。实测
-只选择各类 stencil 是否启用 current-L1、row-L1、plane-L1、plane-L2，并把 mask
-写入最终 Profile。所有有效硬件输入会写入 `hardware_metadata.txt`。用例清单不再保存
+`0/AUTO`，表示由 Pass 根据每个函数的分析结果计算。实测从 Pass 输出的 score 自动
+构造全局阈值边界，并只选择一个适用于全部 stencil 的最低收益阈值，不生成算子
+mask。所有有效硬件输入会写入 `hardware_metadata.txt`。用例清单不再保存
 row/plane/working-set 字节数，Pass 决策不依赖具体矩阵大小。
 
-搜索过程先使用 `server-sme.env.tuning`，类别选择成功后才原子替换
+搜索过程先使用 `server-sme.env.tuning`，全局阈值选择成功后才原子替换
 `server-sme.env`，中断不会破坏已有 Profile。
 
 `server-model.env` 是服务器本地模型输入，格式见 `server-model.env.example`。脚本
@@ -47,6 +48,5 @@ row/plane/working-set 字节数，Pass 决策不依赖具体矩阵大小。
 指令和字节预算再由实测流数、cache line 和 VL 推导。
 原始测量保存在 `05_runtime_validation/output/server-model-calibration/`。
 
-当前 Profile 对同一种 stencil 仍生成一套静态类别开关。分析模型使用流类型、直接
-复用证据、延迟距离和资源预算生成决策，不会按矩阵尺寸切换版本；联合调优负责关闭
-在已知 `s1/s2` 上不稳定或退化的流类别。
+当前 Profile 只保存硬件模型输入和一个全局收益阈值。分析模型使用流类型、复用
+证据、延迟距离和资源预算逐候选决策，不会按算子名称或矩阵尺寸切换版本。
