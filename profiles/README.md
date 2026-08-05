@@ -32,6 +32,7 @@
 步骤 04 还会生成 `decision_inventory.csv`、`threshold_diagnostics.csv` 和
 `diagnostic_report.md`。它们分别记录候选评分输入、threshold 与实际 PRFM/性能的
 关联，以及 score 碰撞、用例冲突和 0 预取测量异常等自动诊断。
+紧凑报告的 `SCORE` 行同时输出该分数组的距离范围 `D` 和策略 `P`。
 
 调优脚本在 Linux 上从 `/sys/devices/system/cpu/cpu0/cache/` 自动读取 L1/L2
 容量和 cache line 大小，并从 `/proc/sys/abi/sme_default_vector_length` 读取

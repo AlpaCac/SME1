@@ -380,19 +380,20 @@ decision_counts() {
   fi
   awk '
     /^StencilDecision:/ {
-      stream=level=enabled=""
+      stream=level=enabled=""; lines=1
       for (i=1; i<=NF; ++i) {
         split($i, pair, "=")
         if (pair[1] == "stream") stream=pair[2]
         else if (pair[1] == "level") level=pair[2]
         else if (pair[1] == "enable") enabled=pair[2]
+        else if (pair[1] == "prefetch-lines") lines=pair[2]
       }
       if (enabled != "yes") next
-      total++
-      if (stream == "current-row" && level == "L1") current_l1++
-      else if (stream == "row-neighbor" && level == "L1") row_l1++
-      else if (stream == "plane-neighbor" && level == "L1") plane_l1++
-      else if (stream == "plane-neighbor" && level == "L2") plane_l2++
+      total += lines
+      if (stream == "current-row" && level == "L1") current_l1 += lines
+      else if (stream == "row-neighbor" && level == "L1") row_l1 += lines
+      else if (stream == "plane-neighbor" && level == "L1") plane_l1 += lines
+      else if (stream == "plane-neighbor" && level == "L2") plane_l2 += lines
     }
     END { print total+0, current_l1+0, row_l1+0, plane_l1+0, plane_l2+0 }
   ' "${pass_log}"
@@ -506,18 +507,27 @@ mv "${profile_work_file}" "${profile_file}"
     "${diagnostic_zero_prefetch_tolerance}"
   awk -F, 'NR > 1 {
       score=$7; candidates[score]++
-      signatures[score SUBSEP $3 ":" $4]=1
+      signatures[score SUBSEP $3 ":" $4 ":" $5 ":" $6]=1
       kinds[score SUBSEP $2]=1
+      policies[score SUBSEP $6]=1
+      if (!(score in min_distance) || $5 < min_distance[score]) min_distance[score]=$5
+      if (!(score in max_distance) || $5 > max_distance[score]) max_distance[score]=$5
       if (!(score in min_confidence) || $8 < min_confidence[score]) min_confidence[score]=$8
       if (!(score in max_confidence) || $8 > max_confidence[score]) max_confidence[score]=$8
     }
     END {
       for (score in candidates) {
-        signature_count=kind_count=0
+        signature_count=kind_count=policy_count=0; policy=""
         for (key in signatures) { split(key, part, SUBSEP); if (part[1] == score) signature_count++ }
         for (key in kinds) { split(key, part, SUBSEP); if (part[1] == score) kind_count++ }
-        printf "SCORE S=%s N=%d ST=%d K=%d C=%s-%s\n", score, candidates[score],
-               signature_count, kind_count, min_confidence[score], max_confidence[score]
+        for (key in policies) {
+          split(key, part, SUBSEP)
+          if (part[1] == score) { policy_count++; policy=part[2] }
+        }
+        if (policy_count > 1) policy="MIX"
+        printf "SCORE S=%s N=%d ST=%d K=%d C=%s-%s D=%s-%s P=%s\n", score,
+               candidates[score], signature_count, kind_count, min_confidence[score],
+               max_confidence[score], min_distance[score], max_distance[score], policy
       }
     }' "${decision_inventory_csv}" | sort -t= -k2,2n
   awk -F, 'NR > 1 {
@@ -540,7 +550,7 @@ mv "${profile_work_file}" "${profile_file}"
           printf "ALERT N T=%s P=%s R=%s\n", $1, $2, $13
       }' "${threshold_diagnostics_csv}"
     awk -F, 'NR > 1 {
-        score=$7; signatures[score SUBSEP $3 ":" $4]=1
+        score=$7; signatures[score SUBSEP $3 ":" $4 ":" $5 ":" $6]=1
       }
       END {
         for (score_key in signatures) {
@@ -554,7 +564,7 @@ mv "${profile_work_file}" "${profile_file}"
   if [[ "${finding_count}" -eq 0 ]]; then
     printf 'ALERT NONE\n'
   fi
-  printf 'LEGEND F=cur/row/pL1/pL2 C=improve/neutral/regress\n'
+  printf 'LEGEND F=cur/row/pL1/pL2 C=improve/neutral/regress D=distance P=policy\n'
   printf 'ALERT Z=zero-drift M=count-mismatch X=mixed-cases N=no-gain C=score-collision\n'
 } > "${diagnostic_report}"
 

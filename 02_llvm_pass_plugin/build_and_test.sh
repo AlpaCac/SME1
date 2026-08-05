@@ -115,6 +115,8 @@ override_ir="${build_dir}/stencil_kernels.profile-override.ll"
 override_log="${output_dir}/profile_override_run.log"
 profit_reject_ir="${build_dir}/stencil_kernels.profit-reject.ll"
 profit_reject_log="${output_dir}/profit_reject_run.log"
+stage_overlap_ir="${build_dir}/stencil_kernels.stage-overlap.ll"
+stage_overlap_log="${output_dir}/stage_overlap_run.log"
 negative_ir="${script_dir}/tests/non_stencil.ll"
 negative_after_ir="${build_dir}/non_stencil.after.ll"
 negative_log="${output_dir}/negative_run.log"
@@ -153,7 +155,12 @@ run_pass "${kernel_ir}" "${after_ir}" "${pass_log}"
 
 recognized_count="$(grep -c '^StencilAnalysis:' "${pass_log}" || true)"
 decision_count="$(grep -c '^StencilDecision:' "${pass_log}" || true)"
-enabled_count="$(grep '^StencilDecision:' "${pass_log}" | grep -c 'enable=yes' || true)"
+enabled_count="$(awk '/^StencilDecision:/ && /enable=yes/ {
+  lines=1
+  for (i=1; i<=NF; ++i)
+    if ($i ~ /^prefetch-lines=/) { split($i, pair, "="); lines=pair[2] }
+  total += lines
+} END { print total+0 }' "${pass_log}")"
 inserted_count="$(grep -c '^StencilPrefetchInsert:' "${pass_log}" || true)"
 prefetch_count="$(grep -c 'call void @llvm.aarch64.prefetch' "${after_ir}" || true)"
 if [[ "${require_recognized}" == "1" && "${recognized_count}" -eq 0 ]]; then
@@ -170,6 +177,17 @@ if [[ "${inserted_count}" -ne "${enabled_count}" || \
     "${enabled_count}" "${inserted_count}" "${prefetch_count}" >&2
   grep '^StencilPrefetchInsertReject:' "${pass_log}" >&2 || true
   printf 'insertion log: %s\n' "${pass_log}" >&2
+  exit 1
+fi
+if grep '^StencilDecision:' "${pass_log}" | \
+    grep -q 'stream=plane-neighbor.*enable=yes.*policy=KEEP'; then
+  printf 'AUTO policy kept a plane with an unproven outer-loop reuse window\n' >&2
+  exit 1
+fi
+if grep '^StencilDecision:' "${pass_log}" | grep -q 'enable=yes' && \
+   ! grep -q '^StencilDecision:.*enable=yes.*transfer-latency=.*iteration-cycles=.*prefetch-lines=' \
+     "${pass_log}"; then
+  printf 'enabled decision is missing distance-model diagnostics\n' >&2
   exit 1
 fi
 
@@ -196,23 +214,18 @@ if [[ "${assembly_prefetch_count}" -ne "${prefetch_count}" ]]; then
     "${assembly_prefetch_count}" "${prefetch_count}" >&2
   exit 1
 fi
-if grep -Eq 'br i1 %prefetch\.in\.range' "${after_ir}"; then
-  printf 'prefetch tail handling unexpectedly introduced control flow\n' >&2
+if ! grep -Eq 'br i1 %prefetch\.in\.range' "${after_ir}"; then
+  printf 'prefetch tail handling is not conditionally suppressing PRFM\n' >&2
   exit 1
 fi
-if ! grep -Eq 'select i1 %prefetch\.in\.range' "${after_ir}"; then
-  printf 'prefetch tail handling is not using branchless safe addresses\n' >&2
+if grep -Eq 'select i1 %prefetch\.in\.range' "${after_ir}"; then
+  printf 'prefetch tail handling still redirects an out-of-range PRFM\n' >&2
   exit 1
 fi
-safe_address_count="$(grep -Ec 'select i1 %prefetch\.in\.range' "${after_ir}" || true)"
 guard_count="$(grep -Ec 'prefetch\.in\.range[^ ]* = icmp' "${after_ir}" || true)"
-if [[ "${safe_address_count}" -ne "${prefetch_count}" ]]; then
-  printf 'branchless safe-address count (%s) does not match prefetch count (%s)\n' \
-    "${safe_address_count}" "${prefetch_count}" >&2
-  exit 1
-fi
-if [[ "${prefetch_count}" -gt 1 && "${guard_count}" -ge "${prefetch_count}" ]]; then
-  printf 'prefetch bounds were not shared across equal-distance streams\n' >&2
+if [[ "${guard_count}" -eq 0 || "${guard_count}" -gt "${prefetch_count}" ]]; then
+  printf 'conditional prefetch guard count (%s) is invalid for %s prefetches\n' \
+    "${guard_count}" "${prefetch_count}" >&2
   exit 1
 fi
 
@@ -248,7 +261,12 @@ if ! grep -q '^StencilDecision:.*stream=row-neighbor.*enable=yes.*distance=6.*po
   printf 'global model override did not affect row decisions\n' >&2
   exit 1
 fi
-if ! grep -q '^StencilDecisionProfile:.*assumed-vl=128.*policy-model=physical-stream-reuse.*capacity-model=prefetch-frontier.*min-profit=0.*min-confidence=0' \
+if ! grep -q '^StencilDecision:.*stream=row-neighbor.*enable=yes.*prefetch-lines=2' \
+    "${override_log}"; then
+  printf 'streaming VL did not expand a decision to all cache lines\n' >&2
+  exit 1
+fi
+if ! grep -q '^StencilDecisionProfile:.*assumed-vl=128.*policy-model=cache-line-reuse.*capacity-model=prefetch-frontier.*min-profit=0.*min-confidence=0' \
     "${override_log}"; then
   printf 'profile hardware override was not applied\n' >&2
   exit 1
@@ -260,6 +278,17 @@ if grep -q 'call void @llvm.aarch64.prefetch' "${profit_reject_ir}" ||
    ! grep -q '^StencilDecision:.*enable=no.*reason=Unprofitable' \
      "${profit_reject_log}"; then
   printf 'global profitability threshold did not reject candidates\n' >&2
+  exit 1
+fi
+
+SME_PREFETCH_DISTANCE_PLANE_L1=4 \
+SME_PREFETCH_DISTANCE_PLANE_L2=4 \
+SME_PREFETCH_MIN_CONFIDENCE=0 \
+SME_PREFETCH_MIN_PROFIT_SCORE=-999999 \
+  run_pass "${kernel_ir}" "${stage_overlap_ir}" "${stage_overlap_log}"
+if ! grep -q '^StencilDecision:.*stream=plane-neighbor.*enable=no.*level=L2.*reason=StageOverlapReject' \
+    "${stage_overlap_log}"; then
+  printf 'overlapping L1/L2 plane stages were not rejected\n' >&2
   exit 1
 fi
 

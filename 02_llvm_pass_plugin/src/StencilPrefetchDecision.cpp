@@ -5,6 +5,7 @@
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
@@ -97,17 +98,66 @@ uint64_t effectiveCapacity(const TargetPrefetchProfile &Profile,
   return 0;
 }
 
-unsigned latencyFor(const TargetPrefetchProfile &Profile, CacheLevel Level) {
-  if (Level == CacheLevel::L1)
-    return Profile.L1PrefetchLatencyCycles;
-  if (Level == CacheLevel::L2)
-    return Profile.L2PrefetchLatencyCycles;
+unsigned transferLatencyFor(const TargetPrefetchProfile &Profile,
+                            CacheLevel Level) {
+  if (Level == CacheLevel::L1) {
+    unsigned Promotion = Profile.L2PrefetchLatencyCycles >
+                                 Profile.L1PrefetchLatencyCycles
+                             ? Profile.L2PrefetchLatencyCycles -
+                                   Profile.L1PrefetchLatencyCycles
+                             : 0;
+    return std::max(Profile.L1PrefetchLatencyCycles, Promotion);
+  }
+  if (Level == CacheLevel::L2) {
+    unsigned Promotion =
+        Profile.MemoryLatencyCycles > Profile.L2PrefetchLatencyCycles
+            ? Profile.MemoryLatencyCycles - Profile.L2PrefetchLatencyCycles
+            : 0;
+    return std::max(Profile.L2PrefetchLatencyCycles, Promotion);
+  }
   return Profile.MemoryLatencyCycles;
 }
 
+unsigned referenceLoadCount(StencilKind Kind) {
+  if (is1D(Kind))
+    return 3;
+  return is2D(Kind) ? 5 : 7;
+}
+
 unsigned usefulCycles(const TargetPrefetchProfile &Profile,
-                      StencilKind Kind) {
-  return is3D(Kind) ? Profile.UsefulCycles3D : Profile.UsefulCycles2D;
+                      const StencilInfo &Stencil) {
+  unsigned Base = is3D(Stencil.Kind) ? Profile.UsefulCycles3D
+                                     : Profile.UsefulCycles2D;
+  uint64_t Scaled = static_cast<uint64_t>(std::max(1U, Base)) *
+                    std::max(1U, Stencil.LogicalLoadCount);
+  return static_cast<unsigned>(std::min<uint64_t>(
+      divideCeil(Scaled, uint64_t{referenceLoadCount(Stencil.Kind)}),
+      std::numeric_limits<unsigned>::max()));
+}
+
+unsigned directCacheLineReuse(const StreamInfo &Stream, ScalarEvolution &SE,
+                              uint64_t CacheLineBytes) {
+  if (!Stream.RepresentativePointer || CacheLineBytes == 0)
+    return 1;
+
+  const SCEV *Representative = SE.getSCEV(Stream.RepresentativePointer);
+  DenseMap<int64_t, unsigned> LoadsPerLine;
+  unsigned Best = 1;
+  for (const CallBase *Load : Stream.Loads) {
+    const SCEV *Pointer = SE.getSCEV(Load->getArgOperand(0));
+    const auto *Offset = dyn_cast<SCEVConstant>(
+        SE.getMinusSCEV(Pointer, Representative));
+    if (!Offset || !Offset->getAPInt().isSignedIntN(64))
+      continue;
+    int64_t Bytes = Offset->getAPInt().sextOrTrunc(64).getSExtValue();
+    int64_t Line = Bytes >= 0
+                       ? Bytes / static_cast<int64_t>(CacheLineBytes)
+                       : -static_cast<int64_t>(divideCeil(
+                             static_cast<uint64_t>(-(Bytes + 1)) + 1,
+                             CacheLineBytes));
+    Best = std::max(Best, ++LoadsPerLine[Line]);
+  }
+  return Best;
 }
 
 unsigned estimatedTripCount(const StencilInfo &Stencil, ScalarEvolution &SE,
@@ -145,10 +195,11 @@ PrefetchDecision makeDecision(const StencilInfo &Stencil,
   Decision.Stream = &Stream;
   Decision.Level = Level;
 
-  unsigned Cycles = std::max(1U, usefulCycles(Profile, Stencil.Kind));
+  unsigned Cycles = std::max(1U, usefulCycles(Profile, Stencil));
+  unsigned TransferLatency = transferLatencyFor(Profile, Level);
   unsigned RawDistance = distanceOverride(Profile, Stream.Kind, Level);
   if (RawDistance == 0)
-    RawDistance = divideCeil(latencyFor(Profile, Level), Cycles);
+    RawDistance = divideCeil(TransferLatency, Cycles);
   unsigned TripCount = estimatedTripCount(Stencil, SE, Profile);
   if (TripCount != 0 && TripCount <= 2 * RawDistance) {
     Decision.Reason = DecisionReason::ShortTripCount;
@@ -167,14 +218,21 @@ PrefetchDecision makeDecision(const StencilInfo &Stencil,
       LineIterations);
 
   Decision.DistanceIterations = Distance;
+  Decision.TransferLatencyCycles = TransferLatency;
+  Decision.IterationCycles = Cycles;
+  Decision.PrefetchLines = static_cast<unsigned>(
+      divideCeil(Profile.AssumedStreamingVLBytes,
+                 std::max<uint64_t>(1, Profile.CacheLineBytes)));
+  Decision.ElementsPerCacheLine = static_cast<unsigned>(divideCeil(
+      Profile.CacheLineBytes, uint64_t{std::max(1U, Stencil.ElementBytes)}));
   Decision.LiveBytes = Distance * Profile.AssumedStreamingVLBytes;
-  // Physical-stream deduplication groups loads that consume the same advancing
-  // address stream. Multiple grouped loads are direct reuse evidence available
-  // in LLVM IR; a row or plane byte size is neither required nor guessed.
-  Decision.ReuseCount = std::max<unsigned>(1, Stream.Loads.size());
+  Decision.ReuseCount = directCacheLineReuse(
+      Stream, SE, std::max<uint64_t>(1, Profile.CacheLineBytes));
   Decision.Policy = Decision.ReuseCount > 1 ? LocalityPolicy::Keep
                                              : LocalityPolicy::Stream;
-  if (isPlaneStream(Stream.Kind) && Level == CacheLevel::L1)
+  // LLVM IR does not prove that a plane remains resident until its outer-loop
+  // reuse. Streaming is safer than polluting L1 or L2 with an unknown plane.
+  if (isPlaneStream(Stream.Kind))
     Decision.Policy = LocalityPolicy::Stream;
   unsigned PolicyOverride = policyOverride(Profile, Stream.Kind, Level);
   if (PolicyOverride == 1)
@@ -182,12 +240,17 @@ PrefetchDecision makeDecision(const StencilInfo &Stencil,
   else if (PolicyOverride == 2)
     Decision.Policy = LocalityPolicy::Stream;
 
-  Decision.HiddenCycles =
-      std::min(latencyFor(Profile, Level), Distance * Cycles);
+  Decision.ConfidencePercent = TripCount == 0 ? 70 : 100;
+  if (Level == CacheLevel::L2)
+    Decision.ConfidencePercent =
+        Decision.ConfidencePercent > 10 ? Decision.ConfidencePercent - 10 : 0;
+  Decision.HiddenCycles = std::min(TransferLatency, Distance * Cycles);
   unsigned ReuseMultiplier =
       100 + 25 * (std::min(Decision.ReuseCount, 4U) - 1);
-  Decision.BenefitScore =
+  uint64_t UnadjustedBenefit =
       static_cast<uint64_t>(Decision.HiddenCycles) * ReuseMultiplier / 100;
+  Decision.BenefitScore =
+      UnadjustedBenefit * Decision.ConfidencePercent / 100;
 
   uint64_t Capacity = std::max<uint64_t>(1, effectiveCapacity(Profile, Level));
   uint64_t PressurePercent = divideCeil(Decision.LiveBytes * 100, Capacity);
@@ -205,10 +268,6 @@ PrefetchDecision makeDecision(const StencilInfo &Stencil,
 
   Decision.ProfitScore = static_cast<int64_t>(Decision.BenefitScore) -
                          static_cast<int64_t>(Decision.CostScore);
-  Decision.ConfidencePercent = TripCount == 0 ? 70 : 100;
-  if (Level == CacheLevel::L2)
-    Decision.ConfidencePercent =
-        Decision.ConfidencePercent > 10 ? Decision.ConfidencePercent - 10 : 0;
   return Decision;
 }
 
@@ -260,6 +319,24 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
       AddCandidate(CacheLevel::L2);
   }
 
+  DenseMap<const StreamInfo *, unsigned> L1Distances;
+  for (const Candidate &C : Candidates) {
+    if (C.Decision.Level == CacheLevel::L1 &&
+        C.Decision.Reason != DecisionReason::ShortTripCount)
+      L1Distances[C.Decision.Stream] = C.Decision.DistanceIterations;
+  }
+  for (Candidate &C : Candidates) {
+    PrefetchDecision &Decision = C.Decision;
+    if (Decision.Level != CacheLevel::L2 ||
+        Decision.Reason == DecisionReason::ShortTripCount)
+      continue;
+    auto Near = L1Distances.find(Decision.Stream);
+    if (Near != L1Distances.end() &&
+        Decision.DistanceIterations <=
+            Near->second + Decision.PrefetchLines)
+      Decision.Reason = DecisionReason::StageOverlapReject;
+  }
+
   llvm::stable_sort(Candidates, [](const Candidate &A, const Candidate &B) {
     if (A.Decision.ProfitScore != B.Decision.ProfitScore)
       return A.Decision.ProfitScore > B.Decision.ProfitScore;
@@ -279,14 +356,13 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
   uint64_t L2Used = 0;
   uint64_t InstructionCount = 0;
   uint64_t PrefetchBytes = 0;
-  uint64_t LinesPerVector =
-      divideCeil(Profile.AssumedStreamingVLBytes, Profile.CacheLineBytes);
   SmallPtrSet<const StreamInfo *, 8> AdmittedStreams;
 
   SmallVector<PrefetchDecision, 32> Results;
   for (Candidate &Candidate : Candidates) {
     PrefetchDecision &Decision = Candidate.Decision;
-    if (Decision.Reason == DecisionReason::ShortTripCount) {
+    if (Decision.Reason == DecisionReason::ShortTripCount ||
+        Decision.Reason == DecisionReason::StageOverlapReject) {
       Results.push_back(Decision);
       continue;
     }
@@ -317,13 +393,14 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
       Results.push_back(Decision);
       continue;
     }
-    if (InstructionCount + LinesPerVector >
+    if (InstructionCount + Decision.PrefetchLines >
         Profile.MaxPrefetchInstructionsPerIteration) {
       Decision.Reason = DecisionReason::InstructionBudgetReject;
       Results.push_back(Decision);
       continue;
     }
-    uint64_t CandidateBytes = LinesPerVector * Profile.CacheLineBytes;
+    uint64_t CandidateBytes =
+        Decision.PrefetchLines * Profile.CacheLineBytes;
     if (PrefetchBytes + CandidateBytes >
         Profile.MaxPrefetchBytesPerIteration) {
       Decision.Reason = DecisionReason::BandwidthReject;
@@ -334,7 +411,7 @@ decidePrefetches(const StencilInfo &Stencil, ScalarEvolution &SE,
     Decision.Enable = true;
     Decision.Reason = DecisionReason::Admitted;
     LevelUsed += Decision.LiveBytes;
-    InstructionCount += LinesPerVector;
+    InstructionCount += Decision.PrefetchLines;
     PrefetchBytes += CandidateBytes;
     AdmittedStreams.insert(Decision.Stream);
     Results.push_back(Decision);
@@ -350,7 +427,6 @@ bool insertPrefetches(const StencilInfo &Stencil,
   if (!FirstLoad || !TailPredicate || TailPredicate->arg_size() < 2)
     return false;
 
-  (void)LI;
   Module *M = FirstLoad->getModule();
   Function *Prefetch =
       Intrinsic::getDeclaration(M, Intrinsic::aarch64_prefetch);
@@ -359,7 +435,6 @@ bool insertPrefetches(const StencilInfo &Stencil,
   if (!LoadVectorType)
     return false;
   Type *ElementType = LoadVectorType->getElementType();
-  DenseMap<unsigned, std::pair<Value *, Value *>> GuardsByDistance;
   bool Changed = false;
 
   for (const PrefetchDecision &Decision : Decisions) {
@@ -388,72 +463,83 @@ bool insertPrefetches(const StencilInfo &Stencil,
       }
     }
 
-    Value *ScaledStep = nullptr;
-    Value *InBounds = nullptr;
-    auto ExistingGuard = GuardsByDistance.find(Decision.DistanceIterations);
-    if (ExistingGuard != GuardsByDistance.end() &&
-        DT.dominates(cast<Instruction>(ExistingGuard->second.second),
-                     AnchorLoad)) {
-      ScaledStep = ExistingGuard->second.first;
-      InBounds = ExistingGuard->second.second;
-    } else {
-      auto IsAvailableAt = [&](Value *V, Instruction *At) {
-        auto *Definition = dyn_cast<Instruction>(V);
-        return !Definition || DT.dominates(Definition, At);
-      };
-      Instruction *GuardAnchor = AnchorLoad;
-      if (IsAvailableAt(Stencil.VectorStep, FirstLoad) &&
-          IsAvailableAt(TailPredicate->getArgOperand(0), FirstLoad) &&
-          IsAvailableAt(TailPredicate->getArgOperand(1), FirstLoad))
-        GuardAnchor = FirstLoad;
+    IRBuilder<> GuardBuilder(AnchorLoad);
+    Value *ScaledStep = GuardBuilder.CreateMul(
+        Stencil.VectorStep,
+        ConstantInt::get(IndexType, Decision.DistanceIterations),
+        "prefetch.step");
+    uint64_t ElementsPerLine = std::max(1U, Decision.ElementsPerCacheLine);
+    uint64_t LastLineOffset =
+        (std::max(1U, Decision.PrefetchLines) - 1) * ElementsPerLine;
+    Value *CompareAdvance = ScaledStep;
+    if (LastLineOffset != 0)
+      CompareAdvance = GuardBuilder.CreateAdd(
+          CompareAdvance, ConstantInt::get(IndexType, LastLineOffset),
+          "prefetch.last.line");
+    bool IsSignedTail =
+        hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.");
+    Type *TailIndexType = TailPredicate->getArgOperand(0)->getType();
+    Value *CompareStep = CompareAdvance;
+    if (CompareStep->getType() != TailIndexType)
+      CompareStep = GuardBuilder.CreateZExtOrTrunc(
+          CompareStep, TailIndexType, "prefetch.compare.step");
+    Value *CompareX = GuardBuilder.CreateAdd(
+        TailPredicate->getArgOperand(0), CompareStep, "prefetch.compare.x");
+    Value *InBounds =
+        IsSignedTail
+            ? GuardBuilder.CreateICmpSLT(CompareX,
+                                         TailPredicate->getArgOperand(1),
+                                         "prefetch.in.range")
+            : GuardBuilder.CreateICmpULT(CompareX,
+                                         TailPredicate->getArgOperand(1),
+                                         "prefetch.in.range");
 
-      IRBuilder<> GuardBuilder(GuardAnchor);
-      ScaledStep = GuardBuilder.CreateMul(
-          Stencil.VectorStep,
-          ConstantInt::get(IndexType, Decision.DistanceIterations),
-          "prefetch.step");
-      bool IsSignedTail =
-          hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.");
-      Type *TailIndexType = TailPredicate->getArgOperand(0)->getType();
-      Value *CompareStep = ScaledStep;
-      if (CompareStep->getType() != TailIndexType)
-        CompareStep = GuardBuilder.CreateZExtOrTrunc(
-            CompareStep, TailIndexType, "prefetch.compare.step");
-      Value *CompareX = GuardBuilder.CreateAdd(
-          TailPredicate->getArgOperand(0), CompareStep, "prefetch.compare.x");
-      InBounds = IsSignedTail
-                     ? GuardBuilder.CreateICmpSLT(
-                           CompareX, TailPredicate->getArgOperand(1),
-                           "prefetch.in.range")
-                     : GuardBuilder.CreateICmpULT(
-                           CompareX, TailPredicate->getArgOperand(1),
-                           "prefetch.in.range");
-      GuardsByDistance[Decision.DistanceIterations] =
-          std::make_pair(ScaledStep, InBounds);
+    BasicBlock *GuardBlock = AnchorLoad->getParent();
+    Function *F = GuardBlock->getParent();
+    Loop *ContainingLoop = LI.getLoopFor(GuardBlock);
+    BasicBlock *ContinueBlock =
+        GuardBlock->splitBasicBlock(AnchorLoad, "prefetch.cont");
+    BasicBlock *PrefetchBlock =
+        BasicBlock::Create(M->getContext(), "prefetch.issue", F,
+                           ContinueBlock);
+    GuardBlock->getTerminator()->eraseFromParent();
+    IRBuilder<> BranchBuilder(GuardBlock);
+    BranchBuilder.CreateCondBr(InBounds, PrefetchBlock, ContinueBlock);
+
+    IRBuilder<> PrefetchBuilder(PrefetchBlock);
+    for (unsigned Line = 0; Line < std::max(1U, Decision.PrefetchLines);
+         ++Line) {
+      uint64_t LineOffset = static_cast<uint64_t>(Line) * ElementsPerLine;
+      Value *AddressStep = ScaledStep;
+      if (LineOffset != 0)
+        AddressStep = PrefetchBuilder.CreateAdd(
+            AddressStep, ConstantInt::get(IndexType, LineOffset),
+            "prefetch.line.step");
+      Value *FutureAddress = PrefetchBuilder.CreateGEP(
+          ElementType, Decision.Stream->RepresentativePointer, AddressStep,
+          "prefetch.addr");
+      PrefetchBuilder.CreateCall(
+          Prefetch,
+          {FutureAddress, PrefetchBuilder.getInt32(0),
+           PrefetchBuilder.getInt32(static_cast<unsigned>(Decision.Level)),
+           PrefetchBuilder.getInt32(
+               Decision.Policy == LocalityPolicy::Stream ? 1 : 0),
+           PrefetchBuilder.getInt32(1)});
+      errs() << "StencilPrefetchInsert: function=" << F->getName()
+             << " stream=" << toString(Decision.Stream->Kind)
+             << " distance=" << Decision.DistanceIterations
+             << " line=" << Line
+             << " level=" << toString(Decision.Level)
+             << " policy=" << toString(Decision.Policy)
+             << " guard=conditional\n";
     }
-
-    IRBuilder<> PrefetchBuilder(AnchorLoad);
-
-    Value *FutureAddress = PrefetchBuilder.CreateGEP(
-        ElementType, Decision.Stream->RepresentativePointer, ScaledStep,
-        "prefetch.addr");
-    Value *Address = PrefetchBuilder.CreateSelect(
-        InBounds, FutureAddress, Decision.Stream->RepresentativePointer,
-        "prefetch.safe.addr");
-    PrefetchBuilder.CreateCall(
-        Prefetch,
-        {Address, PrefetchBuilder.getInt32(0),
-         PrefetchBuilder.getInt32(static_cast<unsigned>(Decision.Level)),
-         PrefetchBuilder.getInt32(
-             Decision.Policy == LocalityPolicy::Stream ? 1 : 0),
-         PrefetchBuilder.getInt32(1)});
-    errs() << "StencilPrefetchInsert: function="
-           << AnchorLoad->getFunction()->getName()
-           << " stream=" << toString(Decision.Stream->Kind)
-           << " distance=" << Decision.DistanceIterations
-           << " level=" << toString(Decision.Level)
-           << " policy=" << toString(Decision.Policy)
-           << " guard=branchless-select\n";
+    PrefetchBuilder.CreateBr(ContinueBlock);
+    if (ContainingLoop) {
+      if (!LI.getLoopFor(ContinueBlock))
+        ContainingLoop->addBasicBlockToLoop(ContinueBlock, LI);
+      ContainingLoop->addBasicBlockToLoop(PrefetchBlock, LI);
+    }
+    DT.recalculate(*F);
     Changed = true;
   }
   return Changed;
@@ -493,6 +579,8 @@ const char *toString(DecisionReason Reason) {
     return "InstructionBudgetReject";
   case DecisionReason::BandwidthReject:
     return "BandwidthReject";
+  case DecisionReason::StageOverlapReject:
+    return "StageOverlapReject";
   }
   return "unknown";
 }

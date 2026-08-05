@@ -50,8 +50,10 @@ SME_PREFETCH_USEFUL_CYCLES_2D / SME_PREFETCH_USEFUL_CYCLES_3D
 SME_PREFETCH_MAX_DISTANCE
 ```
 
-这些量用于归一化距离和预取前沿容量。KEEP/STRM 根据去重后物理流的直接复用证据
-决定，不读取或猜测具体 row/plane 大小。不能把一台机器生成的硬件值直接复制到
+这些量用于推导层级传输延迟、按逻辑 load 数缩放迭代周期，并计算预取前沿容量。
+KEEP/STRM 根据 SCEV 可证明的 cache-line 内直接复用决定；缺少外层驻留证据的
+plane-L1/L2 在 AUTO 下均使用 STRM。模型不读取或猜测具体 row/plane 大小。
+不能把一台机器生成的硬件值直接复制到
 另一台机器。
 
 ## 构建与运行

@@ -228,7 +228,7 @@ public:
              << " profile=" << Profile.Name
              << " cache-line=" << Profile.CacheLineBytes
              << " assumed-vl=" << Profile.AssumedStreamingVLBytes
-             << " policy-model=physical-stream-reuse"
+             << " policy-model=cache-line-reuse"
              << " capacity-model=prefetch-frontier"
              << " max-streams=" << Profile.MaxPrefetchStreams
              << " min-profit=" << Profile.MinProfitScore
@@ -249,6 +249,9 @@ public:
                << " distance=" << Decision.DistanceIterations
                << " level=" << sme1::toString(Decision.Level)
                << " policy=" << sme1::toString(Decision.Policy)
+               << " transfer-latency=" << Decision.TransferLatencyCycles
+               << " iteration-cycles=" << Decision.IterationCycles
+               << " prefetch-lines=" << Decision.PrefetchLines
                << " live-bytes=" << Decision.LiveBytes
                << " reuse-count=" << Decision.ReuseCount
                << " hidden-cycles=" << Decision.HiddenCycles

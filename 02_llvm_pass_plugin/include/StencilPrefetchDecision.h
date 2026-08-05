@@ -36,6 +36,7 @@ enum class DecisionReason {
   StreamBudgetReject,
   InstructionBudgetReject,
   BandwidthReject,
+  StageOverlapReject,
 };
 
 struct TargetPrefetchProfile {
@@ -76,6 +77,10 @@ struct PrefetchDecision {
   const StreamInfo *Stream = nullptr;
   bool Enable = false;
   unsigned DistanceIterations = 0;
+  unsigned TransferLatencyCycles = 0;
+  unsigned IterationCycles = 0;
+  unsigned PrefetchLines = 1;
+  unsigned ElementsPerCacheLine = 1;
   CacheLevel Level = CacheLevel::L1;
   LocalityPolicy Policy = LocalityPolicy::Stream;
   DecisionReason Reason = DecisionReason::Admitted;

@@ -99,15 +99,17 @@ StreamInfo {
 
 ```text
 d_iterations(stream, level)
-  = ceil(latency_cycles(level)
-         / useful_cycles_per_vector_iteration)
+  = ceil(transfer_latency_cycles(source -> level)
+         / scaled_cycles_per_vector_iteration)
 ```
 
 其中：
 
 - `d_iterations`：预取领先真实 load 的向量迭代次数。
-- `latency_cycles(level)`：从预计数据来源到目标 cache 层级的延迟。
-- `useful_cycles_per_vector_iteration`：一次向量迭代可用于隐藏延迟的计算周期。
+- `transfer_latency_cycles`：由相邻层级命中延迟差推导的数据提升时间；L1 使用
+  L2 -> L1，L2 warming 使用 memory -> L2，而不是直接套用目标层命中延迟。
+- `scaled_cycles_per_vector_iteration`：以最小 2D/3D stencil 的实测周期为基准，
+  按当前循环的逻辑 load 数量缩放，避免 5P/9P 和 7P/27P 共用同一周期。
 - `ceil`：向上取整，避免静态提前时间低于目标延迟。
 
 该公式对一个“物理流 + 目标 cache 层级”直接产生一个具体距离；这里的“距离候选”
@@ -126,15 +128,15 @@ streaming vector length 固定为编译期常量，而是复用 IR 中的可伸�
 距离候选必须满足：
 
 ```text
-latency_cycles > 0
-useful_cycles_per_vector_iteration > 0
+transfer_latency_cycles > 0
+scaled_cycles_per_vector_iteration > 0
 d_iterations >= 1
 future_x < inner_loop_end
 inner_trip_count > 2 * d_iterations
 ```
 
-如果无法静态证明未来地址仍在合法范围，Pass 必须用运行时条件选择未来地址或当前
-有效地址，或者拒绝该候选；不能生成带 `inbounds` 承诺的越界未来地址。
+如果无法静态证明未来地址仍在合法范围，Pass 必须用运行时条件跳过越界
+`PRFM`，或者拒绝该候选；不能生成带 `inbounds` 承诺的越界未来地址。
 
 ### 2.4 Cache 层级模型
 
@@ -177,13 +179,14 @@ policy(stream, level)
 
 当前原则：
 
-1. 去重后只有一个逻辑 load 的单调流选择 STRM。
-2. 同一物理流在当前循环体内被多个逻辑 load 消费时选择 KEEP。
+1. 去重后只有一个 cache-line 内逻辑 load 的单调流选择 STRM。
+2. 只有 SCEV 能证明多个 load 位于同一 cache line 时，row/current 流才选择 KEEP。
 3. 2D9P 和 3D27P 的同一物理流包含更多相邻逻辑 load，复用计数高于 5P/star
    中的单邻居流。
 4. 不能仅凭跨外层循环“可能再次出现”选择 KEEP，因为 LLVM IR 层尚未证明其复用
    窗口；这类平面流保守选择 STRM。
-5. plane-L1 强制 STRM；显式 Profile 覆盖仍可用于受控实验，但 AUTO 不猜测尺寸。
+5. plane-L1 和 plane-L2 均强制 STRM；显式 Profile 覆盖仍可用于受控实验，但
+   AUTO 不在缺少外层复用窗口和驻留证明时选择 KEEP。
 
 ### 2.6 联合决策
 
@@ -555,8 +558,8 @@ argument,kind,size_class,role,weight
 Pass 对每个结构候选计算：
 
 ```text
-hidden_cycles = min(target_latency, distance * useful_cycles)
-benefit = hidden_cycles * reuse_multiplier
+hidden_cycles = min(transfer_latency, distance * scaled_cycles)
+benefit = hidden_cycles * reuse_multiplier * confidence_percent / 100
 
 cost = issue_cost
      + cache_pressure_percent * cache_pressure_weight
@@ -567,7 +570,8 @@ profit_score = benefit - cost
 ```
 
 已知 trip count 的候选置信度为 100；未知 trip count 的候选降低为 70，L2 warming
-候选再降低 10。候选只有满足 `profit_score >= min_profit_score`、
+候选再降低 10。置信度不仅是准入门槛，还直接折减预测收益。候选只有满足
+`profit_score >= min_profit_score`、
 `confidence >= min_confidence`，并继续通过容量、流数、指令数和字节预算时才插入。
 
 `scripts/04_tune_server_profile.sh` 不再枚举 current/row/plane 类别组合，也不生成
@@ -741,9 +745,11 @@ relative_mad <= 0.03
 15. Pass 的 cache、VL、延迟、容量比例和距离覆盖接口；具体矩阵大小已移除。
 16. 服务器快速与正式调优临时脚本 `tmp0.sh` 至 `tmp3.sh`。
 17. 分析模型主导的距离、策略、收益和置信度决策与全局阈值写回。
-18. 预取尾部保护改为共享条件和 branchless safe-address select，不再为每条预取
-    拆分最内层循环控制流。
+18. 预取尾部使用条件发射，越界时真正跳过 `PRFM`，不再重定向为当前地址。
 19. 流、指令和字节预算改由目标机独立流 PMU 扫描测量，不再固定采用 17 条拓扑上限。
+20. 距离按层级传输延迟和循环逻辑 load 数缩放，置信度直接折减收益。
+21. plane-L1/L2 AUTO 策略均为 STRM，并拒绝距离重叠的 L1/L2 分级候选。
+22. streaming VL 跨越多条 cache line 时，一条决策发出对应数量的 `PRFM`。
 
 服务器当前待执行：
 
