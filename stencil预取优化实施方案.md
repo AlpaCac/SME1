@@ -110,6 +110,9 @@ d_iterations(stream, level)
 - `useful_cycles_per_vector_iteration`：一次向量迭代可用于隐藏延迟的计算周期。
 - `ceil`：向上取整，避免静态提前时间低于目标延迟。
 
+该公式对一个“物理流 + 目标 cache 层级”直接产生一个具体距离；这里的“距离候选”
+是指等待安全性和预算准入的一条模型决策，不是供调优脚本枚举的一组数值。
+
 转换为未来地址偏移：
 
 ```text
@@ -585,8 +588,10 @@ MAD 恒为 0，只能验证自动化链路，不能作为稳定性能结论。
 
 #### 3.8.4 硬件参数和结果复用
 
-调优脚本在 Linux sysfs 中自动读取 L1/L2 容量和 cache line。以下不能可靠自动
-推导的参数由 generic SME 默认值起步，也可通过 `SME_PREFETCH_*` 覆盖：
+调优脚本在 Linux sysfs 中读取 L1/L2 容量和 cache line，并从
+`/proc/sys/abi/sme_default_vector_length` 读取进程 exec 后采用的 streaming VL。
+任一硬件值无法读取时必须显式提供实测值，脚本不再静默回退。以下硬件与分析输入
+直接提供给分析模型，用于逐函数生成具体距离、策略和准入结果：
 
 ```text
 streaming VL
@@ -594,8 +599,22 @@ L1/L2/内存预取延迟
 L1/L2 有效容量占比
 代表性 row/plane 大小
 每次向量迭代的有效计算周期
-最大距离、流预算、指令预算和字节预算
+初始最大距离、流预算、指令预算和字节预算
 ```
+
+这些输入按来源分为三类：Cache 容量、cache line 和 streaming VL 从 Linux 接口
+自动读取；row/plane 大小从用例真实维度推导；latency 和 useful cycles 需要目标机
+微基准或 PMU 校准。容量比例与资源预算是模型约束，不是可从 sysfs 读取的硬件事实，
+必须在服务器模型文件中明确记录其依据和值。模板为
+`profiles/server-model.env.example`，本地结果写入被忽略的 `profiles/server-model.env`。
+任何必需输入缺失时步骤 4 直接停止，不再使用 generic SME 回退值。
+
+`scripts/calibrate_server_model.sh` 实现一次性自动校准：随机依赖加载在 L1、L2 和
+超过末级 cache 的工作集上通过 `perf_event_open` 测量 CPU cycles；代表性 2D5P
+和 3D7P SVE 循环测量每个向量迭代的有效周期。选择同维度中较轻的 stencil 是为了
+得到计算周期下界，避免距离模型低估所需提前量。L1/L2 有效容量按相联度各保留一个
+cache way，最大流数取当前支持算子的最大物理流拓扑 17，指令和字节预算再由
+`ceil(streaming_VL/cache_line)` 推导。PMU 不可访问时校准失败，不回退墙钟估算。
 
 清单提供非零 `row_bytes/plane_bytes` 时，脚本按训练权重形成代表值；显式环境变量
 优先级更高。所有有效参数同时用于候选编译、候选缓存签名和最终 Profile，避免
@@ -619,10 +638,16 @@ L1/L2 有效容量占比
 profiles/server-sme.env
 ```
 
-`server-sme.env` 按算子回写预取类别 mask，并保存距离、KEEP/STRM、硬件模型和预算。
-当前自动搜索负责类别组合；距离和策略默认写为 `0/AUTO`，表示继续采用第二部分的
-分析模型。Pass 已开放四类预取的距离和策略覆盖接口，后续可以在同一 Profile 中
-扫描，而不需要修改插入流程。
+`server-sme.env` 只按算子回写经过实测的预取类别 mask。距离保持 `0`、策略保持
+`AUTO`：这两个值是“启用分析模型”的控制语义，Pass 会对每个函数和每条物理流
+计算一个具体距离与策略。调优不再人为提供 `1 2 4 6 8` 或 `KEEP STRM` 等候选，
+也不枚举容量比例和资源预算；它只通过原 main/test 判断模型生成的 current-L1、
+row-L1、plane-L1、plane-L2 类别是否值得启用。因此分析模型是决策主体，实测是
+类别级验证和关闭机制。
+
+搜索期间先写 `server-sme.env.tuning`，类别选择成功后才原子替换最终 Profile，
+因此中断不会破坏已有结果。具体模型决策可在每次构建输出的 `pass_run.log` 中查看，
+其中包含 function、stream、distance、level、policy 和准入原因。
 
 `scripts/05_validate_tuned_profile.sh` 加载组合 Profile，重新执行清单中的全部正确性
 测试和性能采样。默认清单没有 `validate` 行，因此全部 `train` 场景共同决定性能
@@ -675,6 +700,7 @@ relative_mad <= 0.03
 14. 组合 Profile 的正确性与稳定性能复测。
 15. Pass 的 cache、VL、延迟、容量比例、row/plane 大小和距离覆盖接口。
 16. 服务器快速与正式调优临时脚本 `tmp0.sh` 至 `tmp3.sh`。
+17. 分析模型主导的距离/策略决策与类别级实测 Profile 写回。
 
 服务器当前待执行：
 
@@ -685,11 +711,10 @@ relative_mad <= 0.03
 
 后续工作：
 
-1. 对有效类别扫描距离和 KEEP/STRM。
-2. 为每种算子增加 L1、L2、DRAM 多规模用例，再恢复独立留出集。
-3. 在固定 CPU、频率和系统负载条件下复测。
-4. 有条件时加入 PMU 归因和多线程带宽测试。
-5. 若静态 Profile 无法跨规模稳定获益，实现 loop versioning 和运行时分派。
+1. 为每种算子增加 L1、L2、DRAM 多规模用例，再恢复独立留出集。
+2. 在固定 CPU、频率和系统负载条件下复测。
+3. 有条件时加入 PMU 归因和多线程带宽测试。
+4. 若静态 Profile 无法跨规模稳定获益，实现 loop versioning 和运行时分派。
 
 ### 3.10 服务器执行顺序
 
@@ -709,15 +734,15 @@ export BISHENG_CXX=/path/to/bisheng/bin/clang++
 随后按顺序执行：
 
 ```bash
-./scripts/tmp0.sh  # 0 次预热、1 个样本的快速调优
+./scripts/tmp0.sh  # 0 次预热、1 个样本的快速类别调优
 ./scripts/tmp1.sh  # 单样本链路和正确性检查，不执行正式性能门槛
 ./scripts/tmp2.sh  # 1 次预热、3 个样本的正式调优
 ./scripts/tmp3.sh  # 1 次预热、3 个样本的正式稳定性能复测
 ```
 
-默认清单下，`tmp0.sh` 执行 72 次训练程序；`tmp2.sh` 执行 288 次。最终验证还会
-运行原 main/test 的正确性阶段，因此 `tmp1.sh` 和 `tmp3.sh` 分别约执行 48 次和
-120 次程序。单个服务器 test 本身较大时，这些步骤仍可能持续较长时间。
+`tmp0.sh/tmp2.sh` 只执行预取类别消融，不再扫描距离、策略或资源参数。`tmp2.sh`
+默认启用候选签名复用，样本数或模型输入改变时会自动失效，因此中断后可以直接
+续跑。
 
 正式验收依次检查：
 

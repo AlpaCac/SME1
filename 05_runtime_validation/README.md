@@ -182,7 +182,8 @@ STENCIL_CPU=0 \
 `output/server-profile-final/profile_validation.csv`。
 
 迁移时必须先适配脚本中的编译器路径、插件扩展名、链接参数和目标特性。
-服务器 Profile 应在固定 CPU 亲和性、频率策略、streaming VL 和问题规模下，
-通过环境变量逐组覆盖距离、类别开关和预算后重新建立。Linux PMU 归因建议使用
-`perf` 或服务器厂商工具；本目录不再保留与当前完整模块入口脱节的旧扫描、消融、
-多线程脚本和固定 C ABI 驱动。
+服务器应先在固定 CPU 亲和性、频率策略和 streaming VL 下运行
+`scripts/calibrate_server_model.sh`，生成目标机模型输入；距离和 KEEP/STRM 由 Pass
+逐函数计算，不再通过环境变量网格扫描。随后步骤 4 只实测选择预取类别。进一步的
+Linux PMU 归因可使用 `perf` 或服务器厂商工具；本目录不再保留与当前完整模块入口
+脱节的旧扫描、多线程脚本和固定 C ABI 驱动。

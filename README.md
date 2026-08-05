@@ -59,9 +59,13 @@ stencil_all_sme.cpp
 5. 运行 `./scripts/03_validate_server_runtime.sh`，使用服务器原始 C++ 完整
    模块中的 test 和 `main` 验证数值正确性，并记录 baseline/prefetch 输出的
    `Total Time`。
-6. 正确性通过后，运行 `./scripts/04_tune_server_profile.sh` 自动执行类别消融，
-   使用清单中的全部已知工作负载生成本地 `profiles/server-sme.env`。
-7. 运行 `./scripts/05_validate_tuned_profile.sh` 加载 Profile，重新执行全部正确性
+6. 在清单中填写真实 row/plane 字节数后运行
+   `./scripts/calibrate_server_model.sh`，自动探测 Cache/VL、使用 PMU 微基准校准
+   latency/useful cycles，并生成本地 `profiles/server-model.env`。
+7. 正确性通过后，运行 `./scripts/04_tune_server_profile.sh` 自动执行类别消融，
+   使用全部已知工作负载选择需要启用的预取类别并生成本地
+   `profiles/server-sme.env`；距离和 KEEP/STRM 仍由分析模型逐函数计算。
+8. 运行 `./scripts/05_validate_tuned_profile.sh` 加载 Profile，重新执行全部正确性
    和稳定性能复测；需要 PMU 或多线程实验时再补充工具。
 
 当前默认将 `s1/s2` 联合用于稳健调优，要求同一候选在两个已知规模上都不退化。
@@ -69,6 +73,5 @@ stencil_all_sme.cpp
 服务器不同尺寸需要不同方案，下一阶段应增加 LLVM loop versioning 和基于实际
 维度的运行时分派。
 
-迁移前不要直接沿用 `apple-m5` Profile；预取距离、cache 层级和
-KEEP/STRM 策略必须依据服务器的 cache、SME streaming VL、内存带宽和
-实测结果重新选择。
+迁移前不要直接沿用 `apple-m5` Profile；必须把服务器的 cache、SME streaming
+VL 等输入提供给分析模型，并用服务器实测确认模型选择的预取类别确实有效。

@@ -61,7 +61,7 @@ SME/SVE ACLE C++
 | ArmSVE | 直接使用 LLVM intrinsic | `vscale` 相关向量步长、`whilelo/whilelt` 谓词、尾部归纳变量、未来 `x` 上界保护 | 高层 predicate 来源、硬件预取器模型和目标 CPU 上 hint 的精确收益 |
 | ArmSME | 计算使用，预取分析基本未使用 | Profile 中假定的 streaming VL；间接利用 SME kernel 已形成的向量循环结构 | streaming-mode 区域、ZA 生命周期、MOPA 数量、SME 计算周期和调度窗口 |
 | LLVM/Machine | 核心直接使用 | CFG、GEP、SCEV、支配关系、最终指针、目标 feature；插入 `llvm.aarch64.prefetch` 并检查汇编 `PRFM` | Machine 层寄存器压力和调度成本；`TargetIRAnalysis` 虽已获取但尚未进入决策 |
-| Runtime/PMU | 部分使用 | 正确性、运行时间、中位加速比、距离扫描、row/plane 消融、跨尺寸和多线程测试；结果人工回写 Profile | 自动 Profile 回写以及 L1/L2/LLC miss、stall、带宽、TLB 和污染事件 |
+| Runtime/PMU | 部分使用 | CPU cycle 微基准校准 latency/useful cycles；正确性、运行时间、中位加速比和流类别消融；自动回写服务器 Profile | L1/L2/LLC miss、stall、带宽、TLB、污染事件和多线程压力归因 |
 
 按预取决策需要的信息归纳，当前方案已经实际使用：
 
@@ -79,7 +79,7 @@ SME/SVE ACLE C++
   cache line、L1/L2 容量与延迟、假定 VL、代表性 row/plane 大小、预取预算
 
 运行反馈：
-  正确性、耗时、加速比、距离扫描和流类别消融
+  PMU 周期校准、正确性、耗时、加速比和流类别消融
 ```
 
 这些语义支撑了当前 A 类 1D 连续流、B 类跨行流和 C 类跨平面流的决策与插入。

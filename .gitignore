@@ -12,6 +12,8 @@ __pycache__/
 /02_llvm_pass_plugin/output/
 /05_runtime_validation/output/
 /profiles/server-sme.env
+/profiles/server-sme.env.tuning
+/profiles/server-model.env
 /stencil_sme_kernels.ll
 /stencil_sme_kernels.s
 /stencil_benchmark

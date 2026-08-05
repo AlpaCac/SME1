@@ -88,7 +88,22 @@ target triple、Darwin 栈保护和 Apple CPU 属性。这些文件不能作为 
 可能完全不同。服务器迁移应分成两个阶段：
 
 1. 用 `generic-sme` 验证编译器功能和数值正确性。
-2. 在服务器上重新扫描距离和类别，再建立服务器专用 Profile。
+2. 在服务器上提供实际硬件输入，由分析模型重新计算距离和策略，并实测选择预取
+   类别，建立服务器专用 Profile。
+
+服务器模型输入集中保存在本地 `profiles/server-model.env`，可从
+`profiles/server-model.env.example` 建立。Cache/VL 自动探测，row/plane 从实际用例
+推导；延迟、useful cycles 和模型预算在完成目标机校准后写入。缺失时调优脚本会
+停止，不再使用通用默认值。
+
+完成用例尺寸清单后执行：
+
+```bash
+BISHENG_CXX="$BISHENG_CXX" ./scripts/calibrate_server_model.sh
+```
+
+脚本使用 CPU cycle PMU，若 `perf_event_open` 因 `perf_event_paranoid` 或容器权限
+失败，需要管理员开放 PMU 权限；脚本不会用墙钟时间替代硬件周期。
 
 `apple-m5` 只能作为对照候选，不能直接认定为服务器最优配置。
 
@@ -309,7 +324,7 @@ python3 --version
 
 如果服务器已有兼容工具，也可以直接设置这些变量指向系统路径。
 
-## 五、AArch64 Linux 必须修改或覆盖的默认值
+## 五、AArch64 Linux 必须校准的目标参数
 
 ### 0. 使用服务器已有 LLVM
 
@@ -709,7 +724,7 @@ docker run --rm -it \
 - [ ] 正确性报告为 `PASS`。
 - [ ] baseline/prefetch checksum 一致。
 - [ ] 先完成固定环境下的重复墙钟测试，再解释 PMU 数据。
-- [ ] 服务器 Profile 经过距离、类别和多线程复测。
+- [ ] 服务器 Profile 经过模型输入核对、类别调优和多线程复测。
 
 完成以上检查后，才可以认为当前方案已经从 Apple M5 开发环境可靠迁移到
 断网 AArch64 Linux 服务器。

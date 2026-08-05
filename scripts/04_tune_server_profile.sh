@@ -7,6 +7,8 @@ runtime_script="${STENCIL_RUNTIME_SCRIPT:-${repo_root}/05_runtime_validation/run
 manifest="${STENCIL_CASE_MANIFEST:-${repo_root}/profiles/tuning_cases.csv}"
 tuning_root="${STENCIL_TUNING_ROOT:-${repo_root}/05_runtime_validation/output/server-profile-tuning}"
 profile_file="${STENCIL_PROFILE_FILE:-${repo_root}/profiles/server-sme.env}"
+profile_work_file="${profile_file}.tuning"
+model_input_file="${SME_PREFETCH_MODEL_INPUT_FILE:-${repo_root}/profiles/server-model.env}"
 results_csv="${tuning_root}/candidate_results.csv"
 selection_csv="${tuning_root}/profile_selection.csv"
 hardware_file="${tuning_root}/hardware_metadata.txt"
@@ -18,6 +20,17 @@ minimum_geomean="${STENCIL_TUNE_MIN_GEOMEAN:-1.03}"
 maximum_relative_mad="${STENCIL_TUNE_MAX_RELATIVE_MAD:-0.03}"
 timeout_seconds="${STENCIL_TIMEOUT_SECONDS:-1800}"
 resume="${STENCIL_TUNE_RESUME:-1}"
+
+if [[ -f "${model_input_file}" ]]; then
+  if grep -Ev '^(#.*|[[:space:]]*|export SME_PREFETCH_[A-Z0-9_]+=[0-9]*)$' \
+      "${model_input_file}" | grep -q .; then
+    printf 'model input file contains an unsupported line: %s\n' \
+      "${model_input_file}" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  source "${model_input_file}"
+fi
 
 size_to_bytes() {
   local raw="$1"
@@ -60,21 +73,39 @@ detect_cache_value() {
 detected_l1_capacity="$(detect_cache_value 1 size)"
 detected_l2_capacity="$(detect_cache_value 2 size)"
 detected_cache_line="$(detect_cache_value 1 coherency_line_size)"
-profile_l1_capacity="${SME_PREFETCH_L1_CAPACITY_BYTES:-${detected_l1_capacity:-65536}}"
-profile_l2_capacity="${SME_PREFETCH_L2_CAPACITY_BYTES:-${detected_l2_capacity:-1048576}}"
-profile_cache_line="${SME_PREFETCH_CACHE_LINE_BYTES:-${detected_cache_line:-64}}"
-profile_streaming_vl="${SME_PREFETCH_STREAMING_VL_BYTES:-64}"
-profile_l1_capacity_percent="${SME_PREFETCH_L1_CAPACITY_PERCENT:-60}"
-profile_l2_capacity_percent="${SME_PREFETCH_L2_CAPACITY_PERCENT:-60}"
-profile_l1_latency="${SME_PREFETCH_L1_LATENCY_CYCLES:-32}"
-profile_l2_latency="${SME_PREFETCH_L2_LATENCY_CYCLES:-96}"
-profile_memory_latency="${SME_PREFETCH_MEMORY_LATENCY_CYCLES:-240}"
-profile_useful_cycles_2d="${SME_PREFETCH_USEFUL_CYCLES_2D:-8}"
-profile_useful_cycles_3d="${SME_PREFETCH_USEFUL_CYCLES_3D:-10}"
-profile_max_distance="${SME_PREFETCH_MAX_DISTANCE:-32}"
-profile_max_streams="${SME_PREFETCH_MAX_STREAMS:-5}"
-profile_max_instructions="${SME_PREFETCH_MAX_INSTRUCTIONS:-8}"
-profile_max_bytes="${SME_PREFETCH_MAX_BYTES:-512}"
+detected_streaming_vl=''
+if [[ -r /proc/sys/abi/sme_default_vector_length ]]; then
+  detected_streaming_vl="$(</proc/sys/abi/sme_default_vector_length)"
+fi
+profile_l1_capacity="${SME_PREFETCH_L1_CAPACITY_BYTES:-${detected_l1_capacity}}"
+profile_l2_capacity="${SME_PREFETCH_L2_CAPACITY_BYTES:-${detected_l2_capacity}}"
+profile_cache_line="${SME_PREFETCH_CACHE_LINE_BYTES:-${detected_cache_line}}"
+profile_streaming_vl="${SME_PREFETCH_STREAMING_VL_BYTES:-${detected_streaming_vl}}"
+profile_l1_capacity_percent="${SME_PREFETCH_L1_CAPACITY_PERCENT:-}"
+profile_l2_capacity_percent="${SME_PREFETCH_L2_CAPACITY_PERCENT:-}"
+profile_l1_latency="${SME_PREFETCH_L1_LATENCY_CYCLES:-}"
+profile_l2_latency="${SME_PREFETCH_L2_LATENCY_CYCLES:-}"
+profile_memory_latency="${SME_PREFETCH_MEMORY_LATENCY_CYCLES:-}"
+profile_useful_cycles_2d="${SME_PREFETCH_USEFUL_CYCLES_2D:-}"
+profile_useful_cycles_3d="${SME_PREFETCH_USEFUL_CYCLES_3D:-}"
+profile_max_distance="${SME_PREFETCH_MAX_DISTANCE:-}"
+profile_max_streams="${SME_PREFETCH_MAX_STREAMS:-}"
+profile_max_instructions="${SME_PREFETCH_MAX_INSTRUCTIONS:-}"
+profile_max_bytes="${SME_PREFETCH_MAX_BYTES:-}"
+
+for specification in \
+    "SME_PREFETCH_L1_CAPACITY_BYTES:${profile_l1_capacity}" \
+    "SME_PREFETCH_L2_CAPACITY_BYTES:${profile_l2_capacity}" \
+    "SME_PREFETCH_CACHE_LINE_BYTES:${profile_cache_line}" \
+    "SME_PREFETCH_STREAMING_VL_BYTES:${profile_streaming_vl}"; do
+  key="${specification%%:*}"
+  value="${specification#*:}"
+  if [[ -z "${value}" ]]; then
+    printf 'unable to detect %s; export it with the measured server value\n' \
+      "${key}" >&2
+    exit 1
+  fi
+done
 
 for value in "${warmups}" "${samples}" "${timeout_seconds}"; do
   if [[ ! "${value}" =~ ^[0-9]+$ ]]; then
@@ -134,8 +165,7 @@ fi
 
 representative_bytes() {
   local column="$1"
-  local fallback="$2"
-  awk -F, -v column="${column}" -v fallback="${fallback}" '
+  awk -F, -v column="${column}" '
     NR > 1 && $4 == "train" && $column > 0 {
       weighted_sum += $column * $5
       total_weight += $5
@@ -143,13 +173,40 @@ representative_bytes() {
     END {
       if (total_weight > 0)
         printf "%.0f", weighted_sum / total_weight
-      else
-        printf "%s", fallback
     }' "${manifest}"
 }
 
-profile_expected_row="${SME_PREFETCH_EXPECTED_ROW_BYTES:-$(representative_bytes 6 4096)}"
-profile_expected_plane="${SME_PREFETCH_EXPECTED_PLANE_BYTES:-$(representative_bytes 7 131072)}"
+profile_expected_row="${SME_PREFETCH_EXPECTED_ROW_BYTES:-$(representative_bytes 6)}"
+profile_expected_plane="${SME_PREFETCH_EXPECTED_PLANE_BYTES:-$(representative_bytes 7)}"
+
+missing_model_inputs=()
+for specification in \
+    "SME_PREFETCH_L1_CAPACITY_PERCENT:${profile_l1_capacity_percent}" \
+    "SME_PREFETCH_L2_CAPACITY_PERCENT:${profile_l2_capacity_percent}" \
+    "SME_PREFETCH_L1_LATENCY_CYCLES:${profile_l1_latency}" \
+    "SME_PREFETCH_L2_LATENCY_CYCLES:${profile_l2_latency}" \
+    "SME_PREFETCH_MEMORY_LATENCY_CYCLES:${profile_memory_latency}" \
+    "SME_PREFETCH_EXPECTED_ROW_BYTES:${profile_expected_row}" \
+    "SME_PREFETCH_EXPECTED_PLANE_BYTES:${profile_expected_plane}" \
+    "SME_PREFETCH_USEFUL_CYCLES_2D:${profile_useful_cycles_2d}" \
+    "SME_PREFETCH_USEFUL_CYCLES_3D:${profile_useful_cycles_3d}" \
+    "SME_PREFETCH_MAX_DISTANCE:${profile_max_distance}" \
+    "SME_PREFETCH_MAX_STREAMS:${profile_max_streams}" \
+    "SME_PREFETCH_MAX_INSTRUCTIONS:${profile_max_instructions}" \
+    "SME_PREFETCH_MAX_BYTES:${profile_max_bytes}"; do
+  key="${specification%%:*}"
+  value="${specification#*:}"
+  if [[ -z "${value}" ]]; then
+    missing_model_inputs+=("${key}")
+  fi
+done
+if (( ${#missing_model_inputs[@]} > 0 )); then
+  printf 'missing target model inputs; no generic defaults will be used:\n' >&2
+  printf '  %s\n' "${missing_model_inputs[@]}" >&2
+  printf 'set them in %s or export them explicitly\n' \
+    "${model_input_file}" >&2
+  exit 1
+fi
 
 for value in "${profile_l1_capacity}" "${profile_l2_capacity}" \
     "${profile_cache_line}" "${profile_streaming_vl}" \
@@ -207,6 +264,7 @@ printf 'kind,selected_candidate,outcome,weighted_geomean,min_speedup,max_relativ
 
 {
   printf 'manifest=%s\nmanifest_signature=%s\n' "${manifest}" "${manifest_signature}"
+  printf 'model_input_file=%s\n' "${model_input_file}"
   printf 'effective_cache_line_bytes=%s\n' "${profile_cache_line}"
   printf 'effective_streaming_vl_bytes=%s\n' "${profile_streaming_vl}"
   printf 'effective_l1_capacity_bytes=%s\n' "${profile_l1_capacity}"
@@ -535,7 +593,7 @@ enable_row=$((row_mask != 0))
 enable_plane_l1=$((plane_l1_mask != 0))
 enable_plane_l2=$((plane_l2_mask != 0))
 
-cat > "${profile_file}" <<EOF
+cat > "${profile_work_file}" <<EOF
 # Generated by scripts/04_tune_server_profile.sh.
 # Manifest signature: ${manifest_signature}; train=${train_count}; validate=${validate_count}.
 # Selection thresholds: case >= ${minimum_speedup}, geomean >= ${minimum_geomean}, relative MAD <= ${maximum_relative_mad}.
@@ -562,6 +620,7 @@ export SME_PREFETCH_L1_CAPACITY_BYTES=${profile_l1_capacity}
 export SME_PREFETCH_L2_CAPACITY_BYTES=${profile_l2_capacity}
 export SME_PREFETCH_L1_CAPACITY_PERCENT=${profile_l1_capacity_percent}
 export SME_PREFETCH_L2_CAPACITY_PERCENT=${profile_l2_capacity_percent}
+# Inputs used by the compile-time analytical distance and policy model.
 export SME_PREFETCH_L1_LATENCY_CYCLES=${profile_l1_latency}
 export SME_PREFETCH_L2_LATENCY_CYCLES=${profile_l2_latency}
 export SME_PREFETCH_MEMORY_LATENCY_CYCLES=${profile_memory_latency}
@@ -574,6 +633,13 @@ export SME_PREFETCH_MAX_STREAMS=${profile_max_streams}
 export SME_PREFETCH_MAX_INSTRUCTIONS=${profile_max_instructions}
 export SME_PREFETCH_MAX_BYTES=${profile_max_bytes}
 EOF
+
+mv "${profile_work_file}" "${profile_file}"
+
+{
+  printf '\n[final-profile]\n'
+  cat "${profile_file}"
+} >> "${hardware_file}"
 
 printf '[profile-tuning] profile=%s\n' "${profile_file}"
 printf '[profile-tuning] candidates=%s\n' "${results_csv}"

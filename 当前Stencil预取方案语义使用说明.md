@@ -188,15 +188,15 @@ current/row/plane-L1/plane-L2 开关
 当前运行验证已经使用：
 
 - baseline 与 prefetch 数值正确性比较；
+- 依赖加载和轻量 2D/3D stencil 的 CPU cycle PMU 校准；
 - 每个算子和规模的耗时、中位数及加速比；
 - row、plane-L1、plane-L2 流类别消融；
-- 2D row-L1 和 3D plane-L1 的距离扫描；
+- 距离由目标机校准输入和分析模型计算；
 - 跨问题规模复测；
-- 多线程带宽压力测试。
 
-这些实验可以判断静态策略是否负收益，并用于人工选择距离、层级、策略和启用流。
-但是运行结果不会被 Pass 自动读取，也不会自动修改决策。当前所谓“Profile 回写”
-是根据报告手工更新 `TargetPrefetchProfile` 或环境变量后重新生成 IR。
+校准脚本自动生成服务器模型输入，类别调优脚本自动回写 enable/mask；Pass 使用模型
+输入逐函数计算距离、层级和策略。运行结果不用于枚举距离或 KEEP/STRM，只用于关闭
+在已知工作负载上无收益的预取类别。
 
 语义文档中列出的 L1/L2/LLC miss、backend stall、TLB miss、实际内存带宽和 cache
 pollution proxy 尚未接入自动流程；PMU 仍是后续归因手段。
@@ -318,4 +318,3 @@ stencil.prefetch_candidate {
 该 op 或等价 metadata 在高层记录不会被 LLVM IR 可靠恢复的信息；经过 tiling、
 bufferization 和向量化后，再把有效候选 lower 到 `llvm.aarch64.prefetch`。此时用
 最终 VL、谓词、GEP 和 Profile 重新计算距离并做预算检查。
-

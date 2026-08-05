@@ -9,6 +9,7 @@
 ./scripts/01_check_standalone_llvm_ir.sh
 ./scripts/02_build_and_test_pass.sh
 ./scripts/03_validate_server_runtime.sh
+./scripts/calibrate_server_model.sh
 ./scripts/04_tune_server_profile.sh
 ./scripts/05_validate_tuned_profile.sh
 ```
@@ -29,7 +30,7 @@ test 和 `main`，分别构建无预取 baseline 与带预取版本，先运行�
 export STANDALONE_LLVM=/path/to/llvm-19.1.7
 ```
 
-步骤 4 从 `profiles/tuning_cases.csv` 读取用例，自动运行类别消融。默认将
+步骤 4 从 `profiles/tuning_cases.csv` 读取用例，先运行类别消融。默认将
 `s1/s2` 都作为 `train` 场景，联合选择 current-L1、row-L1、plane-L1、plane-L2
 组合。要求每个已知场景不退化、加权几何平均至少 1.03，任一版本的相对 MAD 不
 超过 0.03。可用 `STENCIL_TUNE_MIN_CASE_SPEEDUP`、
@@ -40,23 +41,42 @@ export STANDALONE_LLVM=/path/to/llvm-19.1.7
 05_runtime_validation/output/server-profile-tuning/profile_selection.csv
 ```
 
-被选参数写入本地忽略文件 `profiles/server-sme.env`。当前自动选择负责按算子回写
-预取类别；距离和 KEEP/STRM 默认保持分析模型的 `0/AUTO`，接口已经开放，可在该
-Profile 中覆盖。步骤 5 加载 Profile 后重新执行全部正确性测试和性能采样。默认
+类别实测只选择各算子启用 current-L1、row-L1、plane-L1、plane-L2 中的哪些类别，
+并把获胜 mask 写入本地忽略文件 `profiles/server-sme.env`。距离保持 `0`、策略保持
+`AUTO`，其含义是 Pass 在每次编译时根据当前函数的循环、物理流、cache 和 VL 计算
+具体距离与 KEEP/STRM，而不是使用未验证的固定值。步骤 5 加载 Profile 后重新执行全部正确性测试和性能采样。默认
 清单没有独立留出行，因此复测全部 `train` 场景；未来存在 `validate` 行时则自动
 只用留出场景决定性能是否通过。步骤 4 默认复用清单、参数和样本数完全一致的已
 完成候选，中断后可直接重跑；设置 `STENCIL_TUNE_RESUME=0` 强制重测。
 
 步骤 4 会自动探测 Linux sysfs 中的 L1/L2 容量和 cache line，并把所有实际采用的
-硬件与模型参数纳入候选缓存签名，避免修改参数后错误复用旧数据。无法自动探测的
-streaming VL 和延迟参数可在运行脚本前通过 `SME_PREFETCH_*` 显式设置。
+硬件与模型参数纳入候选缓存签名。SME streaming VL 从
+`/proc/sys/abi/sme_default_vector_length` 读取。四项硬件值检测失败时脚本直接停止，
+必须通过 `SME_PREFETCH_*` 提供实测值，不再静默回退 generic 默认值。
 
-默认清单联合调优 `s1/s2`。步骤 4 默认 2 次预热、7 次样本，共执行 648 次训练
-程序。先检查自动化链路时可用：
+其余模型输入从服务器本地 `profiles/server-model.env` 加载，模板为
+`profiles/server-model.env.example`。`row_bytes/plane_bytes` 在用例清单中为非零值
+时会按权重自动推导；否则也必须在模型文件中提供。缺少 latency、useful cycles、
+容量比例或资源预算时脚本会列出全部缺项并停止，不再使用内建初始值继续运行。
+
+`calibrate_server_model.sh` 可自动生成该文件。它通过 `perf_event_open` 读取真实 CPU
+cycle PMU：随机依赖加载分别使用 L1、L2 和超过末级 cache 的工作集；2D5P/3D7P
+SVE 循环测量每次向量迭代周期。轻量 stencil 给出同维算子的周期下界，使距离模型
+不会因使用较重算子而低估提前量。Cache 有效占比按相联度保留一个 way，预算按当前
+最大 17 条物理流及 `ceil(VL/cache_line)` 推导。PMU 权限不足时脚本停止，不使用
+墙钟时间伪造周期。运行前必须设置 `BISHENG_CXX`，可用
+`SME_CALIBRATION_SAMPLES`、`SME_CALIBRATION_ACCESSES` 和
+`SME_CALIBRATION_MAX_MEMORY_BYTES` 控制校准开销。容器未暴露 cache 相联度或末级
+cache 时，可显式提供 `SME_CALIBRATION_L1_WAYS`、`SME_CALIBRATION_L2_WAYS` 和
+`SME_CALIBRATION_LAST_CACHE_BYTES`，但这些值应来自服务器硬件资料。
+
+脚本不再人为定义距离、策略、容量比例或预算候选，也不枚举这些参数的组合。快速
+检查可以使用单样本：
 
 ```bash
-STENCIL_TUNE_WARMUPS=0 STENCIL_TUNE_SAMPLES=1 \
-  ./scripts/04_tune_server_profile.sh
+STENCIL_TUNE_WARMUPS=0 STENCIL_TUNE_SAMPLES=1 ./scripts/04_tune_server_profile.sh
 ```
 
-快速模式执行 72 次，只用于确认脚本和候选选择能够完成，不能直接作为最终 Profile。
+单样本只用于确认类别选择和写回链路，正式 Profile 必须使用多样本稳定性门槛。
+`tmp2.sh` 默认开启候选复用；样本数、模型输入或当前类别发生变化时签名会
+自动失效，因此无需用 `STENCIL_TUNE_RESUME=0` 来保证正式数据的新鲜度。
