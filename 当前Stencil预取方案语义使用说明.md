@@ -143,7 +143,7 @@ SCEV 与 GEP 分析地址。已识别的访问类别包括：
 3. 能从谓词起始值回溯到循环归纳变量；
 4. 归纳步长是可伸缩向量步长；
 5. 插入时计算 `future_x = x + distance * vector_step`；
-6. 仅在 `future_x < upper_bound` 时执行预取。
+6. 用 `future_x < upper_bound` 选择未来地址或当前有效地址，再无分支地执行预取。
 
 这样使用了主循环范围、尾循环范围、predicate 和未来地址合法性语义。插入位置还
 通过 `DominatorTree` 检查代表地址是否支配预取锚点，避免在地址操作数尚不可用时

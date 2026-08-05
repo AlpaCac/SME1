@@ -1,17 +1,17 @@
 #include "StencilPrefetchDecision.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
-#include "llvm/Analysis/DomTreeUpdater.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsAArch64.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -326,7 +326,7 @@ bool insertPrefetches(const StencilInfo &Stencil,
   if (!FirstLoad || !TailPredicate || TailPredicate->arg_size() < 2)
     return false;
 
-  DomTreeUpdater DTU(DT, DomTreeUpdater::UpdateStrategy::Eager);
+  (void)LI;
   Module *M = FirstLoad->getModule();
   Function *Prefetch =
       Intrinsic::getDeclaration(M, Intrinsic::aarch64_prefetch);
@@ -335,6 +335,7 @@ bool insertPrefetches(const StencilInfo &Stencil,
   if (!LoadVectorType)
     return false;
   Type *ElementType = LoadVectorType->getElementType();
+  DenseMap<unsigned, std::pair<Value *, Value *>> GuardsByDistance;
   bool Changed = false;
 
   for (const PrefetchDecision &Decision : Decisions) {
@@ -363,34 +364,58 @@ bool insertPrefetches(const StencilInfo &Stencil,
       }
     }
 
-    IRBuilder<> HeadBuilder(AnchorLoad);
-    Value *ScaledStep = HeadBuilder.CreateMul(
-        Stencil.VectorStep,
-        ConstantInt::get(IndexType, Decision.DistanceIterations),
-        "prefetch.step");
-    bool IsSignedTail = hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.");
-    Type *TailIndexType = TailPredicate->getArgOperand(0)->getType();
-    Value *CompareStep = ScaledStep;
-    if (CompareStep->getType() != TailIndexType)
-      CompareStep = HeadBuilder.CreateZExtOrTrunc(
-          CompareStep, TailIndexType, "prefetch.compare.step");
-    Value *CompareX = HeadBuilder.CreateAdd(
-        TailPredicate->getArgOperand(0), CompareStep, "prefetch.compare.x");
-    Value *InBounds = IsSignedTail
-                          ? HeadBuilder.CreateICmpSLT(
-                                CompareX, TailPredicate->getArgOperand(1),
-                                "prefetch.in.range")
-                          : HeadBuilder.CreateICmpULT(
-                                CompareX, TailPredicate->getArgOperand(1),
-                                "prefetch.in.range");
+    Value *ScaledStep = nullptr;
+    Value *InBounds = nullptr;
+    auto ExistingGuard = GuardsByDistance.find(Decision.DistanceIterations);
+    if (ExistingGuard != GuardsByDistance.end() &&
+        DT.dominates(cast<Instruction>(ExistingGuard->second.second),
+                     AnchorLoad)) {
+      ScaledStep = ExistingGuard->second.first;
+      InBounds = ExistingGuard->second.second;
+    } else {
+      auto IsAvailableAt = [&](Value *V, Instruction *At) {
+        auto *Definition = dyn_cast<Instruction>(V);
+        return !Definition || DT.dominates(Definition, At);
+      };
+      Instruction *GuardAnchor = AnchorLoad;
+      if (IsAvailableAt(Stencil.VectorStep, FirstLoad) &&
+          IsAvailableAt(TailPredicate->getArgOperand(0), FirstLoad) &&
+          IsAvailableAt(TailPredicate->getArgOperand(1), FirstLoad))
+        GuardAnchor = FirstLoad;
 
-    Instruction *ThenTerm = SplitBlockAndInsertIfThen(
-        InBounds, AnchorLoad, false, nullptr, &DTU, &LI);
-    IRBuilder<> PrefetchBuilder(ThenTerm);
+      IRBuilder<> GuardBuilder(GuardAnchor);
+      ScaledStep = GuardBuilder.CreateMul(
+          Stencil.VectorStep,
+          ConstantInt::get(IndexType, Decision.DistanceIterations),
+          "prefetch.step");
+      bool IsSignedTail =
+          hasNamePrefix(*TailPredicate, "llvm.aarch64.sve.whilelt.");
+      Type *TailIndexType = TailPredicate->getArgOperand(0)->getType();
+      Value *CompareStep = ScaledStep;
+      if (CompareStep->getType() != TailIndexType)
+        CompareStep = GuardBuilder.CreateZExtOrTrunc(
+            CompareStep, TailIndexType, "prefetch.compare.step");
+      Value *CompareX = GuardBuilder.CreateAdd(
+          TailPredicate->getArgOperand(0), CompareStep, "prefetch.compare.x");
+      InBounds = IsSignedTail
+                     ? GuardBuilder.CreateICmpSLT(
+                           CompareX, TailPredicate->getArgOperand(1),
+                           "prefetch.in.range")
+                     : GuardBuilder.CreateICmpULT(
+                           CompareX, TailPredicate->getArgOperand(1),
+                           "prefetch.in.range");
+      GuardsByDistance[Decision.DistanceIterations] =
+          std::make_pair(ScaledStep, InBounds);
+    }
 
-    Value *Address = PrefetchBuilder.CreateGEP(
+    IRBuilder<> PrefetchBuilder(AnchorLoad);
+
+    Value *FutureAddress = PrefetchBuilder.CreateGEP(
         ElementType, Decision.Stream->RepresentativePointer, ScaledStep,
         "prefetch.addr");
+    Value *Address = PrefetchBuilder.CreateSelect(
+        InBounds, FutureAddress, Decision.Stream->RepresentativePointer,
+        "prefetch.safe.addr");
     PrefetchBuilder.CreateCall(
         Prefetch,
         {Address, PrefetchBuilder.getInt32(0),
@@ -403,10 +428,10 @@ bool insertPrefetches(const StencilInfo &Stencil,
            << " stream=" << toString(Decision.Stream->Kind)
            << " distance=" << Decision.DistanceIterations
            << " level=" << toString(Decision.Level)
-           << " policy=" << toString(Decision.Policy) << "\n";
+           << " policy=" << toString(Decision.Policy)
+           << " guard=branchless-select\n";
     Changed = true;
   }
-  DTU.flush();
   return Changed;
 }
 

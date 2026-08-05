@@ -62,11 +62,13 @@ export STANDALONE_LLVM=/path/to/llvm-19.1.7
 `calibrate_server_model.sh` 可自动生成该文件。它通过 `perf_event_open` 读取真实 CPU
 cycle PMU：随机依赖加载分别使用 L1、L2 和超过末级 cache 的工作集；2D5P/3D7P
 SVE 循环测量每次向量迭代周期。轻量 stencil 给出同维算子的周期下界，使距离模型
-不会因使用较重算子而低估提前量。Cache 有效占比按相联度保留一个 way，预算按当前
-最大 17 条物理流及 `ceil(VL/cache_line)` 推导。PMU 权限不足时脚本停止，不使用
+不会因使用较重算子而低估提前量。Cache 有效占比按相联度保留一个 way；资源预算
+扫描 1 至 17 条独立随机流，选择达到近峰值单 cache-line 吞吐（最佳值 5% 内）所需
+的最小流数，再按 `ceil(VL/cache_line)` 推导指令和字节上限。PMU 权限不足时脚本停止，不使用
 墙钟时间伪造周期。运行前必须设置 `BISHENG_CXX`，可用
 `SME_CALIBRATION_SAMPLES`、`SME_CALIBRATION_ACCESSES` 和
-`SME_CALIBRATION_MAX_MEMORY_BYTES` 控制校准开销。容器未暴露 cache 相联度或末级
+`SME_CALIBRATION_STREAM_ACCESSES`、`SME_CALIBRATION_MAX_MEMORY_BYTES` 控制校准
+开销；流扫描默认每个并发度共执行 100 万次访问。容器未暴露 cache 相联度或末级
 cache 时，可显式提供 `SME_CALIBRATION_L1_WAYS`、`SME_CALIBRATION_L2_WAYS` 和
 `SME_CALIBRATION_LAST_CACHE_BYTES`，但这些值应来自服务器硬件资料。
 

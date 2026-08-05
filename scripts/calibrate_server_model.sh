@@ -11,6 +11,7 @@ raw_results="${output_dir}/calibration_results.txt"
 march="${MARCH:-armv9.2-a+sme+sve2+sme-f64f64}"
 samples="${SME_CALIBRATION_SAMPLES:-5}"
 accesses="${SME_CALIBRATION_ACCESSES:-10000000}"
+stream_accesses="${SME_CALIBRATION_STREAM_ACCESSES:-1000000}"
 cpu="${STENCIL_CPU:-0}"
 
 : "${BISHENG_CXX:?set BISHENG_CXX to the BiSheng clang++ executable}"
@@ -59,11 +60,12 @@ round_up() {
   awk -v value="$1" 'BEGIN { rounded = int(value); if (value > rounded) rounded++; print rounded }'
 }
 
-for value in "${samples}" "${accesses}" "${cpu}"; do
+for value in "${samples}" "${accesses}" "${stream_accesses}" "${cpu}"; do
   [[ "${value}" =~ ^[0-9]+$ ]] || { printf 'calibration controls must be unsigned integers\n' >&2; exit 1; }
 done
-if [[ "${samples}" == 0 || "${accesses}" == 0 ]]; then
-  printf 'SME_CALIBRATION_SAMPLES and SME_CALIBRATION_ACCESSES must be positive\n' >&2
+if [[ "${samples}" == 0 || "${accesses}" == 0 ||
+      "${stream_accesses}" == 0 ]]; then
+  printf 'calibration samples and access counts must be positive\n' >&2
   exit 1
 fi
 [[ -x "${BISHENG_CXX}" ]] || { printf 'missing BiSheng clang++: %s\n' "${BISHENG_CXX}" >&2; exit 1; }
@@ -119,6 +121,7 @@ mkdir -p "${output_dir}" "$(dirname "${output_file}")"
 "${BISHENG_CXX}" -O3 -std=c++17 -march="${march}" "${source_file}" -o "${binary}"
 taskset -c "${cpu}" "${binary}" "${l1_test_bytes}" "${l2_test_bytes}" \
   "${memory_test_bytes}" "${accesses}" "${samples}" "${streaming_vl}" \
+  "${cache_line}" "${stream_accesses}" \
   > "${raw_results}"
 
 result_value() {
@@ -131,6 +134,7 @@ l2_latency="$(round_up "$(result_value l2_dependent_load_cycles)")"
 memory_latency="$(round_up "$(result_value memory_dependent_load_cycles)")"
 useful_cycles_2d="$(round_up "$(result_value useful_cycles_2d)")"
 useful_cycles_3d="$(round_up "$(result_value useful_cycles_3d)")"
+max_streams="$(result_value sustainable_prefetch_streams)"
 l1_capacity_percent=$(((l1_ways - 1) * 100 / l1_ways))
 l2_capacity_percent=$(((l2_ways - 1) * 100 / l2_ways))
 
@@ -138,8 +142,12 @@ minimum_useful_cycles="${useful_cycles_2d}"
 (( useful_cycles_3d >= minimum_useful_cycles )) || minimum_useful_cycles="${useful_cycles_3d}"
 max_distance=$(((memory_latency + minimum_useful_cycles - 1) / minimum_useful_cycles))
 
-# 3D25P has the largest supported physical-stream topology: 17 streams.
-max_streams=17
+if [[ -z "${max_streams}" || ! "${max_streams}" =~ ^[0-9]+$ ||
+      "${max_streams}" == 0 || "${max_streams}" -gt 17 ]]; then
+  printf 'invalid measured sustainable prefetch stream count: %s\n' \
+    "${max_streams:-<unset>}" >&2
+  exit 1
+fi
 lines_per_vector=$(((streaming_vl + cache_line - 1) / cache_line))
 max_instructions=$((max_streams * lines_per_vector))
 max_bytes=$((max_instructions * cache_line))
@@ -171,6 +179,8 @@ mv "${temporary}" "${output_file}"
   printf 'calibration_memory_test_bytes=%s\n' "${memory_test_bytes}"
   printf 'calibration_l1_ways=%s\n' "${l1_ways}"
   printf 'calibration_l2_ways=%s\n' "${l2_ways}"
+  printf 'calibration_sustainable_prefetch_streams=%s\n' "${max_streams}"
+  printf 'calibration_stream_accesses=%s\n' "${stream_accesses}"
   printf 'model_file=%s\n' "${output_file}"
 } >> "${raw_results}"
 

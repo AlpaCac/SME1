@@ -194,6 +194,25 @@ if [[ "${assembly_prefetch_count}" -ne "${prefetch_count}" ]]; then
     "${assembly_prefetch_count}" "${prefetch_count}" >&2
   exit 1
 fi
+if grep -Eq 'br i1 %prefetch\.in\.range' "${after_ir}"; then
+  printf 'prefetch tail handling unexpectedly introduced control flow\n' >&2
+  exit 1
+fi
+if ! grep -Eq 'select i1 %prefetch\.in\.range' "${after_ir}"; then
+  printf 'prefetch tail handling is not using branchless safe addresses\n' >&2
+  exit 1
+fi
+safe_address_count="$(grep -Ec 'select i1 %prefetch\.in\.range' "${after_ir}" || true)"
+guard_count="$(grep -Ec 'prefetch\.in\.range[^ ]* = icmp' "${after_ir}" || true)"
+if [[ "${safe_address_count}" -ne "${prefetch_count}" ]]; then
+  printf 'branchless safe-address count (%s) does not match prefetch count (%s)\n' \
+    "${safe_address_count}" "${prefetch_count}" >&2
+  exit 1
+fi
+if [[ "${prefetch_count}" -gt 1 && "${guard_count}" -ge "${prefetch_count}" ]]; then
+  printf 'prefetch bounds were not shared across equal-distance streams\n' >&2
+  exit 1
+fi
 
 # The pass must be idempotent for every already-prefetched recognized kernel.
 run_pass "${after_ir}" "${idempotent_ir}" "${idempotency_log}"

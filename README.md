@@ -59,9 +59,9 @@ stencil_all_sme.cpp
 5. 运行 `./scripts/03_validate_server_runtime.sh`，使用服务器原始 C++ 完整
    模块中的 test 和 `main` 验证数值正确性，并记录 baseline/prefetch 输出的
    `Total Time`。
-6. 在清单中填写真实 row/plane 字节数后运行
-   `./scripts/calibrate_server_model.sh`，自动探测 Cache/VL、使用 PMU 微基准校准
-   latency/useful cycles，并生成本地 `profiles/server-model.env`。
+6. 运行 `./scripts/calibrate_server_model.sh`，自动探测 Cache/VL，并使用 PMU 微基准
+   校准 latency、useful cycles 和可持续预取流数，生成本地
+   `profiles/server-model.env`；流程不需要 row/plane 的具体字节数。
 7. 正确性通过后，运行 `./scripts/04_tune_server_profile.sh` 自动执行类别消融，
    使用全部已知工作负载选择需要启用的预取类别并生成本地
    `profiles/server-sme.env`；距离和 KEEP/STRM 仍由分析模型逐函数计算。

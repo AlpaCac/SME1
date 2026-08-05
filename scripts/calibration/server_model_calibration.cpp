@@ -97,6 +97,65 @@ double measureDependentLoads(size_t Bytes, uint64_t Accesses,
   return median(std::move(Results));
 }
 
+std::pair<unsigned, std::vector<double>>
+measureStreamingPrefetchBudget(size_t Bytes, size_t CacheLineBytes,
+                               uint64_t Accesses, unsigned Samples,
+                               unsigned MaximumStreams) {
+  const size_t ElementsPerLine =
+      std::max<size_t>(1, CacheLineBytes / sizeof(uint64_t));
+  const size_t TotalLines =
+      std::max<size_t>(Bytes / CacheLineBytes, MaximumStreams * 64);
+  std::vector<uint64_t> Data(TotalLines * ElementsPerLine, 1);
+
+  constexpr size_t PrefetchDistance = 8;
+  std::vector<double> CyclesPerLine(MaximumStreams + 1, 0.0);
+  uint64_t Checksum = 0;
+  for (unsigned Streams = 1; Streams <= MaximumStreams; ++Streams) {
+    const size_t LinesPerStream = TotalLines / Streams;
+    std::vector<size_t> Order(LinesPerStream);
+    std::iota(Order.begin(), Order.end(), 0);
+    std::mt19937_64 Random(0x5052464dULL + TotalLines + Streams);
+    std::shuffle(Order.begin(), Order.end(), Random);
+    const uint64_t Iterations =
+        std::max<uint64_t>(1, Accesses / Streams);
+    std::vector<double> Results;
+    Results.reserve(Samples);
+    CycleCounter Counter;
+    for (unsigned Sample = 0; Sample < Samples; ++Sample) {
+      Counter.start();
+      for (uint64_t I = 0; I < Iterations; ++I) {
+        const size_t Current = Order[I % LinesPerStream];
+        const size_t Future =
+            Order[(I + PrefetchDistance) % LinesPerStream];
+        for (unsigned Stream = 0; Stream < Streams; ++Stream) {
+          const size_t StreamBase = Stream * LinesPerStream * ElementsPerLine;
+          __builtin_prefetch(Data.data() + StreamBase +
+                                 Future * ElementsPerLine,
+                             0, 0);
+          Checksum += Data[StreamBase + Current * ElementsPerLine];
+        }
+      }
+      const uint64_t Cycles = Counter.stop();
+      Results.push_back(static_cast<double>(Cycles) /
+                        (Iterations * Streams));
+    }
+    CyclesPerLine[Streams] = median(std::move(Results));
+  }
+  asm volatile("" : "+r"(Checksum) : : "memory");
+
+  const double Best = *std::min_element(CyclesPerLine.begin() + 1,
+                                        CyclesPerLine.end());
+  constexpr double NearPeakTolerance = 1.05;
+  unsigned SustainableStreams = MaximumStreams;
+  for (unsigned Streams = 1; Streams <= MaximumStreams; ++Streams) {
+    if (CyclesPerLine[Streams] <= Best * NearPeakTolerance) {
+      SustainableStreams = Streams;
+      break;
+    }
+  }
+  return {SustainableStreams, std::move(CyclesPerLine)};
+}
+
 __arm_locally_streaming __attribute__((noinline)) uint64_t
 run2D(double *Input, double *Output, size_t Height, size_t Width,
       unsigned Repeats) {
@@ -195,10 +254,11 @@ uint64_t parseUnsigned(const char *Raw, const char *Name) {
 } // namespace
 
 int main(int Argc, char **Argv) {
-  if (Argc != 7) {
+  if (Argc != 9) {
     std::fprintf(stderr,
                  "usage: %s L1_BYTES L2_BYTES MEMORY_BYTES ACCESSES "
-                 "SAMPLES STREAMING_VL_BYTES\n",
+                 "SAMPLES STREAMING_VL_BYTES CACHE_LINE_BYTES "
+                 "STREAM_ACCESSES\n",
                  Argv[0]);
     return 1;
   }
@@ -209,6 +269,9 @@ int main(int Argc, char **Argv) {
   const unsigned Samples = parseUnsigned(Argv[5], "SAMPLES");
   const size_t StreamingVLBytes =
       parseUnsigned(Argv[6], "STREAMING_VL_BYTES");
+  const size_t CacheLineBytes = parseUnsigned(Argv[7], "CACHE_LINE_BYTES");
+  const uint64_t StreamAccesses =
+      parseUnsigned(Argv[8], "STREAM_ACCESSES");
 
   const size_t VectorElements = std::max<size_t>(1, StreamingVLBytes / 8);
   const size_t Height2D = 6;
@@ -226,6 +289,10 @@ int main(int Argc, char **Argv) {
   const double L2Cycles = measureDependentLoads(L2Bytes, Accesses, Samples);
   const double MemoryCycles =
       measureDependentLoads(MemoryBytes, Accesses, Samples);
+  constexpr unsigned MaximumMeasuredStreams = 17;
+  auto [SustainableStreams, StreamCycles] = measureStreamingPrefetchBudget(
+      MemoryBytes, CacheLineBytes, StreamAccesses, Samples,
+      MaximumMeasuredStreams);
   const double Cycles2D = measureStencil(
       [&](unsigned Repeats) {
         return run2D(Input2D.data(), Output2D.data(), Height2D, Width2D,
@@ -244,6 +311,10 @@ int main(int Argc, char **Argv) {
   std::printf("memory_dependent_load_cycles=%.6f\n", MemoryCycles);
   std::printf("useful_cycles_2d=%.6f\n", Cycles2D);
   std::printf("useful_cycles_3d=%.6f\n", Cycles3D);
+  std::printf("sustainable_prefetch_streams=%u\n", SustainableStreams);
+  for (unsigned Streams = 1; Streams <= MaximumMeasuredStreams; ++Streams)
+    std::printf("stream_cycles_per_line_%u=%.6f\n", Streams,
+                StreamCycles[Streams]);
   std::printf("checksum=%.6f\n", Output2D[Width2D + 1] +
                                      Output3D[Height3D * Width3D + Width3D + 1]);
   return 0;

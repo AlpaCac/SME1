@@ -133,7 +133,8 @@ future_x < inner_loop_end
 inner_trip_count > 2 * d_iterations
 ```
 
-如果无法证明未来地址仍在合法范围，Pass 必须增加条件 guard 或拒绝该候选。
+如果无法静态证明未来地址仍在合法范围，Pass 必须用运行时条件选择未来地址或当前
+有效地址，或者拒绝该候选；不能生成带 `inbounds` 承诺的越界未来地址。
 
 ### 2.4 Cache 层级模型
 
@@ -360,9 +361,11 @@ center = base + y*W + {1,+,VL}
 
 1. 从代表 load 的指针表达式构造未来地址。
 2. 使用 `distance_iterations * vector_step` 前移 `x`。
-3. 增加 `future_x < loop_end` guard，避免尾部越界预取。
-4. 保持原 masked load/store 和数值计算不变。
-5. 已存在相同预取时不重复插入，保证幂等。
+3. 计算一次 `future_x < loop_end` 条件；相同距离的候选在支配关系允许时共享该条件。
+4. 用 `select(in_range, future_address, current_address)` 形成安全地址并无条件发出
+   intrinsic，不在最内层循环中为每条预取拆分条件基本块。
+5. 保持原 masked load/store 和数值计算不变。
+6. 已存在相同预取时不重复插入，保证幂等。
 
 `llvm.aarch64.prefetch` 携带：
 
@@ -607,8 +610,12 @@ L1/L2 有效容量占比
 超过末级 cache 的工作集上通过 `perf_event_open` 测量 CPU cycles；代表性 2D5P
 和 3D7P SVE 循环测量每个向量迭代的有效周期。选择同维度中较轻的 stencil 是为了
 得到计算周期下界，避免距离模型低估所需提前量。L1/L2 有效容量按相联度各保留一个
-cache way，最大流数取当前支持算子的最大物理流拓扑 17，指令和字节预算再由
-`ceil(streaming_VL/cache_line)` 推导。PMU 不可访问时校准失败，不回退墙钟估算。
+cache way。资源微基准扫描 1 至 17 条独立随机内存流，记录每条 cache line 的周期，
+并选择达到扫描中近峰值吞吐（最佳值 5% 内）所需的最小流数作为 `max_streams`；
+指令和字节预算再由该实测流数及 `ceil(streaming_VL/cache_line)` 推导。因此 17 只是
+扫描上限，不再作为预算默认值。流扫描次数可通过
+`SME_CALIBRATION_STREAM_ACCESSES` 独立控制，避免显著放大已有延迟测试的运行时间。
+PMU 不可访问时校准失败，不回退墙钟估算。
 
 矩阵 row/plane/working-set 字节数不再出现在清单、校准输入或最终 Profile 中。
 所有有效硬件参数同时用于候选编译、候选缓存签名和最终 Profile，避免
@@ -694,6 +701,9 @@ Apple M5 的硬件参数直接用于服务器，也不能把 2D row 的结果直
 15. Pass 的 cache、VL、延迟、容量比例和距离覆盖接口；具体矩阵大小已移除。
 16. 服务器快速与正式调优临时脚本 `tmp0.sh` 至 `tmp3.sh`。
 17. 分析模型主导的距离/策略决策与类别级实测 Profile 写回。
+18. 预取尾部保护改为共享条件和 branchless safe-address select，不再为每条预取
+    拆分最内层循环控制流。
+19. 流、指令和字节预算改由目标机独立流 PMU 扫描测量，不再固定采用 17 条拓扑上限。
 
 服务器当前待执行：
 

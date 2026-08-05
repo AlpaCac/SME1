@@ -43,7 +43,8 @@ row/plane/working-set 字节数，Pass 决策不依赖具体矩阵大小。
 不再为 latency、useful cycles、容量比例或资源预算提供 generic 回退值。缺失项会在
 调优开始前一次性报告。
 推荐使用 `scripts/calibrate_server_model.sh` 生成：硬件周期来自 PMU 微基准，容量
-比例由 cache 相联度推导，资源预算由支持 stencil 的最大物理流拓扑和 VL 推导。
+比例由 cache 相联度推导，最大流数来自 1 至 17 条独立随机流的 PMU 吞吐扫描，
+指令和字节预算再由实测流数、cache line 和 VL 推导。
 原始测量保存在 `05_runtime_validation/output/server-model-calibration/`。
 
 当前 Profile 对同一种 stencil 仍生成一套静态类别开关。分析模型使用流类型、直接
