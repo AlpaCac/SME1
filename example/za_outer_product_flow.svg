@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="930" viewBox="0 0 1440 930" role="img" aria-labelledby="title desc">
+  <title id="title">当前 SME stencil kernel 的 ZA 外积计算过程</title>
+  <desc id="desc">一个邻域 SVE 向量与全一向量做外积，十三次累加后 ZA 每行相同，最终只读取第零行。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f8f4ea"/>
+      <stop offset="1" stop-color="#e8f0eb"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#145b73"/>
+      <stop offset="1" stop-color="#2389a6"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#df8a38"/>
+      <stop offset="1" stop-color="#efb25f"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#286b52"/>
+      <stop offset="1" stop-color="#4b9a72"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#20332c" flood-opacity="0.14"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#334c45"/>
+    </marker>
+    <style>
+      .title { font: 700 34px Georgia, 'Noto Serif SC', serif; fill: #17372e; }
+      .subtitle { font: 18px Georgia, 'Noto Serif SC', serif; fill: #4b625a; }
+      .step { font: 700 20px Georgia, 'Noto Serif SC', serif; fill: #17372e; }
+      .body { font: 16px Georgia, 'Noto Serif SC', serif; fill: #334c45; }
+      .small { font: 14px Georgia, 'Noto Serif SC', serif; fill: #526961; }
+      .mono { font: 15px Menlo, Consolas, monospace; fill: #17372e; }
+      .mono-light { font: 14px Menlo, Consolas, monospace; fill: #fffdf7; }
+      .cell { stroke: #f8f4ea; stroke-width: 2; }
+      .arrow { stroke: #334c45; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1440" height="930" fill="url(#bg)"/>
+  <circle cx="1320" cy="80" r="180" fill="#e3a448" opacity="0.10"/>
+  <circle cx="80" cy="860" r="240" fill="#18708b" opacity="0.08"/>
+
+  <text x="70" y="68" class="title">当前代码如何使用 ZA：写满了，但大部分结果重复</text>
+  <text x="70" y="104" class="subtitle">以完整向量块为例，N = svcntd()；尾块由 pg 关闭右侧无效列</text>
+
+  <!-- Step 1 -->
+  <g filter="url(#shadow)">
+    <rect x="55" y="155" width="355" height="250" rx="24" fill="#fffdf7"/>
+  </g>
+  <circle cx="88" cy="188" r="18" fill="#145b73"/>
+  <text x="82" y="195" class="mono-light">1</text>
+  <text x="120" y="195" class="step">加载一个邻域向量</text>
+  <text x="80" y="230" class="mono">svld1_f64(pg, address)</text>
+  <text x="80" y="262" class="body">一次读取最多 N 个连续 double</text>
+  <g transform="translate(80 292)">
+    <rect x="0" y="0" width="48" height="54" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="48" y="0" width="48" height="54" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="96" y="0" width="48" height="54" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="144" y="0" width="48" height="54" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="192" y="0" width="48" height="54" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="240" y="0" width="48" height="54" rx="7" fill="url(#blue)" class="cell"/>
+    <text x="14" y="34" class="mono-light">x0</text><text x="62" y="34" class="mono-light">x1</text>
+    <text x="110" y="34" class="mono-light">x2</text><text x="155" y="34" class="mono-light">...</text>
+    <text x="204" y="34" class="mono-light">xN-2</text><text x="252" y="34" class="mono-light">xN-1</text>
+  </g>
+  <text x="80" y="378" class="small">pg[n] = true 时 lane n 才访问内存</text>
+
+  <!-- Step 2 -->
+  <g filter="url(#shadow)">
+    <rect x="475" y="155" width="430" height="250" rx="24" fill="#fffdf7"/>
+  </g>
+  <circle cx="508" cy="188" r="18" fill="#df8a38"/>
+  <text x="502" y="195" class="mono-light">2</text>
+  <text x="540" y="195" class="step">与全 1 向量做外积</text>
+  <text x="500" y="230" class="mono">MOPA: ZA += ones x neighbor</text>
+  <g transform="translate(510 270)">
+    <rect x="0" y="0" width="48" height="36" rx="6" fill="#d7e6df"/><text x="17" y="24" class="mono">1</text>
+    <rect x="0" y="36" width="48" height="36" rx="6" fill="#d7e6df"/><text x="17" y="60" class="mono">1</text>
+    <rect x="0" y="72" width="48" height="36" rx="6" fill="#d7e6df"/><text x="17" y="96" class="mono">1</text>
+    <text x="18" y="126" class="mono">...</text>
+    <text x="70" y="66" class="step">x</text>
+    <rect x="105" y="35" width="54" height="54" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="159" y="35" width="54" height="54" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="213" y="35" width="54" height="54" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="267" y="35" width="54" height="54" rx="7" fill="url(#blue)" class="cell"/>
+    <text x="119" y="68" class="mono-light">x0</text><text x="173" y="68" class="mono-light">x1</text>
+    <text x="227" y="68" class="mono-light">...</text><text x="272" y="68" class="mono-light">xN-1</text>
+  </g>
+  <text x="500" y="378" class="small">pg_all 控制行；pg 控制列</text>
+
+  <!-- Step 3 -->
+  <g filter="url(#shadow)">
+    <rect x="970" y="155" width="415" height="505" rx="24" fill="#fffdf7"/>
+  </g>
+  <circle cx="1003" cy="188" r="18" fill="#df8a38"/>
+  <text x="997" y="195" class="mono-light">3</text>
+  <text x="1035" y="195" class="step">13 次累加后的 ZA tile</text>
+  <text x="995" y="230" class="mono">ZA[r][c] = sum(neighbor[c])</text>
+  <text x="995" y="258" class="body">每一行都得到同一个 N-lane 结果</text>
+  <g transform="translate(1010 292)">
+    <!-- row 0 -->
+    <rect x="0" y="0" width="54" height="50" rx="5" fill="url(#green)" class="cell"/>
+    <rect x="54" y="0" width="54" height="50" rx="5" fill="url(#green)" class="cell"/>
+    <rect x="108" y="0" width="54" height="50" rx="5" fill="url(#green)" class="cell"/>
+    <rect x="162" y="0" width="54" height="50" rx="5" fill="url(#green)" class="cell"/>
+    <rect x="216" y="0" width="54" height="50" rx="5" fill="url(#green)" class="cell"/>
+    <rect x="270" y="0" width="54" height="50" rx="5" fill="url(#green)" class="cell"/>
+    <!-- repeated rows -->
+    <g fill="url(#orange)">
+      <rect x="0" y="50" width="54" height="50" rx="5" class="cell"/><rect x="54" y="50" width="54" height="50" rx="5" class="cell"/><rect x="108" y="50" width="54" height="50" rx="5" class="cell"/><rect x="162" y="50" width="54" height="50" rx="5" class="cell"/><rect x="216" y="50" width="54" height="50" rx="5" class="cell"/><rect x="270" y="50" width="54" height="50" rx="5" class="cell"/>
+      <rect x="0" y="100" width="54" height="50" rx="5" class="cell"/><rect x="54" y="100" width="54" height="50" rx="5" class="cell"/><rect x="108" y="100" width="54" height="50" rx="5" class="cell"/><rect x="162" y="100" width="54" height="50" rx="5" class="cell"/><rect x="216" y="100" width="54" height="50" rx="5" class="cell"/><rect x="270" y="100" width="54" height="50" rx="5" class="cell"/>
+      <rect x="0" y="150" width="54" height="50" rx="5" class="cell"/><rect x="54" y="150" width="54" height="50" rx="5" class="cell"/><rect x="108" y="150" width="54" height="50" rx="5" class="cell"/><rect x="162" y="150" width="54" height="50" rx="5" class="cell"/><rect x="216" y="150" width="54" height="50" rx="5" class="cell"/><rect x="270" y="150" width="54" height="50" rx="5" class="cell"/>
+      <rect x="0" y="200" width="54" height="50" rx="5" class="cell"/><rect x="54" y="200" width="54" height="50" rx="5" class="cell"/><rect x="108" y="200" width="54" height="50" rx="5" class="cell"/><rect x="162" y="200" width="54" height="50" rx="5" class="cell"/><rect x="216" y="200" width="54" height="50" rx="5" class="cell"/><rect x="270" y="200" width="54" height="50" rx="5" class="cell"/>
+    </g>
+    <text x="-40" y="31" class="mono">r0</text><text x="-40" y="81" class="mono">r1</text>
+    <text x="-40" y="131" class="mono">r2</text><text x="-40" y="181" class="mono">...</text>
+    <text x="-40" y="231" class="mono">rN-1</text>
+    <text x="13" y="31" class="mono-light">s0</text><text x="67" y="31" class="mono-light">s1</text>
+    <text x="121" y="31" class="mono-light">s2</text><text x="175" y="31" class="mono-light">...</text>
+    <text x="224" y="31" class="mono-light">sN-2</text><text x="278" y="31" class="mono-light">sN-1</text>
+  </g>
+  <rect x="995" y="575" width="365" height="55" rx="12" fill="#f7e4ca"/>
+  <text x="1013" y="598" class="body">橙色行均为绿色第 0 行的副本</text>
+  <text x="1013" y="620" class="small">被计算，但最终不会读取</text>
+
+  <!-- arrows top -->
+  <path d="M410 280 C440 280 445 280 475 280" class="arrow"/>
+  <path d="M905 280 C935 280 940 280 970 280" class="arrow"/>
+
+  <!-- Step 4 -->
+  <g filter="url(#shadow)">
+    <rect x="235" y="510" width="660" height="270" rx="24" fill="#fffdf7"/>
+  </g>
+  <circle cx="270" cy="547" r="18" fill="#286b52"/>
+  <text x="264" y="554" class="mono-light">4</text>
+  <text x="302" y="554" class="step">只读取第 0 行，得到 N 个输出</text>
+  <text x="270" y="592" class="mono">svread_hor_za64_m(..., tile=0, slice=0)</text>
+  <path d="M1000 330 C925 360 910 520 895 555" class="arrow"/>
+  <g transform="translate(275 625)">
+    <rect x="0" y="0" width="70" height="58" rx="8" fill="url(#green)" class="cell"/>
+    <rect x="70" y="0" width="70" height="58" rx="8" fill="url(#green)" class="cell"/>
+    <rect x="140" y="0" width="70" height="58" rx="8" fill="url(#green)" class="cell"/>
+    <rect x="210" y="0" width="70" height="58" rx="8" fill="url(#green)" class="cell"/>
+    <rect x="280" y="0" width="70" height="58" rx="8" fill="url(#green)" class="cell"/>
+    <rect x="350" y="0" width="70" height="58" rx="8" fill="url(#green)" class="cell"/>
+    <text x="22" y="36" class="mono-light">s0</text><text x="92" y="36" class="mono-light">s1</text>
+    <text x="162" y="36" class="mono-light">s2</text><text x="231" y="36" class="mono-light">...</text>
+    <text x="296" y="36" class="mono-light">sN-2</text><text x="366" y="36" class="mono-light">sN-1</text>
+  </g>
+  <text x="275" y="724" class="body">乘以 1/13，再由 svst1_f64(pg, ...) 写回连续 N 列</text>
+  <text x="275" y="752" class="small">最终产生 N 个有效输出，而不是 ZA 可表达的 N x N 个独立输出</text>
+
+  <!-- takeaway -->
+  <g filter="url(#shadow)">
+    <rect x="70" y="835" width="1300" height="65" rx="18" fill="#17372e"/>
+  </g>
+  <text x="105" y="875" style="font:700 19px Georgia, 'Noto Serif SC', serif; fill:#fffdf7">
+    结论：当前代码执行了完整外积，但 ones 使 ZA 各行相同；只有第 0 行有用，有效结果容量约为 ZA 的 1/N。
+  </text>
+</svg>
