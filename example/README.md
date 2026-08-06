@@ -569,7 +569,9 @@ CodeGen 会把这些目标相关操作降为 `llvm.aarch64.sve.*` 或
 第一章提出的核心研究问题：如何让 SME 在不同维度、形状和半径的 stencil
 上保持高利用率，并把 kernel 收益扩展到真实 HPC 应用。
 
-#### 3.2.3 本章列出的贡献
+
+
+#### 3.2.2 本章列出的贡献
 
 论文把贡献概括为三个层次：
 
@@ -581,79 +583,9 @@ CodeGen 会把这些目标相关操作降为 `llvm.aarch64.sve.*` 或
 本章的作用是定义研究范围。后续第二章解释所需硬件和应用背景，第三章用实验确认
 性能缺口，第四、第五章分别解决单核和并行问题。
 
-### 3.3 第二章：Background
-
-第二章分为 High-Order Stencil 和 Scalable Matrix Extension and ARM Multicore
-SoC 两部分。
-
-#### 3.3.1 High-Order Stencil
-
-本节解释为什么真实应用需要高阶 stencil。有限差分求导使用邻域网格点近似导数，
-增加半径通常可以提高空间精度。论文以波传播为例说明，高阶 stencil 可以减少每个
-波长所需网格点数，从而显著缩小三维问题规模；半径 4 是 RTM 中常见的选择。
-
-本节还用 VTI 和 TTI 介质中的 RTM 方程说明，真实应用并不是只执行一个规则 star
-stencil：
-
-- VTI 会耦合水平和垂直应力变量；
-- TTI 包含三个纯二阶偏导和三个混合二阶偏导；
-- 一个最终输出可能依赖多个前序 stencil 的中间结果；
-- stencil 结果还要与空间变化的介质参数进行标量运算。
-
-因此论文的目标不只是优化独立 benchmark，还要支持多算子组合和中间结果复用。
-
-#### 3.3.2 SME 与目标 ARM 多核 SoC
-
-本节介绍 SME 的外积计算方式。每次操作从两个 SVE 向量形成外积，并累加到 ZA
-矩阵 tile。以 512-bit 向量、单精度为例，ZA 可划分为多个 16 x 16 tile；高性能
-执行需要在多个 tile 之间交错外积，以隐藏指令延迟。
-
-论文还介绍实验 SoC 的关键特征：
-
-- 每个核心具有 SVE、SME 和私有数据缓存；
-- 一个 NUMA 域内有大量核心，但没有传统共享 LLC；
-- 多个 NUMA 域使用片上高带宽内存和容量更大的 DDR；
-- 片上内存可作为 cache 或独立地址空间；
-- SoC 提供 SDMA 引擎，可在 DDR、片上内存和 NUMA 域间搬运数据。
-
-这些硬件特征直接决定后续方案：私有缓存促使第五章使用 cache snoop，宽片上内存
-促使第四章减少访问流并显式预取，SDMA 则用于跨 NUMA halo 交换。
-
-### 3.4 第三章：Related Work and Motivation
-
-第三章先回顾已有 stencil 优化，再通过对比实验确认论文要解决的性能缺口。
-
-#### 3.4.1 CPU、GPU 与 Tensor Core 相关工作
-
-CPU 工作主要采用向量化、公共子表达式消除、寄存器/cache 复用、数据布局变换和
-代码生成。BrickLib 的 brick 布局为论文的数据重排方案提供了基础。
-
-GPU 工作主要使用空间/时间 blocking、shared memory 和寄存器复用，也有 Physis、
-Lift、Artemis、AN5D 等 DSL。论文指出，真实应用的复杂边界条件会限制 temporal
-blocking 深度，因此实验统一使用单时间步。
-
-矩阵单元工作包括 TCStencil、ConvStencil 和 LoRAStencil。它们分别采用矩阵映射、
-卷积/Im2Col 或低秩分解，但主要面向 2D stencil，没有解决 3D 高阶 stencil 和真实
-应用集成问题。
-
-#### 3.4.2 Motivation Experiments
-
-论文比较 CPU 编译器版本、手写 SIMD，以及 GPU 上的 Tensor Core 和 CUDA Core
-方案，并用有效带宽利用率统一衡量不同平台。
-
-实验得到两个关键结论：
-
-- 2D star 和低阶 3D stencil 上，编译器或手写 SIMD 已有很高利用率，优化空间有限；
-- 随 3D stencil 半径增大，CPU 和 GPU 方案的带宽效率都会明显下降，box stencil
-  的下降更严重。
-
-因此论文没有假设 SME 对所有 stencil 都更快，而是把研究重点放到现有方案退化最
-明显的 3D 高阶 stencil。第三章给第四章的设计提供了实验动机。
-
 ### 3.5 第四章：Design of SMEStencil
 
-第四章是论文的核心，依次介绍外积映射、初步性能模型、四项微架构优化、两项内存
-优化和真实应用集成。
+依次介绍外积映射、初步性能模型、四项微架构优化、两项内存优化和真实应用集成。
 
 #### 3.5.1 Mapping Stencil to the SME Unit
 
