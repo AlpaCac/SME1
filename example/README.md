@@ -126,18 +126,53 @@ __arm_streaming {
                                   ? cols - 1
                                   : j + SVL * stride - 1;
 
-                // 第 n 个 lane 在 j+n < j_limit+1 时有效。
-                // svld1_f64 最多加载 SVL 个连续 double。
+                // 为当前 j 向量块生成一个 64-bit lane 谓词。
+                // 第 n 个 lane 对应列 j+n；仅当 j+n < j_limit+1 时置为 true。
+                // 因此完整向量块得到全 true，尾部不足 SVL 个元素时只打开前几个 lane。
                 svbool_t pg = svwhilelt_b64(j, j_limit + 1);
 
                 // 若谓词中没有有效 lane，则结束 j 循环。
-                // 当前源码写成 svptrue_b64 而不是 svptrue_b64()，需核对 ACLE 写法。
-                if (!svptest_any(svptrue_b64, pg))
+                if (!svptest_any(svptrue_b64(), pg))
                     break;
 
                 // 把当前坐标 (k,i,j) 转换为一维数组起始下标。
                 int base_idx = k * plane_size + i * cols + j;
 ```
+
+`svwhilelt_b64(start, end)` 可以理解为按下面的规则生成谓词，其中 lane 数由运行时
+streaming vector length 决定：
+
+```text
+pg[n] = (start + n < end),  0 <= n < SVL
+
+这里：
+start = j
+end   = j_limit + 1
+所以：pg[n] = (j + n <= j_limit)
+```
+
+例如 `SVL=8`，当前 `j=17`：
+
+| `j_limit` | `pg` 的 8 个 lane | 实际处理的列 |
+|---|---|---|
+| 24 | `T T T T T T T T` | 17 到 24，共 8 列 |
+| 21 | `T T T T T F F F` | 17 到 21，共 5 列 |
+| 16 | `F F F F F F F F` | 没有可处理列，`svptest_any` 为 false |
+
+这个 `pg` 会贯穿当前 `j` 迭代：
+
+1. `svld1_f64(pg, address)` 只读取 true lane 对应的连续地址，false lane 不访问内存；
+2. `svmopa_za64_f64_m(..., pg_all, pg, ...)` 用 `pg` 限制 ZA 外积的列方向；
+3. `svmul_f64_z(pg, ...)` 只计算有效 lane，并把无效 lane 置零；
+4. `svst1_f64(pg, address, result)` 只写回有效 lane。
+
+因此 `pg` 的主要作用是让同一套向量指令既能处理完整向量块，也能安全处理不足
+`SVL` 个元素的尾块。它不决定向量寄存器的物理长度，只决定本次操作中哪些 lane
+参与计算和访存。
+
+还要注意，`stride=2` 时 `pg` **不会**变成 `T F T F ...`，也不会执行 gather。
+当前代码仍连续处理最多 `SVL` 列，只是下一轮 `j += 2*SVL`，从而跳过中间的一个
+完整向量块。
 
 这里需要注意尾部边界：`j_limit` 最多取 `cols-1`，随后谓词使用
 `j_limit+1`，因此可能允许输出列 `cols-1`。对于需要访问 `j+1` 的邻域，最末 lane
