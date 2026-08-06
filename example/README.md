@@ -442,19 +442,6 @@ int main(int argc, char* argv[]) {
 
 ### 2.1 毕昇与 LLVM/Clang 的关系
 
-毕昇编译器以 LLVM/Clang 为基础，因此 `clang++` 编译这个 `.cpp` 文件时，主干
-流程仍是 Clang Driver 调度 Clang 前端，再由 Clang CodeGen 生成 LLVM IR。毕昇
-在此基础上提供面向鲲鹏/AArch64 的目标支持、优化和运行时适配。查阅源码时需要
-区分以下两类仓库：
-
-- [openEuler 毕昇编译器仓库](https://gitee.com/openeuler/bisheng-compiler)：毕昇项目源码与说明入口。
-- [src-openEuler 毕昇软件包仓库](https://gitee.com/src-openeuler/bisheng-compiler)：发行包的 spec、补丁和构建材料；它不等同于完整 LLVM 源码树。
-- [LLVM monorepo](https://github.com/llvm/llvm-project)：Clang 前端、LLVM IR 优化器和 AArch64 后端的上游实现。
-
-毕昇 Enterprise 5.x 的具体补丁和目录可能与上游同版本 LLVM 不完全一致，但下文
-描述的前端阶段及主要源码入口是一致的。服务器上应以
-`$BISHENG_CXX --version`、`$BISHENG_CXX -print-resource-dir` 和实际发行包源码为准。
-
 ### 2.2 总体编译流水线
 
 ```mermaid
@@ -537,73 +524,9 @@ CodeGen 会把这些目标相关操作降为 `llvm.aarch64.sve.*` 或
 （GEP），循环表现为基本块、`phi` 和条件分支。intrinsic 的确切名称和参数随 LLVM
 版本变化，应以服务器生成的 `.ll` 为准。
 
-### 2.5 本项目预取 Pass 在流水线中的位置
 
-本项目没有在 C++ AST 或 Clang CodeGen 中插入预取，而是在已经生成的 LLVM IR
-上运行独立的 new-PM 插件：
 
-```mermaid
-flowchart LR
-    A[C++ 与 SME ACLE] -->|毕昇 clang++ -O1 -emit-llvm| B[完整 LLVM IR]
-    B --> C[提取 stencil kernel]
-    C -->|独立 LLVM 19 opt| D[StencilAnalysis]
-    D --> E[StencilPrefetchDecision]
-    E --> F[插入 llvm.aarch64.prefetch]
-    F -->|LLVM AArch64 后端| G[PRFM/PRFUM]
-```
-
-具体对应关系如下：
-
-1. `01_llvm_ir_analysis/generate_and_check.sh` 调用毕昇 `clang++`，使用
-   `-O1 -fno-inline -S -emit-llvm` 生成完整 `.ll`，再从包含 `test` 和 `main` 的
-   Module 中提取 stencil kernel。
-2. `02_llvm_pass_plugin/build_and_test.sh` 使用独立 LLVM 19 构建并加载
-   `StencilPrefetchPass`。
-3. `StencilAnalysis` 从 GEP、load、循环、SCEV 和可伸缩向量步长中恢复数据流；
-   `StencilPrefetchDecision` 立即作出距离、层级和 KEEP/STRM 决策。
-4. 同一个 Pass 在循环中插入 `llvm.aarch64.prefetch`，然后 `verify` 检查 IR。
-5. AArch64 后端把 intrinsic 选择为目标预取指令。当前脚本还会核对 IR 中 intrinsic
-   数量与汇编中的 `PRFM`/`PRFUM` 数量。
-
-因此我们的 Pass 位于 **Clang 前端和初始 `-O1` IR 优化之后、AArch64 指令选择
-之前**。它能看到规范化后的 SSA、GEP、循环和 SCEV，但已经失去一部分 C++ 层的
-数组形状、源码变量名和 stencil 邻域表达式语义，这也是当前分析必须从 IR 拓扑
-恢复物理流的原因。
-
-### 2.6 在服务器观察每一步
-
-以下命令只观察编译过程，不需要修改源码。`BISHENG_CXX` 应指向能直接编译原 SME
-程序的毕昇 `clang++`：
-
-```bash
-# 1. 查看版本、资源头文件目录和 Driver 将执行的子任务。
-"$BISHENG_CXX" --version
-"$BISHENG_CXX" -print-resource-dir
-"$BISHENG_CXX" -### -march=armv9-a+sme+sme-f64f64 stencil_all_sme.cpp
-
-# 2. 查看预处理结果。
-"$BISHENG_CXX" -E -march=armv9-a+sme+sme-f64f64 \
-  stencil_all_sme.cpp -o stencil_all_sme.ii
-
-# 3. 查看 Clang AST；输出很大，重定向到文件。
-"$BISHENG_CXX" -march=armv9-a+sme+sme-f64f64 -fsyntax-only \
-  -Xclang -ast-dump stencil_all_sme.cpp > stencil_all_sme.ast.txt
-
-# 4. 生成 LLVM IR。项目步骤 1 使用 -O1 和 -fno-inline。
-"$BISHENG_CXX" -O1 -fno-inline -S -emit-llvm \
-  -march=armv9-a+sme+sme-f64f64 stencil_all_sme.cpp -o stencil_all_sme.ll
-
-# 5. 不经过汇编和链接，直接查看 AArch64 汇编。
-"$BISHENG_CXX" -O1 -S -march=armv9-a+sme+sme-f64f64 \
-  stencil_all_sme.cpp -o stencil_all_sme.s
-```
-
-本项目的真实服务器流程不能简单地把所有步骤都换成独立 LLVM 的 `clang++`：原始
-C++ 应先由毕昇前端处理 SME ACLE 与 ABI；独立 LLVM 19 负责读取兼容的 LLVM IR、
-运行自定义 `opt` Pass。生成最终可执行文件时仍需使用能正确提供毕昇 SME ABI
-运行时和链接参数的毕昇驱动。
-
-## 3. SMEStencil 论文逐章分析
+## 3. SMEStencil 论文分析
 
 ### 3.1 论文信息与整体结构
 
@@ -629,16 +552,11 @@ C++ 应先由毕昇前端处理 SME ACLE 与 ABI；独立 LLVM 19 负责读取�
 | VI. Experiments | 验证各项优化、整体性能、扩展性和 RTM 应用收益 |
 | VII. Conclusion | 总结结论、适用边界和未来方向 |
 
-论文研究的是 ARMv9-A 多核 CPU 上利用 SME 加速高阶 stencil 的全栈方案，不是
-编译器自动识别 stencil 或自动插入软件预取的论文。
-
 ### 3.2 第一章：Introduction
 
 #### 3.2.1 本章提出的问题
 
-第一章先说明 stencil 是有限差分、有限体积等 PDE 离散方法中的基础计算模式，广泛
-用于天气、流体和地震模拟。高阶 3D stencil 尤其重要，因为更大的半径可以用更少
-网格点达到所需数值精度，从而降低 RTM 等应用的存储规模。
+高阶stencli的重要性。高阶stencli：半径通常大于1
 
 但高阶 stencil 也带来新的性能困难：
 
@@ -648,16 +566,7 @@ C++ 应先由毕昇前端处理 SME ACLE 与 ABI；独立 LLVM 19 负责读取�
 - 真实 HPC 应用会组合多种 stencil 和中间结果，单个 kernel 的加速不一定能转化为
   应用加速。
 
-#### 3.2.2 本章指出的研究空白
-
-已有 Tensor Core 方案主要研究 2D star/box stencil，且后续复现实验表明它们未必
-优于优化良好的 CUDA Core 实现。已有工作也很少同时处理以下三点：
-
-1. 3D 高阶 stencil；
-2. ARM SME 外积矩阵单元；
-3. 从 kernel 到多核、NUMA 和真实 RTM 的端到端优化。
-
-第一章据此提出论文的核心研究问题：如何让 SME 在不同维度、形状和半径的 stencil
+第一章提出的核心研究问题：如何让 SME 在不同维度、形状和半径的 stencil
 上保持高利用率，并把 kernel 收益扩展到真实 HPC 应用。
 
 #### 3.2.3 本章列出的贡献
@@ -766,7 +675,7 @@ blocking 深度，因此实验统一使用单时间步。
 
     Cycles_SIMD = VL * (2r + 1) * CPI_SIMD
     Cycles_SME  = (VL + 2r) * CPI_SME
-
+    
     FLOPS_SMEStencil
       = [VL * (2r + 1) * CPI_SIMD / ((VL + 2r) * CPI_SME)]
         * FLOPS_SIMD
