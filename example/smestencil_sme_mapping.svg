@@ -1,0 +1,162 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="940" viewBox="0 0 1500 940" role="img" aria-labelledby="title desc">
+  <title id="title">SMEStencil 将一维 stencil 映射到 SME 外积</title>
+  <desc id="desc">Y 方向使用移位系数列向量乘输入行向量，X 方向使用输入列向量乘移位系数行向量，累加后 ZA 各行各列对应不同输出。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7f2e7"/>
+      <stop offset="1" stop-color="#e4eee9"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#145f78"/>
+      <stop offset="1" stop-color="#248da7"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#d9792d"/>
+      <stop offset="1" stop-color="#eda64d"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#24674f"/>
+      <stop offset="1" stop-color="#46916d"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#17372e" flood-opacity="0.13"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#355049"/>
+    </marker>
+    <style>
+      .title { font: 700 34px Georgia, 'Noto Serif SC', serif; fill: #17372e; }
+      .subtitle { font: 18px Georgia, 'Noto Serif SC', serif; fill: #4d645c; }
+      .panel-title { font: 700 22px Georgia, 'Noto Serif SC', serif; fill: #17372e; }
+      .body { font: 16px Georgia, 'Noto Serif SC', serif; fill: #334c45; }
+      .small { font: 14px Georgia, 'Noto Serif SC', serif; fill: #526961; }
+      .mono { font: 15px Menlo, Consolas, monospace; fill: #17372e; }
+      .mono-light { font: 14px Menlo, Consolas, monospace; fill: #fffdf7; }
+      .cell { stroke: #fffaf0; stroke-width: 2; }
+      .arrow { stroke: #355049; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1500" height="940" fill="url(#bg)"/>
+  <circle cx="1410" cy="30" r="210" fill="#e6a249" opacity="0.10"/>
+  <circle cx="20" cy="920" r="250" fill="#18718b" opacity="0.08"/>
+
+  <text x="65" y="62" class="title">论文中的映射：用“移位系数”让 ZA 每一行/列计算不同输出</text>
+  <text x="65" y="96" class="subtitle">概念示例：半径 r=1，N 表示运行时向量 lane 数；实际实现会遍历带 halo 的全部输入行或列</text>
+
+  <!-- Y mapping panel -->
+  <g filter="url(#shadow)">
+    <rect x="55" y="140" width="680" height="515" rx="26" fill="#fffdf7"/>
+  </g>
+  <circle cx="92" cy="178" r="20" fill="#145f78"/>
+  <text x="86" y="185" class="mono-light">Y</text>
+  <text x="128" y="185" class="panel-title">Y 方向：系数列向量 x 输入行向量</text>
+  <text x="85" y="220" class="mono">ZA += w_t x input[t,:]</text>
+  <text x="85" y="249" class="small">t 是当前加载的输入行；w_t 在依赖该输入行的输出位置放系数，其余位置放 0</text>
+
+  <g transform="translate(90 292)">
+    <text x="0" y="-12" class="small">移位系数列 w_t</text>
+    <rect x="20" y="5" width="72" height="50" rx="7" fill="url(#orange)" class="cell"/>
+    <rect x="20" y="55" width="72" height="50" rx="7" fill="url(#orange)" class="cell"/>
+    <rect x="20" y="105" width="72" height="50" rx="7" fill="url(#orange)" class="cell"/>
+    <rect x="20" y="155" width="72" height="50" rx="7" fill="#dfe7e2" class="cell"/>
+    <text x="37" y="36" class="mono-light">a+1</text><text x="40" y="86" class="mono-light">a0</text>
+    <text x="37" y="136" class="mono-light">a-1</text><text x="50" y="186" class="mono">0</text>
+
+    <text x="122" y="116" class="panel-title">x</text>
+    <text x="168" y="30" class="small">连续输入行 input[t,:]</text>
+    <rect x="160" y="54" width="65" height="56" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="225" y="54" width="65" height="56" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="290" y="54" width="65" height="56" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="355" y="54" width="65" height="56" rx="7" fill="url(#blue)" class="cell"/>
+    <text x="174" y="88" class="mono-light">u0,t</text><text x="239" y="88" class="mono-light">u1,t</text>
+    <text x="304" y="88" class="mono-light">...</text><text x="365" y="88" class="mono-light">uN-1,t</text>
+
+    <path d="M435 82 L475 82" class="arrow"/>
+    <text x="455" y="67" class="small">外积</text>
+
+    <text x="485" y="-12" class="small">本次对 ZA 的贡献</text>
+    <g transform="translate(485 5)">
+      <g fill="url(#green)">
+        <rect x="0" y="0" width="52" height="48" rx="5" class="cell"/><rect x="52" y="0" width="52" height="48" rx="5" class="cell"/><rect x="104" y="0" width="52" height="48" rx="5" class="cell"/>
+        <rect x="0" y="48" width="52" height="48" rx="5" class="cell"/><rect x="52" y="48" width="52" height="48" rx="5" class="cell"/><rect x="104" y="48" width="52" height="48" rx="5" class="cell"/>
+        <rect x="0" y="96" width="52" height="48" rx="5" class="cell"/><rect x="52" y="96" width="52" height="48" rx="5" class="cell"/><rect x="104" y="96" width="52" height="48" rx="5" class="cell"/>
+      </g>
+      <g fill="#dfe7e2">
+        <rect x="0" y="144" width="52" height="48" rx="5" class="cell"/><rect x="52" y="144" width="52" height="48" rx="5" class="cell"/><rect x="104" y="144" width="52" height="48" rx="5" class="cell"/>
+      </g>
+      <text x="18" y="30" class="mono-light">*</text><text x="70" y="30" class="mono-light">*</text><text x="122" y="30" class="mono-light">*</text>
+      <text x="18" y="78" class="mono-light">*</text><text x="70" y="78" class="mono-light">*</text><text x="122" y="78" class="mono-light">*</text>
+      <text x="18" y="126" class="mono-light">*</text><text x="70" y="126" class="mono-light">*</text><text x="122" y="126" class="mono-light">*</text>
+      <text x="20" y="175" class="mono">0</text><text x="72" y="175" class="mono">0</text><text x="124" y="175" class="mono">0</text>
+    </g>
+  </g>
+  <rect x="85" y="535" width="620" height="88" rx="14" fill="#e5f0eb"/>
+  <text x="105" y="565" class="body">遍历 t = -r ... Vy+r-1 并累加后：</text>
+  <text x="105" y="595" class="mono">ZA[y,x] = sum(delta=-r..r) a[delta] * input[y+delta,x]</text>
+  <text x="105" y="616" class="small">不同输出行使用不同的移位系数位置，因此 ZA 各行不是副本</text>
+
+  <!-- X mapping panel -->
+  <g filter="url(#shadow)">
+    <rect x="765" y="140" width="680" height="515" rx="26" fill="#fffdf7"/>
+  </g>
+  <circle cx="802" cy="178" r="20" fill="#d9792d"/>
+  <text x="796" y="185" class="mono-light">X</text>
+  <text x="838" y="185" class="panel-title">X 方向：输入列向量 x 系数行向量</text>
+  <text x="795" y="220" class="mono">ZA += input[:,t] x transpose(w_t)</text>
+  <text x="795" y="249" class="small">原始 row-major 布局下列访问不连续，因此论文后续使用 ZA 辅助转置</text>
+
+  <g transform="translate(800 292)">
+    <text x="0" y="-12" class="small">输入列 input[:,t]</text>
+    <rect x="28" y="5" width="72" height="50" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="28" y="55" width="72" height="50" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="28" y="105" width="72" height="50" rx="7" fill="url(#blue)" class="cell"/>
+    <rect x="28" y="155" width="72" height="50" rx="7" fill="url(#blue)" class="cell"/>
+    <text x="42" y="36" class="mono-light">u0,t</text><text x="42" y="86" class="mono-light">u1,t</text>
+    <text x="49" y="136" class="mono-light">...</text><text x="36" y="186" class="mono-light">uN-1,t</text>
+
+    <text x="130" y="116" class="panel-title">x</text>
+    <text x="177" y="30" class="small">移位系数行 w_t</text>
+    <rect x="170" y="54" width="65" height="56" rx="7" fill="url(#orange)" class="cell"/>
+    <rect x="235" y="54" width="65" height="56" rx="7" fill="url(#orange)" class="cell"/>
+    <rect x="300" y="54" width="65" height="56" rx="7" fill="url(#orange)" class="cell"/>
+    <rect x="365" y="54" width="65" height="56" rx="7" fill="#dfe7e2" class="cell"/>
+    <text x="186" y="88" class="mono-light">a+1</text><text x="255" y="88" class="mono-light">a0</text>
+    <text x="316" y="88" class="mono-light">a-1</text><text x="391" y="88" class="mono">0</text>
+
+    <path d="M438 82 L458 82" class="arrow"/>
+    <text x="438" y="67" class="small">外积</text>
+
+    <text x="470" y="-12" class="small">本次对 ZA 的贡献</text>
+    <g transform="translate(470 5)">
+      <g fill="url(#green)">
+        <rect x="0" y="0" width="40" height="48" rx="5" class="cell"/><rect x="40" y="0" width="40" height="48" rx="5" class="cell"/><rect x="80" y="0" width="40" height="48" rx="5" class="cell"/>
+        <rect x="0" y="48" width="40" height="48" rx="5" class="cell"/><rect x="40" y="48" width="40" height="48" rx="5" class="cell"/><rect x="80" y="48" width="40" height="48" rx="5" class="cell"/>
+        <rect x="0" y="96" width="40" height="48" rx="5" class="cell"/><rect x="40" y="96" width="40" height="48" rx="5" class="cell"/><rect x="80" y="96" width="40" height="48" rx="5" class="cell"/>
+        <rect x="0" y="144" width="40" height="48" rx="5" class="cell"/><rect x="40" y="144" width="40" height="48" rx="5" class="cell"/><rect x="80" y="144" width="40" height="48" rx="5" class="cell"/>
+      </g>
+      <g fill="#dfe7e2">
+        <rect x="120" y="0" width="40" height="48" rx="5" class="cell"/><rect x="120" y="48" width="40" height="48" rx="5" class="cell"/><rect x="120" y="96" width="40" height="48" rx="5" class="cell"/><rect x="120" y="144" width="40" height="48" rx="5" class="cell"/>
+      </g>
+      <text x="14" y="30" class="mono-light">*</text><text x="54" y="30" class="mono-light">*</text><text x="94" y="30" class="mono-light">*</text><text x="134" y="30" class="mono">0</text>
+      <text x="14" y="78" class="mono-light">*</text><text x="54" y="78" class="mono-light">*</text><text x="94" y="78" class="mono-light">*</text><text x="134" y="78" class="mono">0</text>
+      <text x="14" y="126" class="mono-light">*</text><text x="54" y="126" class="mono-light">*</text><text x="94" y="126" class="mono-light">*</text><text x="134" y="126" class="mono">0</text>
+      <text x="14" y="174" class="mono-light">*</text><text x="54" y="174" class="mono-light">*</text><text x="94" y="174" class="mono-light">*</text><text x="134" y="174" class="mono">0</text>
+    </g>
+  </g>
+  <rect x="795" y="535" width="620" height="88" rx="14" fill="#f7e4ca"/>
+  <text x="815" y="565" class="body">遍历 t = -r ... Vx+r-1 并累加后：</text>
+  <text x="815" y="595" class="mono">ZA[y,x] = sum(delta=-r..r) a[delta] * input[y,x+delta]</text>
+  <text x="815" y="616" class="small">不同输出列使用不同的移位系数位置，因此 ZA 各列对应不同输出</text>
+
+  <!-- 3D composition and contrast -->
+  <g filter="url(#shadow)">
+    <rect x="55" y="700" width="1390" height="185" rx="24" fill="#17372e"/>
+  </g>
+  <text x="85" y="741" style="font:700 21px Georgia, 'Noto Serif SC', serif; fill:#fffdf7">从一维映射组合成 3D stencil</text>
+  <text x="85" y="775" style="font:16px Georgia, 'Noto Serif SC', serif; fill:#dce9e3">X/Y 方向分别形成 (Vx,Vy,1) 部分结果；Z 方向按外层维度形成 (Vx,1,Vz) 切片，再累加/组合为完整 3D 结果。</text>
+  <rect x="85" y="805" width="600" height="52" rx="12" fill="#285a4b"/>
+  <text x="105" y="837" style="font:15px Menlo,Consolas,monospace; fill:#fffdf7">论文：shifted_coeff x input  -> ZA 各行/列是不同输出</text>
+  <rect x="745" y="805" width="665" height="52" rx="12" fill="#8a5028"/>
+  <text x="765" y="837" style="font:15px Menlo,Consolas,monospace; fill:#fffdf7">当前示例：ones x neighbor -> ZA 各行相同，最终只读取第 0 行</text>
+</svg>

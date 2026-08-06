@@ -589,17 +589,50 @@ CodeGen 会把这些目标相关操作降为 `llvm.aarch64.sve.*` 或
 
 #### 3.5.1 Mapping Stencil to the SME Unit
 
-论文先把一维 stencil 映射到 SME 外积。设输出 tile 为 (Vx, Vy)，半径为 r：
+论文先将三维 stencil 分解为 x、y、z 三个方向的一维 stencil，再利用 SME 外积
+一次更新 ZA 的多行或多列。设 ZA 中的输出块大小为 `(Vx, Vy)`，半径为 `r`，一维
+系数为 `a[-r] ... a[r]`。
 
-- y 方向从带左右 halo 的输入块逐行加载向量；
-- 另一个外积操作数是由 stencil 系数和零元素构成的列向量；
-- 外积把输入向量按系数广播到相应输出行并累加到 ZA；
-- x 方向采用对称的列映射；
-- z 方向把最外层维度按类似方式处理；
-- 3D stencil 通过组合 x、y、z 三个一维映射实现。
+**y 方向映射**使用“移位系数列向量乘输入行向量”。处理输入行 `t` 时，从
+`(Vx, Vy+2r)` 输入 patch 加载长度为 `Vx` 的连续行向量 `input[t,:]`，同时构造
+形状为 `(Vy,1)` 的列向量 `w_t`：只有依赖输入行 `t` 的输出行位置包含对应
+stencil 系数，其余位置为零。一次外积为：
 
-这种方法不是先构造完整通用矩阵再调用矩阵乘法，而是直接利用 SME 外积对 ZA 多行
-或多列进行广播累加。
+```text
+ZA += w_t x input[t,:]
+```
+
+遍历带 halo 的所有输入行并累加后：
+
+```text
+ZA[y,x] = sum(delta=-r..r) a[delta] * input[y+delta,x]
+```
+
+同一个输入行会按照不同系数贡献给相邻输出行。由于每次处理的 `t` 不同，系数向量
+中的非零位置也随之移动，所以 ZA 各行最终对应不同的输出，而不是同一向量的副本。
+
+**x 方向映射**采用对称形式“输入列向量乘移位系数行向量”：
+
+```text
+ZA += input[:,t] x transpose(w_t)
+
+ZA[y,x] = sum(delta=-r..r) a[delta] * input[y,x+delta]
+```
+
+这里一个输入列同时向相邻输出列贡献数据。原始 row-major 网格中的列访问不连续，
+因此论文随后在 3.5.3 中使用 ZA 的水平 load 和垂直 store 完成辅助转置，避免昂贵
+的 gather 或大量 SVE permutation。
+
+![SMEStencil 将一维 stencil 映射到 SME 外积](./smestencil_sme_mapping.svg)
+
+对于 z 方向，论文把最外层维度按相同思想处理。x/y 方向的一个 ZA tile 对应
+`(Vx,Vy,1)` 切片，z 方向则采用 `(Vx,1,Vz)` 切片；复杂 3D stencil 通过组合三个
+方向的部分结果形成。
+
+这个映射不是先构造一个通用稠密矩阵再调用矩阵乘法，而是直接把 stencil 的局部
+依赖编码进带零元素的移位系数向量。它也与第一部分的示例代码不同：示例使用
+`ones x neighbor`，使 ZA 各行相同并只读取第 0 行；论文使用移位系数向量，使一次
+外积真正为多个不同输出位置贡献数据。
 
 #### 3.5.2 A Preliminary Performance Model
 
