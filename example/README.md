@@ -558,3 +558,265 @@ flowchart LR
 C++ 应先由毕昇前端处理 SME ACLE 与 ABI；独立 LLVM 19 负责读取兼容的 LLVM IR、
 运行自定义 `opt` Pass。生成最终可执行文件时仍需使用能正确提供毕昇 SME ABI
 运行时和链接参数的毕昇驱动。
+
+## 3. SMEStencil 论文分析
+
+### 3.1 论文信息与研究范围
+
+本节分析本地论文
+`论文/SMEStencil_Optimizing_High-Order_Stencils_on_ARM_Multicore_Using_SME_Unit.pdf`：
+
+- 题目：*SMEStencil: Optimizing High-Order Stencils on ARM Multicore Using SME Unit*。
+- 作者：Yinuo Wang、Tianqi Mao、Lin Gan 等。
+- 期刊：IEEE Transactions on Parallel and Distributed Systems，Vol. 37，No. 3，
+  2026 年 3 月。
+- DOI：[10.1109/TPDS.2025.3650515](https://doi.org/10.1109/TPDS.2025.3650515)。
+
+论文研究的是 **ARMv9-A 多核 CPU 上利用 SME 加速高阶 stencil 的全栈方案**。
+它不仅优化单个 kernel，还同时处理内存布局、多核数据共享、NUMA 通信和真实 RTM
+应用集成。论文不是编译器自动识别和插入软件预取的工作，也没有提出一个通用的
+LLVM Pass。
+
+### 3.2 研究问题
+
+论文要解决的核心问题是：**如何让面向矩阵乘法设计的 SME 单元，在 3D 高阶
+stencil 及真实 HPC 应用中持续获得高利用率，并使 ARM 多核 CPU 的端到端性能达到
+或超过 GPU。** 这一问题可以拆成五个层次。
+
+#### 3.2.1 高阶 3D stencil 的性能下降
+
+简单的 2D stencil 和低阶 3D stencil 已能被编译器或手写 SIMD 高效执行，进一步
+优化的空间有限。但是 stencil 半径增大后：
+
+- 邻域点数和计算量增长，传统 SIMD 的指令数和调度压力随之增加；
+- 工作集和 halo 扩大，跨行、跨平面访问以及数据复用更加困难；
+- star 与 box 等不同拓扑的计算和访存特征差异很大；
+- CPU 和 GPU 上已有方案的带宽利用率都会明显下降。
+
+因此论文没有把“所有 stencil 都换成 SME”作为前提，而是把重点放在现有编译器和
+SIMD 表现较差的 **3D 高阶 stencil** 上。
+
+#### 3.2.2 stencil 与 SME 外积模型不天然匹配
+
+SME 的核心计算形式是向量外积并累加到 ZA tile，而 stencil 是邻域加权求和。两者
+需要进行算法映射。此外，3D stencil 的不同方向还带来不同问题：
+
+- y 方向可以连续加载行向量，较容易映射；
+- x 方向需要列向量，原始布局会产生非连续访问和转置开销；
+- z 方向与 x/y 方向使用的 tile 形状不同，中间结果需要保存和重新加载；
+- box stencil 分解为多个一维 stencil 后会产生重复加载和非对齐访问。
+
+#### 3.2.3 SME 加速后瓶颈重新转向内存
+
+SME 提高了计算吞吐率，但 stencil 仍需要持续读取输入并写回输出。论文平台的片上
+高带宽内存具有很宽的数据端口；如果访问流数量过多、访问不连续或预取不及时，
+理论带宽无法被充分利用。高计算吞吐反而使内存供给更容易成为瓶颈。
+
+#### 3.2.4 多核私有缓存导致 halo 重复流量
+
+论文平台没有可供所有核心共享的大容量 LLC，每个核心主要依赖私有数据缓存。
+线程分块后，相邻 tile 的 halo 会被多个核心重复从内存读取，限制数据复用和带宽
+效率。传统“交给共享 LLC”的做法在该平台上不可用。
+
+#### 3.2.5 NUMA 与真实应用集成
+
+真实 RTM 包含多种 stencil、混合偏导数、中间结果和标量运算，不是独立 benchmark
+kernel。跨 NUMA 扩展时，MPI 的锁、halo 打包和通信也可能掩盖 kernel 加速收益。
+论文因此还必须回答两个问题：优化 kernel 如何组合成真实应用，以及如何把性能扩展
+到多个 NUMA 域和多个处理器。
+
+### 3.3 研究目标
+
+论文的目标不是只让某一个固定 stencil 获得最高速度，而是形成一个覆盖 kernel、
+内存和并行层次的 SMEStencil 框架：
+
+1. 建立 stencil 到 SME 外积的通用映射，使 star/box、2D/3D 和不同半径都能利用
+   SME，而不是仅支持矩阵乘法或单一 stencil。
+2. 通过 SME/SVE 微架构优化，减少跨方向访问、转置、中间结果和重复加载的成本。
+3. 通过数据布局和软件预取提高片上高带宽内存利用率，使 SME 不因数据供给不足而
+   空闲。
+4. 在缺少共享 LLC 的多核平台上减少 halo 的重复主存流量。
+5. 使用 NUMA 感知通信和计算通信重叠，提高多进程扩展性。
+6. 将基本 stencil 算子组合到 VTI/TTI RTM 中，验证 kernel 收益能转化为真实应用
+   的端到端收益。
+
+### 3.4 具体方案
+
+论文方案可以概括为以下流水线：
+
+```mermaid
+flowchart TD
+    A[高阶 star/box stencil] --> B[按 x/y/z 分解为一维 stencil]
+    B --> C[映射为 SME 外积与 ZA tile 累加]
+    C --> D[Tile 级 ILP 与 ZA 辅助转置]
+    D --> E[消除重复访问并安排中间结果]
+    E --> F[brick 数据布局]
+    F --> G[SVE gather-based 软件预取]
+    G --> H[cache-snoop 多线程共享]
+    H --> I[SDMA NUMA halo 交换与流水重叠]
+    I --> J[组合为 VTI/TTI RTM]
+```
+
+#### 3.4.1 将 stencil 映射到 SME 外积
+
+论文先把一维 stencil 映射为外积。设 SME 的输出 tile 为
+`(Vx, Vy)`，stencil 半径为 `r`：
+
+- y 方向从 `(Vx, Vy + 2r)` 输入块逐行加载 `(Vx, 1)` 向量；
+- 将带有 stencil 系数和零元素的列向量作为另一外积操作数；
+- 每次外积把一个输入向量按系数广播并累加到相应输出行；
+- x 方向使用对称的列向量映射；
+- z 方向把最外层维度按相同思想处理；
+- 复杂 3D stencil 通过组合 x、y、z 三个方向的一维映射实现。
+
+这不是把完整 stencil 先转换成通用矩阵乘法，而是直接利用“外积向 tile 多行或多列
+广播并累加”的语义。
+
+#### 3.4.2 初步性能模型
+
+对于 SIMD 向量长度 `VL`、半径 `r` 的一维 stencil，论文比较计算一个
+`(VL, VL)` 输出块所需的指令周期：
+
+```text
+Cycles_SIMD = VL * (2r + 1) * CPI_SIMD
+Cycles_SME  = (VL + 2r) * CPI_SME
+
+FLOPS_SMEStencil
+  = [VL * (2r + 1) * CPI_SIMD / ((VL + 2r) * CPI_SME)]
+    * FLOPS_SIMD
+```
+
+其中 `CPI_SIMD` 是 SIMD FMA 的每指令周期，`CPI_SME` 是 SME 外积的每指令周期。
+该模型说明：SIMD 指令数随 `VL * (2r+1)` 增长，而 SME 外积数只随 `VL+2r`
+增长，所以半径越大，SME 越可能体现计算吞吐优势。论文平台采用
+`CPI_SIMD=0.5`、单精度 `CPI_SME=2` 的模型参数，并指出 `r>1` 时 SME 开始具有
+理论优势。
+
+该模型只估计计算部分，并不包含转置、load/store、cache miss 和中间结果开销；
+这些成本由后续优化和实验进一步评估。
+
+#### 3.4.3 四项微架构优化
+
+论文围绕 SME/SVE 提出四项 kernel 级优化：
+
+1. **Tile-Based ILP**：在多个 ZA matrix tile 之间交错执行彼此无依赖的外积，
+   让乱序执行器隐藏外积延迟并提高指令级并行度。
+2. **Tile-Assisted Vector Transpose**：x 方向需要列访问。论文不使用大量 SVE
+   permutation，而是先水平写入 ZA tile，再从 ZA 垂直读出，实现 tile 辅助转置。
+3. **Cache Pollution Avoiding Intermediate Result Placement**：x/y 与 z 方向 tile
+   形状不一致，需要暂存部分结果。论文写入临时缓冲区，而不是直接写最终输出，
+   避免最终目标的额外 read-for-ownership/写回过程污染缓存。
+4. **Redundant-Access Zeroing Box Stencil**：把多个 y 方向一维 stencil 的选择放入
+   内层，在一次迭代中共享相邻 cache line，并用 SIMD splice 提取各外积需要的
+   数据，减少 box stencil 的重复和非对齐访问。
+
+#### 3.4.4 数据布局优化
+
+Tile-Based ILP 会同时访问大量离散数据流。论文以单精度 3DStarR4 为例，在
+`Vx=Vy=16, Vz=4` 时可产生 226 条访问流，难以充分利用宽内存端口。
+
+为此，论文借鉴 BrickLib，把规则网格重排为 `(Bx, By, Bz)` brick，并在 halo 与
+brick 相交时加载整个 brick。论文取 `Bx=VL`、`By=Bz=4`，用更少、更连续的物理
+访问流换取一定的 halo 额外流量。这里的 `4` 与其典型应用最大半径和 tile 整除
+关系有关，不是适用于所有硬件和算子的通用常量。
+
+#### 3.4.5 Gather-Based 软件预取
+
+论文认为目标 ARM 多核核心的硬件预取能力不足，因此显式加入软件预取。其方案并非
+为每条普通加载单独发出一个 64 B 预取，而是：
+
+1. 先通过 brick layout 让一个 tile 需要的 cache line 具有规则结构；
+2. 在 SVE 向量的每个 lane 中放置一个 cache line 头地址；
+3. 使用 gather-prefetch，一条指令同时触达 `VL` 条 cache line；
+4. 单精度情况下，用一次 gather-prefetch 覆盖一个 brick；
+5. 以较少预取指令把内存访问与 SME 计算重叠，避免普通预取大量穿插后增加调度
+   压力。
+
+该方案的成立条件包括：已采用论文的 brick 数据布局、目标支持 SVE gather
+prefetch、cache 以 cache line 为传输粒度，而且额外预取流量能够被高带宽内存
+承受。
+
+#### 3.4.6 真实应用的算子组合
+
+论文提供处理 `(Vx, Vy, Vz)` 小块的基本一维 stencil 算子，再把复杂 RTM kernel
+分解为一系列小算子。对于 TTI 中的混合二阶偏导：
+
+- 先计算一阶导数并放入线程私有临时缓冲区；
+- 利用混合偏导的交换性选择更有利的 x/y/z 组合顺序；
+- 必要时对中间结果转置，再执行下一方向的一维 stencil；
+- 最后用 SVE 标量/向量运算组合偏导数和介质参数。
+
+只要临时缓冲区不挤出私有缓存，就可以在后续 stencil 中复用中间结果，避免回到
+主存。
+
+#### 3.4.7 多线程 cache-snoop 数据共享
+
+在没有共享 LLC 的平台上，论文把每个线程的 tile 在空间上相邻放置，并让 tile 在
+y 方向较窄。相邻线程读取 halo 时，如果数据已经在另一核心的私有缓存中，就通过
+缓存一致性目录和片上互连取得，而不是再次读取主存。
+
+该方案利用硬件 cache snoop 隐式共享 halo，减少每个核心必须独立维护的数据复用
+维度。它依赖目标 SoC 的缓存一致性、核心拓扑和私有缓存容量，不是仅修改 kernel
+内部指令即可获得的效果。
+
+#### 3.4.8 NUMA 通信与流水重叠
+
+论文在 NUMA 域内使用 OpenMP，在 NUMA 域间采用多进程。由于少量 MPI 进程难以
+充分利用域间带宽，论文使用 SoC 的 SDMA 引擎执行异步、可跨步的 halo 拷贝。
+
+网格沿 z 方向分层：CPU 计算当前层时，SDMA 传输下一层 halo；进入下一层前检查
+传输是否完成。这样既避免 SDMA 占用 CPU 核心和污染 cache，也实现计算与通信
+重叠。该方案是平台相关优化，需要目标服务器提供可编程 SDMA 能力。
+
+### 3.5 实验如何验证方案
+
+论文使用 8 个不同维度、形状和半径的 benchmark，包括 2D/3D、star/box 和多个
+半径，并使用 elapsed time、Gpoints/s、有效带宽和实际 memory traffic 四类指标。
+主要观察如下：
+
+- brick layout 是 DDR 和片上高带宽内存上最主要的单项收益来源；
+- cache-snoop 在四个代表性 3D kernel 上将全局内存流量降低约 22% 到 26%，在
+  DDR 上带来最高约 26% 性能提升；
+- gather-prefetch 在 DDR 上大多收益很小，但在片上高带宽内存上分别带来约
+  38.09%、8.19%、24.26% 和 19.74% 的附加收益；
+- 简单 3DStarR2 上手写 SIMD 仍可能优于 SME，说明 SME 并非对所有算子都适用；
+- 对高阶 stencil，相比最佳 CPU 实现平均加速约 80%；
+- VTI/TTI RTM 相比工业优化 SIMD 版本分别约为 2.00 倍和 2.06 倍；
+- 多 NUMA/双 CPU 结合 SDMA 后，论文报告相对 GPU 实现最高 3.5 倍加速。
+
+这些结果来自论文的特定 ARM 多核 SoC、片上内存、数据精度、布局和并行配置，不能
+直接当作本项目服务器的预期加速比。
+
+### 3.6 与本项目预取 Pass 的关系
+
+论文能为本项目提供重要依据，但两种预取方案并不等价：
+
+| 对比项 | SMEStencil 论文 | 本项目当前方案 |
+|---|---|---|
+| 实现层级 | 手工设计 kernel、布局和并行算法 | LLVM IR Function Pass |
+| 数据布局 | 先将规则网格重排为 brick | 保留原 C++/LLVM IR 的线性布局 |
+| 预取形式 | SVE gather-prefetch，一次覆盖多个 cache line | `llvm.aarch64.prefetch`，后端生成 `PRFM/PRFUM` |
+| 候选单位 | 一个 brick 及其 halo cache line | 从循环、GEP 和 load 恢复出的物理访问流 |
+| 决策依据 | 方案人工设计并通过分解实验验证 | 分析模型生成距离、cache 层级和 KEEP/STRM 决策 |
+| 平台依赖 | 片上高带宽内存、SVE gather、SDMA、特定缓存拓扑 | LLVM/AArch64 通用表示加服务器 profile |
+
+论文对当前工作的直接启示是：
+
+1. **候选预取本身必须受布局和访问流数量约束。** 如果 IR 中仍有大量离散流，逐流
+   插入预取可能只会增加指令和带宽压力；筛选 mask 并不能从根本上修复不合适的
+   候选集合。
+2. **预取收益高度依赖内存层次。** 论文中 gather-prefetch 在 DDR 上大多无明显
+   收益、在片上高带宽内存上收益显著，因此 profile 至少要区分实际内存位置、延迟
+   和可用带宽，不能只按 stencil 名称决策。
+3. **短半径和规则硬件预取并不必然意味着无需软件预取。** 论文的短半径 halo
+   brick 存在跨步访问，整 brick 预取可以改善连续传输；但这依赖额外流量可接受。
+4. **预取必须与计算重叠且控制指令开销。** 论文选择 gather-prefetch 正是为了用
+   更少指令覆盖更多 cache line。当前普通 `PRFM` 方案应把“每次迭代发出多少条
+   预取”作为硬约束，而不仅考虑距离。
+5. **SME 不应无条件替代 SIMD。** 简单和低阶算子可能已经接近峰值，甚至因 SME
+   模式切换和中间结果开销而变慢；本项目的预取决策也应允许稳定地选择“不插入”。
+
+论文没有回答如何从任意 LLVM IR 自动恢复 brick、如何自动选择预取距离/层级/
+KEEP/STRM，也没有比较普通 `PRFM` 四类流。因此它可以支撑“高吞吐 SME stencil
+需要布局感知、硬件感知的软件预取”这一研究动机，但不能单独证明本项目当前四类
+预取和每项参数的具体取值正确。
