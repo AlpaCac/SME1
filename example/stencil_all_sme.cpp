@@ -7,8 +7,8 @@
 
 
 __arm_new("za")
-voud stencil3D_13point_sme(double* __restrict__ grid, double* __restrict__ new_grid, int depth, int rows, int cols, int stride )
-__arm_streamint {
+void stencil3D_13point_sme(double* __restrict__ grid, double* __restrict__ new_grid, int depth, int rows, int cols, int stride )
+__arm_streaming {
     uint64_t SVL = svcntd();
     int plane_size = rows * cols;
     svfloat64_t weight_vec = svdup_f64(1.0 / 13.0);
@@ -20,7 +20,7 @@ __arm_streamint {
             for(int j=1; j<cols-1; j+= SVL*stride) {
                 int j_limit = (cols-1<j+SVL*stride-1) ? cols-1 : j+SVL*stride-1;
                 svbool_t pg = svwhilelt_b64(j, j_limit + 1);
-                if( !svptest_any(svptrue_b64, pg)) break;
+                if( !svptest_any(svptrue_b64(), pg)) break;
                 
                 int base_idx = k*plane_size + i*cols + j;
                 
@@ -39,7 +39,7 @@ __arm_streamint {
                 svfloat64_t kp1_ip1_j0 = svld1_f64(pg, &grid[(k+1) * plane_size + (i+1) * cols + j]);
                 
                 svfloat64_t k1_i0_j1 = svld1_f64(pg, &grid[(k-1) * plane_size + i * cols + (j-1)]);
-                svfloat64_t kp1_i0_jp1 = svld1_f64(pg, &grid[(k-1) * plane_size + i * cols + (j+1)]);
+                svfloat64_t kp1_i0_jp1 = svld1_f64(pg, &grid[(k+1) * plane_size + i * cols + (j+1)]);
                 
                 svzero_za();
                 
@@ -61,7 +61,7 @@ __arm_streamint {
                 
                 svfloat64_t sum = svread_hor_za64_m(svundef_f64(), pg_all, 0, 0);
                 svfloat64_t result = svmul_f64_z(pg, sum, weight_vec);
-                sstl_f64(pg, &new_grid[base_idx], result);
+                svst1_f64(pg, &new_grid[base_idx], result);
                 
             }
         }
@@ -87,7 +87,7 @@ double test_stencil_3d_13point(bool run_stride1, bool run_stride2) {
         for(int iter=0; iter<100; iter++) stencil3D_13point_sme(g1, g2, DEPTH, ROWS, COLS, 1);
         auto end = std::chrono::high_resolution_clock::now();
         elapsed = std::chrono::duration<double>(end-start).count();
-        stdcout<<"Time:"<<elapsed<<std::endl;
+        std::cout<<"Time:"<<elapsed<<std::endl;
         total_time += elapsed;
     }
     
@@ -101,7 +101,7 @@ double test_stencil_3d_13point(bool run_stride1, bool run_stride2) {
         for(int iter=0; iter<100; iter++) stencil3D_13point_sme(g1, g2, DEPTH, ROWS, COLS, 2);
         auto end = std::chrono::high_resolution_clock::now();
         elapsed = std::chrono::duration<double>(end-start).count();
-        stdcout<<"Time:"<<elapsed<<std::endl;
+        std::cout<<"Time:"<<elapsed<<std::endl;
         total_time += elapsed;
     }
     
