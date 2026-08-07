@@ -634,27 +634,30 @@ ZA[y,x] = sum(delta=-r..r) a[delta] * input[y,x+delta]
 `ones x neighbor`，使 ZA 各行相同并只读取第 0 行；论文使用移位系数向量，使一次
 外积真正为多个不同输出位置贡献数据。
 
-##### 对应实现：3DStarR2 13-point
+##### 对应实现：与原代码一致的 3D 13-point
 
 `smestencil_paper_3d13.cpp` 新增了
-`stencil3d_star_r2_sme_paper`。它实现的是标准半径 2 的轴向 3D star：中心点、三个
-轴上距离 1 的六个点，以及距离 2 的六个点。系数采用四阶中心二阶导数公式：
+`stencil3d_13point_sme_paper`。它与 `stencil_all_sme.cpp` 的算子完全采用相同的
+13 个相对访问偏移，并对这 13 项求平均：
 
 ```text
-center = -7.5
-distance 1 = 4/3
-distance 2 = -1/12
+(0, 0, 0)
+(+/-1, 0, 0), (0, +/-1, 0), (0, 0, +/-1)
+(-1, +/-1, 0), (+1, +/-1, 0)
+(-1, 0, -1), (+1, 0, +1)
+output = sum(13 个点) / 13
 ```
 
-每次 `(i,j)` tile 使用论文式移位系数列向量填充多个 ZA 行；x/z 方向使用 one-hot
-行选择向量向对应 ZA 行补充轴向邻居，最后逐行读取 ZA 并写回。实现包含标量参考
-版本和 `smestencil_paper_3d13_self_test()`，测试尺寸刻意包含行、列尾块。性能测试
-`test_stencil_3d_star_r2()` 则沿用原文件的 `128 x 512 x 512`、输入初始化、100 次
+相对偏移按 `(dk, dx)` 分成 7 个连续输入流；每个流的合法 `dy` 关系写入论文式移位
+系数列向量。这样一次外积会填充多个正确的 ZA 行，最后逐行读取 ZA 并写回。实现包含
+与原算子逐点等价的标量参考版本和 `smestencil_paper_3d13_self_test()`，测试尺寸刻意
+包含行、列尾块。性能测试
+`test_stencil_3d_13point()` 则沿用原文件的 `128 x 512 x 512`、输入初始化、100 次
 调用、stride-1/stride-2 和 `Time:`/`Total Time:` 输出流程。
 
-原始 `stencil_all_sme.cpp` 没有被替换：它的 13 个邻域中包含跨平面对角项，拓扑不
-等同于论文的 3DStarR2。保留它可以直接对比“全 1 向量外积导致重复行”的旧实现与
-论文式移位系数映射。
+原始 `stencil_all_sme.cpp` 没有被替换；它保留为直接对比对象：原实现在每个邻居上
+使用 `ones x neighbor`，导致 ZA 各行重复并仅写回第 0 行；新实现对相同算子使用
+论文式移位系数映射并写回所有有效 ZA 行。
 
 在支持 SME 的 AArch64 主机上可用以下命令构建并运行自检：
 
@@ -685,39 +688,199 @@ clang++ -std=c++17 -O2 -march=armv9-a+sme+sme-f64f64 \
 
 #### 3.5.3 Microarchitectural Optimizations
 
-本节提出四项优化：
+这一节假设 stencil 已按 3.5.1 映射为 SME 外积。映射本身只说明“可以计算”，但不能
+保证 SME 管线、普通 load/store 管线和私有 cache 被高效使用。论文针对目标 ARM
+多核 CPU 的乱序执行（OOE）、LRU 型私有 cache、SVE 和 ZA tile 提出四项协同优化。
 
-1. Tile-Based ILP：把不同层的计算分配给多个 ZA tile，交错发出无数据依赖的
-   外积，让乱序执行器隐藏延迟。
-2. Tile-Assisted Vector Transpose：x 方向需要列向量。论文使用 ZA 的水平
-   load 和垂直 store 完成转置，替代大量 SVE permutation。
-3. Cache Pollution Avoiding Intermediate Result Placement：x/y 与 z 方向的
-   tile 形状不一致，部分结果必须写回再加载。论文写入临时缓冲区而不是最终输出，
-   减少额外 cache 读写和污染。
-4. Redundant-Access Zeroing Box Stencil：多个一维 stencil 共享相邻 cache line。
-   论文调整循环顺序，并用 SVE splice 提取各外积需要的数据，减少 box stencil 的
-   重复加载和非对齐访问。
+| 优化 | 直接解决的问题 | 主要资源 |
+|---|---|---|
+| Tile-Based ILP | 连续外积之间存在执行延迟，单个 ZA tile 不能持续填满 SME 管线 | 多个 ZA tile、OOE |
+| Tile-Assisted Vector Transpose | x 方向需要非连续列向量，直接 gather 或 SVE 转置代价高 | ZA 的水平/垂直 slice 访问 |
+| Cache Pollution Avoiding Intermediate Result Placement | 三个方向的部分结果 tile 形状不兼容，必须跨阶段保存 | 临时缓冲区、私有 cache 的替换策略 |
+| Redundant-Access Zeroing Box Stencil | box stencil 分解后重复读取相邻 cache line，且易产生非对齐访问 | 循环顺序、SVE splice |
 
-这四项优化分别解决外积延迟、x 方向跨步访问、方向切换的中间结果，以及 box
-stencil 的冗余访问。
+##### 1. Tile-Based ILP for Matrix Unit
+
+**问题。** 单条外积会更新一个 ZA tile，但相邻的外积对同一累加器有数据相关。若只在
+一个 tile 上连续发射外积，后续指令可能必须等待该 tile 的前一轮累加，SME 吞吐无法
+达到峰值。
+
+**论文的组织方式。** 对 x/y 方向，论文处理一个 `(VX, VY, VZ)` block，其中：
+
+```text
+VX = VY = VL
+VZ = ZA tile 个数的整数倍
+每个 ZA tile 负责一个 (VX, VY, 1) 的 z 层切片
+```
+
+它不把一个切片的所有外积做完再处理下一个切片，而是在多个 z 层对应的 ZA tile 之间
+交错发射外积。例如先向 tile 0 发射一次外积，再向 tile 1、tile 2 发射，之后才回到
+tile 0。不同 tile 的累加彼此没有数据依赖，OOE 可以将这些指令重排到 SME 可执行的
+时隙中，从而以并行工作填补单 tile 的累加延迟。
+
+z 方向的外积布局不同：一个 tile 对应 `(VX, 1, VZ)` 切片，而不是 `(VX, VY, 1)`。
+这也是后续中间结果放置问题的来源。
+
+**适用边界。** 该方法需要同时保有多个可用 ZA tile，并让 `VZ` 与 tile 数量匹配；它
+增加寄存器和循环调度复杂度。它优化的是计算指令级并行度，不减少任何 stencil 的数学
+工作量，也不自动解决内存带宽瓶颈。
+
+##### 2. Tile-Assisted Vector Transpose
+
+**问题。** row-major 网格中，y 方向可直接加载连续行；而 x 方向需要 `(1, VY, 1)`
+列向量，地址跨越行步长。直接 gather 受 load/store 吞吐限制：论文指出，在 512-bit
+单精度平台上，收集一个向量最多可消耗约 8 个周期。先用 SVE 做软件转置也很昂贵，
+理论上需要 `VL * log2(VL)` 次 permutation；512-bit 单精度的 `VL=16` 时为 64 次
+permutation，另有 load/store 开销。
+
+**论文的做法。** 先在 xy 平面对一个 `(VX, VY, VZ)` block 做显式转置，但不使用一串
+SVE permutation。它利用 ZA tile 能按水平或垂直 slice 插入、提取数据的特性：
+
+```text
+连续行数据 --水平 slice load--> ZA tile --垂直 slice store--> 转置后的内存块
+```
+
+转置后，原本的 x 方向列向量在临时布局中变成连续向量，后续外积可用普通连续 load。
+论文给出的 512-bit 单精度实例中，这个 ZA 辅助转置只需一次水平载入和一次垂直写出
+序列，共 32 条指令，显著少于 permutation 方案。
+
+**作用与代价。** 该方法把“每次计算时支付的非连续访问代价”转变为“每个 block 一次
+可控的转置代价”。只有当转置后的数据会被足够多的 x 方向计算复用时才值得；它依赖
+ZA slice 访问和临时存储，不能直接等同于普通 SVE 向量转置。
+
+##### 3. Cache Pollution Avoiding Intermediate Result Placement
+
+**问题。** 三维 star stencil 的三个方向不能一直使用同一种 tile 形状：x/y 阶段的
+结果是 `(VX, VY, 1)`，z 阶段却需要 `(VX, 1, VZ)`。因此 x/y 的部分结果不能原样留在
+同一个 ZA tile 中直接交给 z 阶段，必须先写回内存、再按 z 所需形状读入。
+
+**论文的做法。** 此处写回的目标不是最终 output grid，而是专用的临时缓冲区：
+
+```text
+x/y 外积结果
+    -> 线程当前 block 的临时缓冲区
+    -> 按 (VX, 1, VZ) 形状重新加载
+    -> z 外积
+    -> 最终 output grid
+```
+
+**为什么不是直接写最终数组。** 在论文假设的 LRU 型 cache 中，若还未完成的中间值先
+写入最终网格，后续还要读取、覆盖该位置，可能额外触发读/写序列，并把仍有复用价值的
+输入或 halo cache line 挤出私有 cache。临时缓冲区将“只为方向切换服务的短生命周期
+数据”与最终网格分离，减少这种污染。它不是减少必需的方向转换，而是让转换产生的
+流量和 cache 替换更可控。
+
+##### 4. Redundant-Access Zeroing Box Stencil
+
+**问题。** 二维 box stencil 可拆为 `2r+1` 个沿 y 的一维 stencil。若逐个一维
+stencil 执行，第 `q` 个 stencil 会访问相对区域 `(-q, -r)` 到
+`(VX-q, VY+r)`。这些子 stencil 的输入高度重叠，却会重复加载；当 `(0,0)` 恰好落在
+cache line 边界时，各子 stencil 还会各自产生非对齐访问。
+
+**论文的做法。** 观察到在一次 matrix-unit 外积迭代内，这 `2r+1` 个一维 stencil
+共同只需要相邻的 3 条 cache line。于是交换循环层次：
+
+```text
+原顺序：对每个 y 子 stencil，遍历其全部 matrix-unit 外积
+新顺序：对每次 matrix-unit 外积，连续处理全部 y 子 stencil
+```
+
+外层外积先加载这 3 条共享 cache line，内层再用 SVE `splice` 从已加载向量中抽取各
+子 stencil 所需、带不同偏移的数据。这样相同 line 只需加载一次，既消除重复读取，又
+将非对齐处理集中在向量拼接而非多次内存访问中。
+
+**适用边界。** 这是针对 box stencil 的优化，star stencil 不会获得同样的收益。论文
+强调它不增加额外算术运算，也不要求 stencil 系数满足特殊性质；前提是子 stencil 的
+邻域确实共享这些输入 cache line。
+
+##### 与当前代码的关系
+
+当前 `smestencil_paper_3d13.cpp` 只实现了 3.5.1 的移位系数外积映射，用于验证与
+`stencil_all_sme.cpp` 相同的 13 点算子。它没有实现多 ZA tile 交错、ZA 辅助转置、
+中间缓冲区或 box-stencil 循环重排；因此不能直接将它的性能与论文完成全部优化后的
+结果对比。
 
 #### 3.5.4 Memory Optimizations
 
-SME 提高计算吞吐后，瓶颈重新转向数据供给。本节包含两项相互依赖的优化。
+微架构优化使 SME 能持续执行外积后，限制从计算发射转为数据供给。论文的平台使用
+on-package memory，数据端口从 DDR 的 64 bit 增加到 1024 bit；要利用这种带宽，访问
+不能只是“总字节数足够”，还必须由少量、连续且可提前识别的物理流组成。本节的两项
+优化按顺序组成一条链：**先把逻辑 tile 的离散访问重排为 brick 访问，再以 brick 为
+单位发出 gather 软件预取。**
 
-第一项是 SIMD-Friendly Memory Reorder。Tile-Based ILP 会产生大量离散访问流。
-论文以单精度 3DStarR4 为例，原方案可能形成 226 条访问流。为此借鉴 BrickLib，
-把规则网格重排为 (Bx, By, Bz) brick，使 tile 访问更少、更连续的物理流。论文
-实验配置取 Bx=VL、By=Bz=4；这些值与目标向量长度、最大半径和 tile 整除关系
-有关，不是通用常量。
+##### 1. SIMD-Friendly Memory Reorder
 
-第二项是 Gather-Based Software Prefetch。论文没有为每条普通加载分别发出 64 B
-预取，而是在 SVE lane 中放置多个 cache line 头地址，一条 gather-prefetch 同时
-预取 VL 条 cache line。配合 brick 布局，单精度情况下可用一次指令覆盖一个 brick，
-以较低指令开销重叠 SME 计算和内存访问。
+**问题。** Tile-Based ILP 把网格切成 `(VX, VY, VZ)` block 并同时处理多个切片。虽然
+计算并行度提高，但一个逻辑 block 会从许多分散地址取 halo。论文以单精度 `3DStarR4`
+为例，在 `VX=VY=16`、`VZ=4` 时报告有 226 条不同的内存访问流。流过多且不连续时，
+宽内存端口难以合并成高效 burst，带宽利用率反而下降。
 
-这说明论文的软件预取建立在 brick 重排之后，候选单位是一个 brick 的 cache line
-集合，而不是原始线性布局中的单条 load。
+**论文的布局。** 借鉴 BrickLib，论文不再按传统行主序把整个 x/y/z 平面连续存放，
+而是将网格划分为 `(BX, BY, BZ)` 的小 brick，并把同一 brick 的元素连续存放。一个
+逻辑 block 的 halo 只要与某 brick 相交，就把该 brick 作为整体载入：
+
+```text
+逻辑 stencil tile + halo
+    -> 找出相交的 brick 集合
+    -> 以 brick 为单位连续访问
+    -> 在寄存器/ZA 中取出 tile 需要的元素
+```
+
+论文的取值为：
+
+```text
+BX = VL
+BY = BZ = 4
+```
+
+这里 `BX=VL` 让一个 brick 的 x 方向适配一个向量宽度；`4` 是论文目标 HPC stencil
+中的最大半径，同时也是 `VX`、`VY`、`VZ` 的整除因子，用来在 halo 额外流量和连续
+访问之间折中。这些数值是论文平台和 workload 的选择，不应直接作为所有机器或所有
+stencil 的固定参数。
+
+**效果。** 重排不改变数学上的邻域或总输出点数，而是把大量细粒度地址流收束为较少的
+brick 流。它同时为下一项预取提供了确定的 cache line 头地址；没有这一层重排，预取
+仍会面对大量分散且难以统一描述的流。
+
+##### 2. Gather-Based Software Prefetch
+
+**问题。** ARM 目标核心不像部分 x86 平台那样具有强大的硬件预取器，单靠 demand load
+容易让 SME 因 cache miss 停顿。简单做法是在每次普通 load 前插入 64 B cache-line
+预取，但预取指令会散落在 stencil 内层循环，打断外积与 load 的调度；若预取数量或
+时机不合适，其指令开销本身会抵消收益。
+
+**论文的做法。** cache 的传输单位是 cache line。论文使用 SVE gather-prefetch，把
+多个 cache line 的起始地址分别放入 SIMD 各 lane，一条指令从每个 lane 对应的地址
+预取一条 line：
+
+```text
+address_vector[lane] = 第 lane 条待访问 cache line 的首地址
+gather_prefetch(address_vector)
+    -> 一条指令请求 VL 条不同 cache line
+```
+
+在单精度配置下，一个 brick 的 line 头可以放入一个向量，因此一次 gather-prefetch
+即可覆盖整个 brick。随后 kernel 在执行其它 block 的 SME 外积时，这个 brick 的数据
+可从 cache 到达，从而重叠内存等待与计算。
+
+**为何依赖 brick 重排。** gather-prefetch 不是对任意散乱访问自动有效：它需要提前
+知道一组将被共同使用的 cache line 头。brick 布局让这组地址规则、数量稳定，并使
+“预取一个 brick”与“之后连续消费一个 brick”对应；因此第一项是第二项的地址与粒度
+基础。论文的预取单位是 brick 的 cache line 集合，而不是当前项目 LLVM pass 中按单一
+指针流选择的 `prfm` 候选。
+
+**实现时仍需决定的参数。** 论文说明了批量预取的载体和粒度，但具体机器上仍须根据
+cache line 大小、SVE `VL`、brick 尺寸、可用 cache 容量、内存延迟和每个 block 的计算
+时间选择预取距离，并避免预取过早造成 cache 驱逐或过晚无法隐藏延迟。
+
+##### 与当前项目的关系
+
+当前项目的 LLVM IR 软件预取针对原 row-major kernel 的可恢复地址流，最终可降为
+`prfm`；它没有实现 brick 数据布局，也没有生成 SVE gather-prefetch。因此它与论文
+3.5.4 的目标一致，都是让数据提前到达 cache，但预取对象、地址布局和发射粒度不同。
+若要复现论文这一节，应先在数据布局/调用约定层引入 brick，再在能看见 brick 边界的
+高层循环或专用 kernel 中构造地址向量并发出 gather-prefetch，而不能只在现有 LLVM
+IR pass 中把单流 `prfm` 数量增加。
 
 #### 3.5.5 Integrating SMEStencil Into HPC Applications
 
