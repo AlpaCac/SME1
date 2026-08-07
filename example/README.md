@@ -634,6 +634,37 @@ ZA[y,x] = sum(delta=-r..r) a[delta] * input[y,x+delta]
 `ones x neighbor`，使 ZA 各行相同并只读取第 0 行；论文使用移位系数向量，使一次
 外积真正为多个不同输出位置贡献数据。
 
+##### 对应实现：3DStarR2 13-point
+
+`smestencil_paper_3d13.cpp` 新增了
+`stencil3d_star_r2_sme_paper`。它实现的是标准半径 2 的轴向 3D star：中心点、三个
+轴上距离 1 的六个点，以及距离 2 的六个点。系数采用四阶中心二阶导数公式：
+
+```text
+center = -7.5
+distance 1 = 4/3
+distance 2 = -1/12
+```
+
+每次 `(i,j)` tile 使用论文式移位系数列向量填充多个 ZA 行；x/z 方向使用 one-hot
+行选择向量向对应 ZA 行补充轴向邻居，最后逐行读取 ZA 并写回。实现包含标量参考
+版本和 `smestencil_paper_3d13_self_test()`，测试尺寸刻意包含行、列尾块。性能测试
+`test_stencil_3d_star_r2()` 则沿用原文件的 `128 x 512 x 512`、输入初始化、100 次
+调用、stride-1/stride-2 和 `Time:`/`Total Time:` 输出流程。
+
+原始 `stencil_all_sme.cpp` 没有被替换：它的 13 个邻域中包含跨平面对角项，拓扑不
+等同于论文的 3DStarR2。保留它可以直接对比“全 1 向量外积导致重复行”的旧实现与
+论文式移位系数映射。
+
+在支持 SME 的 AArch64 主机上可用以下命令构建并运行自检：
+
+```bash
+clang++ -std=c++17 -O2 -march=armv9-a+sme+sme-f64f64 \
+  -DSMESTENCIL_PAPER_DEMO example/smestencil_paper_3d13.cpp \
+  -o smestencil_paper_3d13_demo
+./smestencil_paper_3d13_demo
+```
+
 #### 3.5.2 A Preliminary Performance Model
 
 论文比较计算一个 (VL, VL) 输出块时 SIMD 与 SME 的理论周期：
