@@ -668,6 +668,20 @@ clang++ -std=c++17 -O2 -march=armv9-a+sme+sme-f64f64 \
 ./smestencil_paper_3d13_demo
 ```
 
+##### 循环视角图解
+
+下面四张图以“输出 tile 循环 -> 输入流循环 -> `svmopa` 累加 -> 逐 ZA 行写回”的顺序，
+说明不同 stencil 如何使用论文式移位系数外积映射。它们说明计算和数据流分组，不包含
+3.5.3 的多 ZA tile ILP、转置或 3.5.4 的 brick/gather-prefetch 优化。
+
+![2D 5-point 循环映射](./stencil_paper_2d5p.svg)
+
+![2D 9-point 循环映射](./stencil_paper_2d9p.svg)
+
+![3D 7-point 循环映射](./stencil_paper_3d7p.svg)
+
+![3D 13-point 循环映射](./stencil_paper_3d13p.svg)
+
 #### 3.5.2 A Preliminary Performance Model
 
 论文比较计算一个 (VL, VL) 输出块时 SIMD 与 SME 的理论周期：

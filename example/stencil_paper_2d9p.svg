@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="800" viewBox="0 0 1400 800">
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L10,3 L0,6Z" fill="#27718a"/></marker></defs>
+  <style>text{font-family:"PingFang SC","Noto Sans CJK SC",sans-serif;fill:#20323b}.t{font-size:32px;font-weight:700}.h{font-size:21px;font-weight:700}.b{font-size:18px}.s{font-size:16px}.code{font-family:Menlo,monospace;font-size:16px}.panel{stroke:#52717c;stroke-width:2}.arr{fill:none;stroke:#27718a;stroke-width:3;marker-end:url(#arrow)}</style>
+  <rect width="1400" height="800" fill="#fbfaf6"/><text x="50" y="55" class="t">2D 9P：按循环执行的 SME 外积计算</text><text x="50" y="88" class="b">邻域：完整 3x3 box。它分解为 3 个 y 方向一维 stencil，而非 6 个相加的方向。</text>
+  <rect x="40" y="120" width="350" height="620" rx="18" fill="#dff1f7" class="panel"/><text x="65" y="158" class="h">1. 一个 tile 需要什么数据</text>
+  <g fill="#fff" stroke="#9db2bb"><rect x="95" y="205" width="210" height="210"/><path d="M130 205V415M165 205V415M200 205V415M235 205V415M270 205V415M95 240H305M95 275H305M95 310H305M95 345H305M95 380H305"/></g>
+  <rect x="165" y="275" width="70" height="70" fill="none" stroke="#d35d5d" stroke-width="4"/><rect x="130" y="240" width="140" height="140" fill="none" stroke="#4b9fc2" stroke-width="4"/><text x="172" y="267" class="s">输出 tile</text><text x="92" y="445" class="b">三个输入流：</text><text x="92" y="478" class="s">流 A：dx=-1，dy=-1..+1</text><text x="92" y="509" class="s">流 B：dx= 0，dy=-1..+1</text><text x="92" y="540" class="s">流 C：dx=+1，dy=-1..+1</text><text x="92" y="585" class="s">三流在内存中重叠，但 dx 对齐不同。</text>
+  <rect x="420" y="120" width="550" height="620" rx="18" fill="#f0eaf7" class="panel"/><text x="445" y="158" class="h">2. 循环如何组织</text>
+  <rect x="455" y="190" width="480" height="78" rx="10" fill="#d9edf4"/><text x="478" y="222" class="code">for (每个输出 tile: i, j) {</text><text x="505" y="250" class="code">svzero_za();</text>
+  <rect x="480" y="287" width="430" height="92" rx="10" fill="#e4f0d9"/><text x="503" y="320" class="code">for (dx = -1; dx &lt;= +1; ++dx) {</text><text x="530" y="348" class="code">for (source_row = i-1 .. tile_end+1) {</text>
+  <rect x="505" y="398" width="380" height="120" rx="10" fill="#fff2cf"/><text x="527" y="431" class="code">values = load(x + dx);</text><text x="527" y="460" class="code">coeff  = dy=-1..+1 的移位列;</text><text x="527" y="489" class="code">svmopa(ZA, coeff, values);</text>
+  <text x="530" y="548" class="code">}</text><text x="503" y="576" class="code">}</text>
+  <rect x="480" y="596" width="430" height="95" rx="10" fill="#d8eded"/><text x="503" y="628" class="code">逐 ZA 行读取，再连续写回 output;</text><text x="503" y="657" class="code">}</text>
+  <rect x="1000" y="120" width="360" height="620" rx="18" fill="#eef7ed" class="panel"/><text x="1025" y="158" class="h">3. 为什么参考 Figure 6</text>
+  <rect x="1035" y="205" width="290" height="50" rx="8" fill="#f4b46f" class="panel"/><text x="1055" y="237" class="b">先加载共享的相邻 cache line</text><path d="M1180 255V305" class="arr"/>
+  <rect x="1035" y="315" width="290" height="50" rx="8" fill="#d9e8a9" class="panel"/><text x="1060" y="347" class="b">splice 出 dx=-1/0/+1 的 slice</text><path d="M1180 365V415" class="arr"/>
+  <rect x="1195" y="425" width="128" height="150" fill="#82c9cd" class="panel"/><path d="M1238 425V575M1280 425V575M1195 463H1323M1195 501H1323M1195 539H1323" stroke="#4e969d"/><text x="1232" y="610" class="h">ZA tile</text>
+  <text x="1035" y="650" class="s">重叠数据被复用，但每个 slice 对应不同 dx，</text><text x="1035" y="679" class="s">不会对同一输出点重复累加。</text>
+</svg>
