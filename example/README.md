@@ -650,9 +650,15 @@ output = sum(13 个点) / 13
 ```
 
 相对偏移按 `(dk, dx)` 分成 7 个连续输入流；每个流的合法 `dy` 关系写入论文式移位
-系数列向量。这样一次外积会填充多个正确的 ZA 行，最后逐行读取 ZA 并写回。实现包含
+系数列向量。这样一次外积会填充多个正确的 ZA 行，最后通过 ZA 水平 store 直接写回。
 各算子都有标量参考自检，测试尺寸刻意包含行、列尾块。性能测试沿用原文件的数组
 尺寸、输入初始化、100 次调用、stride-1/stride-2 和 `Time:`/`Total Time:` 输出流程。
+
+根据第一轮服务器数据，默认构建使用结构化混合策略：1D3P、2D5P、2D9P-s1 和
+3D13P-s2 走 SVE；2D9P-s2、3D13P-s1 以及 3D25P/27P 走论文式 ZA 映射。
+`SMESTENCIL_PAPER_FORCE_ZA` 可强制所有算子使用 ZA，便于区分算法选择和单项微优化。
+`SMESTENCIL_PAPER_INDIRECT_ZA_STORE` 恢复旧的 ZA-to-Z-to-memory 写回；
+`SMESTENCIL_PAPER_ENABLE_PREFETCH` 启用只针对 3D 平面流的候选读预取，默认不开启。
 
 原始 `stencil_all_sme.cpp` 没有被替换；它保留为直接对比对象：原实现在每个邻居上
 使用 `ones x neighbor`，导致 ZA 各行重复并仅写回第 0 行；新实现对相同算子使用
@@ -669,7 +675,7 @@ clang++ -std=c++17 -O2 -march=armv9-a+sme+sme-f64f64 \
 
 `compare_3d13p_performance.sh` 保留原文件名以兼容服务器上的既有命令，但现在默认比较
 六类算子的 stride-1/stride-2，共 12 个用例。脚本为每个参数分别运行原始程序和论文
-实现，按多轮结果取中位数，输出原始时间、论文式时间和加速比，同时生成 CSV：
+实现，默认采样三轮并交替运行顺序，输出中位数、相对 MAD 和加速比，同时生成 CSV：
 
 ```bash
 BISHENG_CXX=/path/to/bisheng/bin/clang++ \
@@ -678,6 +684,10 @@ SME_PERF_CPU=0 SME_PERF_REPETITIONS=3 \
 
 # 只测试指定用例
 SME_PERF_CASES="2d5p-s1,3d13p-s2" \
+./example/compare_3d13p_performance.sh
+
+# 对筛选出的用例测试纯 ZA、单 ZA、无加载复用、间接写回和读预取
+SME_PERF_CASES="3d13p-s1,3d27p-s2" SME_PERF_ABLATIONS=1 \
 ./example/compare_3d13p_performance.sh
 ```
 

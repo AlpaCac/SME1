@@ -26,6 +26,52 @@ constexpr bool kReuseOverlappingLoads = false;
 constexpr bool kReuseOverlappingLoads = true;
 #endif
 
+#if defined(SMESTENCIL_PAPER_INDIRECT_ZA_STORE)
+constexpr bool kUseDirectZaStore = false;
+#else
+constexpr bool kUseDirectZaStore = true;
+#endif
+
+#if defined(SMESTENCIL_PAPER_FORCE_ZA)
+constexpr bool kForceZaMapping = true;
+#else
+constexpr bool kForceZaMapping = false;
+#endif
+
+#if defined(SMESTENCIL_PAPER_ENABLE_PREFETCH)
+constexpr bool kEnableReadPrefetch = true;
+#else
+constexpr bool kEnableReadPrefetch = false;
+#endif
+
+#if defined(SMESTENCIL_PAPER_PREFETCH_GROUPS)
+constexpr int64_t kPrefetchGroups = SMESTENCIL_PAPER_PREFETCH_GROUPS;
+#else
+constexpr int64_t kPrefetchGroups = 4;
+#endif
+
+static_assert(kPrefetchGroups > 0);
+
+static inline __attribute__((always_inline)) void prefetch_3d_plane_streams(
+    const double* input,
+    int k,
+    int i,
+    int64_t j,
+    int64_t tile_group_step,
+    int64_t plane_size,
+    int cols) __arm_streaming {
+    if constexpr (kEnableReadPrefetch) {
+        const int64_t future_j = j + kPrefetchGroups * tile_group_step;
+        if (future_j < cols - 1) {
+            const int64_t center = static_cast<int64_t>(k) * plane_size +
+                                   static_cast<int64_t>(i) * cols + future_j;
+            __builtin_prefetch(&input[center - plane_size], 0, 0);
+            __builtin_prefetch(&input[center], 0, 0);
+            __builtin_prefetch(&input[center + plane_size], 0, 0);
+        }
+    }
+}
+
 // 用 MOPA 的纵向谓词选择 dy=-1/0/+1 对应的 ZA 行，避免构造稀疏系数向量。
 template <int Stride>
 static inline __attribute__((always_inline)) svbool_t shifted_row_predicate(
@@ -154,20 +200,24 @@ static inline __attribute__((always_inline)) void write_output_rows(
     int stride,
     int64_t active_rows) __arm_streaming __arm_inout("za") {
     for (int64_t row = 0; row < active_rows; ++row) {
-        const svfloat64_t result =
-            svread_hor_za64_m(svdup_n_f64(0.0), pg_cols, Tile, row);
-        svst1_f64(pg_cols, output_base + row * stride * cols, result);
+        double* const address = output_base + row * stride * cols;
+        if constexpr (kUseDirectZaStore) {
+            svst1_hor_za64(Tile, row, pg_cols, address);
+        } else {
+            const svfloat64_t result =
+                svread_hor_za64_m(svdup_n_f64(0.0), pg_cols, Tile, row);
+            svst1_f64(pg_cols, address, result);
+        }
     }
 }
 
-template <int Stride>
-static inline __attribute__((always_inline)) void stencil1d_3point_sme_paper_impl(
+[[maybe_unused]] static inline __attribute__((always_inline)) void
+stencil1d_3point_sme_paper_impl(
     const double* __restrict__ input,
     double* __restrict__ output,
     int size) __arm_streaming __arm_inout("za") {
-    static_assert(Stride == 1 || Stride == 2);
     const int64_t lanes = static_cast<int64_t>(svcntd());
-    const int64_t column_step = lanes * Stride;
+    const int64_t column_step = lanes;
     const int64_t tile_group_step = (kUseTwoZaTiles ? 2 : 1) * column_step;
     const svbool_t row0 = svwhilelt_b64_s64(0, 1);
     const svbool_t pg_two = svwhilelt_b64_s64(0, 2);
@@ -201,13 +251,21 @@ static inline __attribute__((always_inline)) void stencil1d_3point_sme_paper_imp
                 next_index + lanes <= size - 1);
         }
 
-        const svfloat64_t result0 =
-            svread_hor_za64_m(svdup_n_f64(0.0), pg_cols0, 0, 0);
-        svst1_f64(pg_cols0, &output[index], result0);
+        if constexpr (kUseDirectZaStore) {
+            svst1_hor_za64(0, 0, pg_cols0, &output[index]);
+        } else {
+            const svfloat64_t result0 =
+                svread_hor_za64_m(svdup_n_f64(0.0), pg_cols0, 0, 0);
+            svst1_f64(pg_cols0, &output[index], result0);
+        }
         if (has_second_tile) {
-            const svfloat64_t result1 =
-                svread_hor_za64_m(svdup_n_f64(0.0), pg_cols1, 1, 0);
-            svst1_f64(pg_cols1, &output[next_index], result1);
+            if constexpr (kUseDirectZaStore) {
+                svst1_hor_za64(1, 0, pg_cols1, &output[next_index]);
+            } else {
+                const svfloat64_t result1 =
+                    svread_hor_za64_m(svdup_n_f64(0.0), pg_cols1, 1, 0);
+                svst1_f64(pg_cols1, &output[next_index], result1);
+            }
         }
     }
 }
@@ -359,6 +417,8 @@ static inline __attribute__((always_inline)) void stencil3d_box_sme_paper_impl(
                 const bool has_second_tile = kUseTwoZaTiles && next_j < cols - 1;
                 const bool full_tile0 = j + lanes <= cols - 1;
                 const bool full_tile1 = next_j + lanes <= cols - 1;
+                prefetch_3d_plane_streams(
+                    input, k, i, j, tile_group_step, plane_size, cols);
                 svzero_za();
 
                 for (int source_i = i - 1; source_i < source_row_end; ++source_i) {
@@ -491,6 +551,8 @@ static inline __attribute__((always_inline)) void stencil3d_13point_sme_paper_im
                 const bool has_second_tile = kUseTwoZaTiles && next_j < cols - 1;
                 const bool full_tile0 = j + lanes <= cols - 1;
                 const bool full_tile1 = next_j + lanes <= cols - 1;
+                prefetch_3d_plane_streams(
+                    input, k, i, j, tile_group_step, plane_size, cols);
                 svzero_za();
 
                 for (int source_i = i - 1; source_i < source_row_end; ++source_i) {
@@ -613,6 +675,94 @@ static inline __attribute__((always_inline)) void stencil3d_13point_sme_paper_im
     }
 }
 
+[[maybe_unused]] static inline __attribute__((always_inline)) void
+stencil1d_3point_sve_impl(
+    const double* __restrict__ input,
+    double* __restrict__ output,
+    int size) __arm_streaming {
+    const int64_t lanes = static_cast<int64_t>(svcntd());
+    const svfloat64_t weight = svdup_n_f64(1.0 / 3.0);
+    for (int64_t index = 1; index < size - 1; index += lanes) {
+        const svbool_t pg = svwhilelt_b64_s64(index, size - 1);
+        svfloat64_t sum = svadd_x(
+            pg, svld1_f64(pg, &input[index - 1]), svld1_f64(pg, &input[index]));
+        sum = svadd_x(pg, sum, svld1_f64(pg, &input[index + 1]));
+        svst1_f64(pg, &output[index], svmul_x(pg, sum, weight));
+    }
+}
+
+template <Paper2DKind Kind, int Stride>
+static inline __attribute__((always_inline)) void stencil2d_sve_impl(
+    const double* __restrict__ input,
+    double* __restrict__ output,
+    int rows,
+    int cols) __arm_streaming {
+    constexpr double point_weight =
+        Kind == Paper2DKind::Point5 ? 1.0 / 5.0 : 1.0 / 9.0;
+    const int64_t lanes = static_cast<int64_t>(svcntd());
+    const svfloat64_t weight = svdup_n_f64(point_weight);
+    for (int i = 1; i < rows - 1; i += Stride) {
+        for (int64_t j = 1; j < cols - 1; j += lanes * Stride) {
+            const svbool_t pg = svwhilelt_b64_s64(j, cols - 1);
+            const int64_t center = static_cast<int64_t>(i) * cols + j;
+            svfloat64_t sum;
+            if constexpr (Kind == Paper2DKind::Point5) {
+                sum = svadd_x(
+                    pg, svld1_f64(pg, &input[center]),
+                    svld1_f64(pg, &input[center - cols]));
+                sum = svadd_x(pg, sum, svld1_f64(pg, &input[center + cols]));
+                sum = svadd_x(pg, sum, svld1_f64(pg, &input[center - 1]));
+                sum = svadd_x(pg, sum, svld1_f64(pg, &input[center + 1]));
+            } else {
+                sum = svld1_f64(pg, &input[center - cols - 1]);
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        if (dy == -1 && dx == -1)
+                            continue;
+                        sum = svadd_x(
+                            pg,
+                            sum,
+                            svld1_f64(
+                                pg,
+                                &input[center + static_cast<int64_t>(dy) * cols + dx]));
+                    }
+                }
+            }
+            svst1_f64(pg, &output[center], svmul_x(pg, sum, weight));
+        }
+    }
+}
+
+template <int Stride>
+static inline __attribute__((always_inline)) void stencil3d_13point_sve_impl(
+    const double* __restrict__ input,
+    double* __restrict__ output,
+    int depth,
+    int rows,
+    int cols) __arm_streaming {
+    const int64_t lanes = static_cast<int64_t>(svcntd());
+    const int64_t plane_size = static_cast<int64_t>(rows) * cols;
+    const svfloat64_t weight = svdup_n_f64(kPointWeight);
+    for (int k = 1; k < depth - 1; k += Stride) {
+        for (int i = 1; i < rows - 1; i += Stride) {
+            for (int64_t j = 1; j < cols - 1; j += lanes * Stride) {
+                const svbool_t pg = svwhilelt_b64_s64(j, cols - 1);
+                const int64_t center = static_cast<int64_t>(k) * plane_size +
+                                       static_cast<int64_t>(i) * cols + j;
+                svfloat64_t sum = svld1_f64(pg, &input[center]);
+                const int64_t offsets[] = {
+                    -plane_size, plane_size, -cols, cols, -1, 1,
+                    -plane_size - cols, -plane_size + cols,
+                    plane_size - cols, plane_size + cols,
+                    -plane_size - 1, plane_size + 1};
+                for (int64_t offset : offsets)
+                    sum = svadd_x(pg, sum, svld1_f64(pg, &input[center + offset]));
+                svst1_f64(pg, &output[center], svmul_x(pg, sum, weight));
+            }
+        }
+    }
+}
+
 }  // 匿名命名空间
 
 __arm_new("za")
@@ -623,10 +773,12 @@ void stencil1d_3point_sme_paper(const double* __restrict__ input,
     __arm_streaming {
     if (size < 3 || stride <= 0)
         return;
-    if (stride == 1)
-        stencil1d_3point_sme_paper_impl<1>(input, output, size);
-    else if (stride == 2)
-        stencil1d_3point_sme_paper_impl<2>(input, output, size);
+    if (stride == 1 || stride == 2) {
+        if constexpr (kForceZaMapping)
+            stencil1d_3point_sme_paper_impl(input, output, size);
+        else
+            stencil1d_3point_sve_impl(input, output, size);
+    }
 }
 
 __arm_new("za")
@@ -638,10 +790,17 @@ void stencil2d_5point_sme_paper(const double* __restrict__ input,
     __arm_streaming {
     if (rows < 3 || cols < 3 || stride <= 0)
         return;
-    if (stride == 1)
-        stencil2d_sme_paper_impl<Paper2DKind::Point5, 1>(input, output, rows, cols);
-    else if (stride == 2)
-        stencil2d_sme_paper_impl<Paper2DKind::Point5, 2>(input, output, rows, cols);
+    if (stride == 1) {
+        if constexpr (kForceZaMapping)
+            stencil2d_sme_paper_impl<Paper2DKind::Point5, 1>(input, output, rows, cols);
+        else
+            stencil2d_sve_impl<Paper2DKind::Point5, 1>(input, output, rows, cols);
+    } else if (stride == 2) {
+        if constexpr (kForceZaMapping)
+            stencil2d_sme_paper_impl<Paper2DKind::Point5, 2>(input, output, rows, cols);
+        else
+            stencil2d_sve_impl<Paper2DKind::Point5, 2>(input, output, rows, cols);
+    }
 }
 
 __arm_new("za")
@@ -653,10 +812,14 @@ void stencil2d_9point_sme_paper(const double* __restrict__ input,
     __arm_streaming {
     if (rows < 3 || cols < 3 || stride <= 0)
         return;
-    if (stride == 1)
-        stencil2d_sme_paper_impl<Paper2DKind::Point9, 1>(input, output, rows, cols);
-    else if (stride == 2)
+    if (stride == 1) {
+        if constexpr (kForceZaMapping)
+            stencil2d_sme_paper_impl<Paper2DKind::Point9, 1>(input, output, rows, cols);
+        else
+            stencil2d_sve_impl<Paper2DKind::Point9, 1>(input, output, rows, cols);
+    } else if (stride == 2) {
         stencil2d_sme_paper_impl<Paper2DKind::Point9, 2>(input, output, rows, cols);
+    }
 }
 
 __arm_new("za")
@@ -710,10 +873,14 @@ void stencil3d_13point_sme_paper(const double* __restrict__ input,
     __arm_streaming {
     if (depth < 3 || rows < 3 || cols < 3 || stride <= 0)
         return;
-    if (stride == 1)
+    if (stride == 1) {
         stencil3d_13point_sme_paper_impl<1>(input, output, depth, rows, cols);
-    else if (stride == 2)
-        stencil3d_13point_sme_paper_impl<2>(input, output, depth, rows, cols);
+    } else if (stride == 2) {
+        if constexpr (kForceZaMapping)
+            stencil3d_13point_sme_paper_impl<2>(input, output, depth, rows, cols);
+        else
+            stencil3d_13point_sve_impl<2>(input, output, depth, rows, cols);
+    }
 }
 
 int64_t smestencil_streaming_double_lanes() __arm_streaming {
@@ -733,7 +900,9 @@ void stencil1d_3point_reference(const double* input,
                                 int size,
                                 int stride,
                                 int64_t lanes) {
-    for (int64_t block = 1; block < size - 1; block += lanes * stride) {
+    // baseline 的重叠外层循环最终覆盖全部内部元素；参考实现只计算一次相同结果。
+    (void)stride;
+    for (int64_t block = 1; block < size - 1; block += lanes) {
         for (int64_t lane = 0; lane < lanes && block + lane < size - 1; ++lane) {
             const int64_t index = block + lane;
             output[index] =

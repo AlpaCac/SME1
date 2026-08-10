@@ -8,7 +8,7 @@
 #
 # 默认测试六类算子的 stride-1/stride-2，共 12 个用例。可用空格或逗号筛选：
 #   SME_PERF_CASES="2d5p-s1,3d13p-s2" ./example/compare_3d13p_performance.sh
-# 若要比较单 ZA 和禁用重叠加载复用的版本，设置 SME_PERF_ABLATIONS=1。
+# 若要比较纯 ZA、单 ZA、加载复用、直接写回和预取候选，设置 SME_PERF_ABLATIONS=1。
 #
 # 每条 Time: 是程序内部 100 次 kernel sweep 的总时间，不包括初始化和自检。
 # 默认使用毕昇 compiler-rt 的 SME ABI 运行时，解决 __arm_tpidr2_save 等链接符号。
@@ -17,7 +17,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cxx="${BISHENG_CXX:-${CXX:-clang++}}"
-repetitions="${SME_PERF_REPETITIONS:-1}"
+repetitions="${SME_PERF_REPETITIONS:-3}"
 cpu="${SME_PERF_CPU:-}"
 timeout_seconds="${SME_PERF_TIMEOUT_SECONDS:-0}"
 ablations="${SME_PERF_ABLATIONS:-0}"
@@ -30,6 +30,9 @@ baseline_bin="${build_dir}/stencil_all_sme"
 paper_bin="${build_dir}/smestencil_paper"
 single_za_bin="${build_dir}/smestencil_paper_single_za"
 no_reuse_bin="${build_dir}/smestencil_paper_no_reuse"
+force_za_bin="${build_dir}/smestencil_paper_force_za"
+indirect_store_bin="${build_dir}/smestencil_paper_indirect_store"
+prefetch_bin="${build_dir}/smestencil_paper_prefetch"
 
 all_cases=(
   1d3p-s1 1d3p-s2
@@ -118,11 +121,21 @@ printf 'SME ABI link flags: %s\n' "${link_flags[*]}"
   "${link_flags[@]}" -o "${paper_bin}"
 if [[ "${ablations}" == "1" ]]; then
   "${cxx}" "${common_flags[@]}" -DSMESTENCIL_PAPER_DEMO \
-    -DSMESTENCIL_PAPER_SINGLE_ZA "${paper_source}" \
+    -DSMESTENCIL_PAPER_FORCE_ZA "${paper_source}" \
+    "${link_flags[@]}" -o "${force_za_bin}"
+  "${cxx}" "${common_flags[@]}" -DSMESTENCIL_PAPER_DEMO \
+    -DSMESTENCIL_PAPER_FORCE_ZA -DSMESTENCIL_PAPER_SINGLE_ZA "${paper_source}" \
     "${link_flags[@]}" -o "${single_za_bin}"
   "${cxx}" "${common_flags[@]}" -DSMESTENCIL_PAPER_DEMO \
-    -DSMESTENCIL_PAPER_DISABLE_LOAD_REUSE "${paper_source}" \
+    -DSMESTENCIL_PAPER_FORCE_ZA -DSMESTENCIL_PAPER_DISABLE_LOAD_REUSE \
+    "${paper_source}" \
     "${link_flags[@]}" -o "${no_reuse_bin}"
+  "${cxx}" "${common_flags[@]}" -DSMESTENCIL_PAPER_DEMO \
+    -DSMESTENCIL_PAPER_FORCE_ZA -DSMESTENCIL_PAPER_INDIRECT_ZA_STORE \
+    "${paper_source}" "${link_flags[@]}" -o "${indirect_store_bin}"
+  "${cxx}" "${common_flags[@]}" -DSMESTENCIL_PAPER_DEMO \
+    -DSMESTENCIL_PAPER_ENABLE_PREFETCH "${paper_source}" \
+    "${link_flags[@]}" -o "${prefetch_bin}"
 fi
 
 run_binary() {
@@ -205,6 +218,23 @@ median_file() {
     }'
 }
 
+relative_mad_file() {
+  local input_file="$1"
+  local sample_median="$2"
+  awk -v median="${sample_median}" '{
+    difference = $1 - median
+    if (difference < 0) difference = -difference
+    print difference
+  }' "${input_file}" | LC_ALL=C sort -n | awk -v median="${sample_median}" '
+    { value[NR] = $1 }
+    END {
+      if (NR == 0 || median <= 0) exit 1
+      if (NR % 2) mad = value[(NR + 1) / 2]
+      else mad = (value[NR / 2] + value[NR / 2 + 1]) / 2
+      printf "%.4f", mad / median
+    }'
+}
+
 speedup() {
   awk -v baseline="$1" -v paper="$2" 'BEGIN {
     if (paper <= 0) exit 1
@@ -228,10 +258,13 @@ measure_variant() {
 
 for test_case in "${selected_cases[@]}"; do
   : >"$(sample_file baseline "${test_case}")"
-  : >"$(sample_file paper "${test_case}")"
+  : >"$(sample_file optimized "${test_case}")"
   if [[ "${ablations}" == "1" ]]; then
+    : >"$(sample_file pure-za "${test_case}")"
     : >"$(sample_file single-za "${test_case}")"
     : >"$(sample_file no-reuse "${test_case}")"
+    : >"$(sample_file indirect-store "${test_case}")"
+    : >"$(sample_file prefetch "${test_case}")"
   fi
 done
 
@@ -244,52 +277,66 @@ for test_case in "${selected_cases[@]}"; do
     if (((run + case_number) % 2 == 0)); then
       measure_variant baseline "${baseline_bin}" "${test_case}" "${run}"
       append_sample baseline "${test_case}" "${REPLY}"
-      measure_variant paper "${paper_bin}" "${test_case}" "${run}"
-      append_sample paper "${test_case}" "${REPLY}"
+      measure_variant optimized "${paper_bin}" "${test_case}" "${run}"
+      append_sample optimized "${test_case}" "${REPLY}"
     else
-      measure_variant paper "${paper_bin}" "${test_case}" "${run}"
-      append_sample paper "${test_case}" "${REPLY}"
+      measure_variant optimized "${paper_bin}" "${test_case}" "${run}"
+      append_sample optimized "${test_case}" "${REPLY}"
       measure_variant baseline "${baseline_bin}" "${test_case}" "${run}"
       append_sample baseline "${test_case}" "${REPLY}"
     fi
 
     if [[ "${ablations}" == "1" ]]; then
+      measure_variant pure-za "${force_za_bin}" "${test_case}" "${run}"
+      append_sample pure-za "${test_case}" "${REPLY}"
       measure_variant single-za "${single_za_bin}" "${test_case}" "${run}"
       append_sample single-za "${test_case}" "${REPLY}"
       measure_variant no-reuse "${no_reuse_bin}" "${test_case}" "${run}"
       append_sample no-reuse "${test_case}" "${REPLY}"
+      measure_variant indirect-store "${indirect_store_bin}" "${test_case}" "${run}"
+      append_sample indirect-store "${test_case}" "${REPLY}"
+      measure_variant prefetch "${prefetch_bin}" "${test_case}" "${run}"
+      append_sample prefetch "${test_case}" "${REPLY}"
     fi
   done
 done
 
-printf 'case,baseline_median_s,paper_median_s,speedup\n' >"${results_csv}"
+printf 'case,baseline_median_s,optimized_median_s,speedup,baseline_relative_mad,optimized_relative_mad\n' \
+  >"${results_csv}"
 printf '\n== 全算子性能结果 ==\n'
-printf '每个时间为 100 次 kernel sweep 的中位总时间；加速比 = 原始/论文式。\n'
-printf '| 用例 | 原始中位时间/s | 论文式中位时间/s | 加速比 |\n'
-printf '|---|---:|---:|---:|\n'
+printf '每个时间为 100 次 kernel sweep 的中位总时间；加速比 = 原始/优化版。\n'
+printf '| 用例 | 原始中位时间/s | 优化版中位时间/s | 加速比 | 原始相对MAD | 优化相对MAD |\n'
+printf '|---|---:|---:|---:|---:|---:|\n'
 for test_case in "${selected_cases[@]}"; do
   baseline_median="$(median_file "$(sample_file baseline "${test_case}")")"
-  paper_median="$(median_file "$(sample_file paper "${test_case}")")"
-  case_speedup="$(speedup "${baseline_median}" "${paper_median}")"
-  printf '| %s | %s | %s | %sx |\n' \
-    "${test_case}" "${baseline_median}" "${paper_median}" "${case_speedup}"
-  printf '%s,%s,%s,%s\n' \
-    "${test_case}" "${baseline_median}" "${paper_median}" "${case_speedup}" \
+  optimized_median="$(median_file "$(sample_file optimized "${test_case}")")"
+  case_speedup="$(speedup "${baseline_median}" "${optimized_median}")"
+  baseline_rmad="$(relative_mad_file \
+    "$(sample_file baseline "${test_case}")" "${baseline_median}")"
+  optimized_rmad="$(relative_mad_file \
+    "$(sample_file optimized "${test_case}")" "${optimized_median}")"
+  printf '| %s | %s | %s | %sx | %s | %s |\n' \
+    "${test_case}" "${baseline_median}" "${optimized_median}" "${case_speedup}" \
+    "${baseline_rmad}" "${optimized_rmad}"
+  printf '%s,%s,%s,%s,%s,%s\n' \
+    "${test_case}" "${baseline_median}" "${optimized_median}" "${case_speedup}" \
+    "${baseline_rmad}" "${optimized_rmad}" \
     >>"${results_csv}"
 done
 
 if [[ "${ablations}" == "1" ]]; then
   printf '\n== 消融诊断 ==\n'
-  printf '| 用例 | 单 ZA 时间/s | 单 ZA 加速比 | 无复用时间/s | 无复用加速比 |\n'
-  printf '|---|---:|---:|---:|---:|\n'
+  printf '| 用例 | 纯ZA | 单ZA | 无复用 | 间接写回 | 预取候选 |\n'
+  printf '|---|---:|---:|---:|---:|---:|\n'
   for test_case in "${selected_cases[@]}"; do
-    baseline_median="$(median_file "$(sample_file baseline "${test_case}")")"
+    pure_za_median="$(median_file "$(sample_file pure-za "${test_case}")")"
     single_za_median="$(median_file "$(sample_file single-za "${test_case}")")"
     no_reuse_median="$(median_file "$(sample_file no-reuse "${test_case}")")"
-    printf '| %s | %s | %sx | %s | %sx |\n' \
-      "${test_case}" \
-      "${single_za_median}" "$(speedup "${baseline_median}" "${single_za_median}")" \
-      "${no_reuse_median}" "$(speedup "${baseline_median}" "${no_reuse_median}")"
+    indirect_median="$(median_file "$(sample_file indirect-store "${test_case}")")"
+    prefetch_median="$(median_file "$(sample_file prefetch "${test_case}")")"
+    printf '| %s | %s | %s | %s | %s | %s |\n' \
+      "${test_case}" "${pure_za_median}" "${single_za_median}" \
+      "${no_reuse_median}" "${indirect_median}" "${prefetch_median}"
   done
 fi
 
