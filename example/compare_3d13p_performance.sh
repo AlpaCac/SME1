@@ -95,6 +95,25 @@ run_binary() {
   fi
 }
 
+run_binary_checked() {
+  local label="$1"
+  local binary="$2"
+  local log_file="$3"
+  local status
+
+  if run_binary "${binary}" "${log_file}"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  printf 'error: %s failed with exit code %d\n' "${label}" "${status}" >&2
+  printf 'log: %s\n' "${log_file}" >&2
+  printf '%s\n' '----- program output (first 160 lines) -----' >&2
+  sed -n '1,160p' "${log_file}" >&2
+  exit "${status}"
+}
+
 read_times() {
   local log_file="$1"
   local -n destination="$2"
@@ -136,9 +155,9 @@ for ((run = 1; run <= repetitions; ++run)); do
   baseline_log="${build_dir}/baseline_run_${run}.log"
   paper_log="${build_dir}/paper_run_${run}.log"
   printf 'sample %d/%d: baseline\n' "${run}" "${repetitions}"
-  run_binary "${baseline_bin}" "${baseline_log}"
+  run_binary_checked "baseline sample ${run}" "${baseline_bin}" "${baseline_log}"
   printf 'sample %d/%d: paper-style\n' "${run}" "${repetitions}"
-  run_binary "${paper_bin}" "${paper_log}"
+  run_binary_checked "paper-style sample ${run}" "${paper_bin}" "${paper_log}"
 
   baseline_times=()
   paper_times=()
