@@ -13,130 +13,263 @@ namespace {
 
 constexpr double kPointWeight = 1.0 / 13.0;
 
-// 判断原始 stencil 中的一个 (dk, dy, dx) 相对偏移是否存在。
-// 这里刻意保留原 stencil_all_sme.cpp 的非对称跨平面对角拓扑。
-constexpr bool is_source_offset(int dk, int dy, int dx) {
-    if (dk == 0 && dx == 0)
-        return dy >= -1 && dy <= 1;
-    if (dk == 0 && (dx == -1 || dx == 1))
-        return dy == 0;
-    if ((dk == -1 || dk == 1) && dx == 0)
-        return dy >= -1 && dy <= 1;
-    return (dk == -1 && dx == -1 && dy == 0) ||
-           (dk == 1 && dx == 1 && dy == 0);
-}
-
-// 构造论文式移位系数列向量。lane r 对应输出行 i + r * stride；当前
-// 输入行相对 i 的偏移为 source_row_offset。只有原算子实际使用的邻域 lane 为非零。
-static inline __attribute__((always_inline)) svfloat64_t paper_stream_coefficients(
+// 为 dy=-1/0/+1 的三条平面流构造一份共享移位系数列。
+template <int Stride>
+static inline __attribute__((always_inline)) svfloat64_t shifted_row_coefficients(
     svbool_t pg_rows,
     svint64_t row_lanes,
-    int64_t source_row_offset,
-    int stride,
-    int dk,
-    int dx) __arm_streaming {
+    int64_t source_row_offset) __arm_streaming {
     const svint64_t source = svdup_n_s64(source_row_offset);
-    const svint64_t output_offsets = svmul_n_s64_x(pg_rows, row_lanes, stride);
+    const svint64_t output_offsets = svmul_n_s64_x(pg_rows, row_lanes, Stride);
     const svint64_t delta = svsub_s64_x(pg_rows, source, output_offsets);
     svfloat64_t coefficients = svdup_n_f64(0.0);
 
     for (int dy = -1; dy <= 1; ++dy) {
-        if (!is_source_offset(dk, dy, dx))
-            continue;
         const svbool_t matches = svcmpeq_n_s64(pg_rows, delta, dy);
         coefficients = svsel_f64(matches, svdup_n_f64(kPointWeight), coefficients);
     }
     return coefficients;
 }
 
-}  // 匿名命名空间
+// 为只允许 dy=0 的四条流构造一份共享 one-hot 系数列。
+static inline __attribute__((always_inline)) svfloat64_t one_hot_row_coefficients(
+    svbool_t pg_rows, svint64_t row_lanes, int64_t output_row) __arm_streaming {
+    const svbool_t selected = svcmpeq_n_s64(pg_rows, row_lanes, output_row);
+    return svsel_f64(selected, svdup_n_f64(kPointWeight), svdup_n_f64(0.0));
+}
 
-// 使用 SMEStencil 第 IV-A 节的外积映射，计算 stencil_all_sme.cpp 中相同的 3D 13 点算子。
-//
-// 每次迭代计算一个 SVL x SVL 的 (i,j) 输出 tile。每个 (dk, dx) 输入流加载连续行
-// 向量；移位系数列向量只选择该流在原算子中存在的 dy 邻居。因此一次外积会为多个
-// 不同 ZA 行贡献数据，而不再像原示例那样将同一输入广播到全部 ZA 行。
-__arm_new("za")
-void stencil3d_13point_sme_paper(const double* __restrict__ input,
-                                  double* __restrict__ output,
-                                  int depth,
-                                  int rows,
-                                  int cols,
-                                  int stride)
-    __arm_streaming {
-    if (depth < 3 || rows < 3 || cols < 3 || stride <= 0)
+template <int Tile>
+static inline __attribute__((always_inline)) void accumulate_address(
+    svbool_t pg_rows,
+    svbool_t pg_cols,
+    svfloat64_t coefficients,
+    const double* address) __arm_streaming __arm_inout("za") {
+    const svfloat64_t values = svld1_f64(pg_cols, address);
+    svmopa_za64_f64_m(Tile, pg_rows, pg_cols, coefficients, values);
+}
+
+// 同平面的 dx=-1/0/+1 高度重叠。完整 tile 用两次 load 加两次 ext 构造三个
+// 向量；尾 tile 回退到三个谓词 load，避免跨过当前输入行。
+template <int Tile>
+static inline __attribute__((always_inline)) void accumulate_same_plane(
+    svbool_t pg_rows,
+    svbool_t pg_cols,
+    svbool_t pg_two,
+    svfloat64_t shifted_coefficients,
+    svfloat64_t one_hot_coefficients,
+    const double* center_address,
+    bool output_row,
+    bool full_tile) __arm_streaming __arm_inout("za") {
+    if (output_row && full_tile) {
+        const svfloat64_t left_block = svld1_f64(pg_cols, center_address - 1);
+        const svfloat64_t tail_block = svld1_f64(pg_two, center_address + svcntd() - 1);
+        const svfloat64_t center = svext_f64(left_block, tail_block, 1);
+        const svfloat64_t right = svext_f64(left_block, tail_block, 2);
+        svmopa_za64_f64_m(Tile, pg_rows, pg_cols, shifted_coefficients, center);
+        svmopa_za64_f64_m(Tile, pg_rows, pg_cols, one_hot_coefficients, left_block);
+        svmopa_za64_f64_m(Tile, pg_rows, pg_cols, one_hot_coefficients, right);
         return;
+    }
 
+    accumulate_address<Tile>(pg_rows, pg_cols, shifted_coefficients, center_address);
+    if (output_row) {
+        accumulate_address<Tile>(
+            pg_rows, pg_cols, one_hot_coefficients, center_address - 1);
+        accumulate_address<Tile>(
+            pg_rows, pg_cols, one_hot_coefficients, center_address + 1);
+    }
+}
+
+template <int Tile>
+static inline __attribute__((always_inline)) void write_output_rows(
+    svbool_t pg_cols,
+    double* output_base,
+    int cols,
+    int stride,
+    int64_t active_rows) __arm_streaming __arm_inout("za") {
+    for (int64_t row = 0; row < active_rows; ++row) {
+        const svfloat64_t result =
+            svread_hor_za64_m(svdup_n_f64(0.0), pg_cols, Tile, row);
+        svst1_f64(pg_cols, output_base + row * stride * cols, result);
+    }
+}
+
+template <int Stride>
+static inline __attribute__((always_inline)) void stencil3d_13point_sme_paper_impl(
+    const double* __restrict__ input,
+    double* __restrict__ output,
+    int depth,
+    int rows,
+    int cols) __arm_streaming __arm_inout("za") {
     const int64_t lanes = static_cast<int64_t>(svcntd());
     const int64_t plane_size = static_cast<int64_t>(rows) * cols;
+    const int64_t column_step = lanes * Stride;
     const svbool_t pg_all = svptrue_b64();
+    const svbool_t pg_two = svwhilelt_b64_s64(0, 2);
     const svint64_t row_lanes = svindex_s64(0, 1);
 
-    for (int k = 1; k < depth - 1; k += stride) {
-        for (int i = 1; i < rows - 1; i += lanes * stride) {
-            const svint64_t output_rows =
-                svadd_n_s64_x(pg_all, svmul_n_s64_x(pg_all, row_lanes, stride), i);
+    for (int k = 1; k < depth - 1; k += Stride) {
+        for (int i = 1; i < rows - 1; i += lanes * Stride) {
+            const svint64_t output_rows = svadd_n_s64_x(
+                pg_all, svmul_n_s64_x(pg_all, row_lanes, Stride), i);
             const svbool_t pg_rows = svcmplt_n_s64(pg_all, output_rows, rows - 1);
             const int64_t active_rows =
-                std::min<int64_t>(lanes, (rows - 2 - i) / stride + 1);
+                std::min<int64_t>(lanes, (rows - 2 - i) / Stride + 1);
+            const int source_row_end =
+                std::min<int64_t>(rows, i + (lanes - 1) * Stride + 2);
 
-            for (int j = 1; j < cols - 1; j += lanes * stride) {
-                const svbool_t pg_cols = svwhilelt_b64_s64(j, cols - 1);
-                if (!svptest_any(pg_all, pg_cols))
-                    break;
-
+            // ZA0/ZA1 分别处理相邻的两个 j tile，使独立 MOPA 可以交错发射。
+            for (int64_t j = 1; j < cols - 1; j += 2 * column_step) {
+                const int64_t next_j = j + column_step;
+                const svbool_t pg_cols0 = svwhilelt_b64_s64(j, cols - 1);
+                const svbool_t pg_cols1 = svwhilelt_b64_s64(next_j, cols - 1);
+                const bool has_second_tile = next_j < cols - 1;
+                const bool full_tile0 = j + lanes <= cols - 1;
+                const bool full_tile1 = next_j + lanes <= cols - 1;
                 svzero_za();
 
-                // 7 个物理连续输入流覆盖原算子的全部 13 个点；dy 关系由系数列编码。
-                const int source_row_end =
-                    std::min<int64_t>(rows, i + (lanes - 1) * stride + 2);
-                for (int dk = -1; dk <= 1; ++dk) {
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        if (!is_source_offset(dk, 0, dx) &&
-                            !is_source_offset(dk, -1, dx) &&
-                            !is_source_offset(dk, 1, dx))
-                            continue;
+                for (int source_i = i - 1; source_i < source_row_end; ++source_i) {
+                    const int64_t source_row_offset = source_i - i;
+                    const svfloat64_t shifted_coefficients =
+                        shifted_row_coefficients<Stride>(
+                            pg_rows, row_lanes, source_row_offset);
 
-                        for (int source_i = i - 1; source_i < source_row_end; ++source_i) {
-                            const svfloat64_t coefficients = paper_stream_coefficients(
+                    const bool has_output_row =
+                        source_row_offset >= 0 && source_row_offset % Stride == 0 &&
+                        source_row_offset / Stride < active_rows;
+                    const int64_t output_row_index =
+                        has_output_row ? source_row_offset / Stride : 0;
+                    const svfloat64_t one_hot_coefficients = one_hot_row_coefficients(
+                        pg_rows, row_lanes, output_row_index);
+
+                    const int64_t center0 =
+                        static_cast<int64_t>(k) * plane_size +
+                        static_cast<int64_t>(source_i) * cols + j;
+                    accumulate_same_plane<0>(
+                        pg_rows,
+                        pg_cols0,
+                        pg_two,
+                        shifted_coefficients,
+                        one_hot_coefficients,
+                        &input[center0],
+                        has_output_row,
+                        full_tile0);
+                    if (has_second_tile) {
+                        accumulate_same_plane<1>(
+                            pg_rows,
+                            pg_cols1,
+                            pg_two,
+                            shifted_coefficients,
+                            one_hot_coefficients,
+                            &input[center0 + column_step],
+                            has_output_row,
+                            full_tile1);
+                    }
+
+                    // 相邻 z 平面的 dx=0 流共享移位系数列。
+                    accumulate_address<0>(
+                        pg_rows,
+                        pg_cols0,
+                        shifted_coefficients,
+                        &input[center0 - plane_size]);
+                    if (has_second_tile) {
+                        accumulate_address<1>(
+                            pg_rows,
+                            pg_cols1,
+                            shifted_coefficients,
+                            &input[center0 - plane_size + column_step]);
+                    }
+                    accumulate_address<0>(
+                        pg_rows,
+                        pg_cols0,
+                        shifted_coefficients,
+                        &input[center0 + plane_size]);
+                    if (has_second_tile) {
+                        accumulate_address<1>(
+                            pg_rows,
+                            pg_cols1,
+                            shifted_coefficients,
+                            &input[center0 + plane_size + column_step]);
+                    }
+
+                    // 两条跨 z/x 对角流仅在 source_i 对应真实输出行时执行。
+                    if (has_output_row) {
+                        accumulate_address<0>(
+                            pg_rows,
+                            pg_cols0,
+                            one_hot_coefficients,
+                            &input[center0 - plane_size - 1]);
+                        if (has_second_tile) {
+                            accumulate_address<1>(
                                 pg_rows,
-                                row_lanes,
-                                static_cast<int64_t>(source_i - i),
-                                stride,
-                                dk,
-                                dx);
-                            const int64_t source_index =
-                                static_cast<int64_t>(k + dk) * plane_size +
-                                static_cast<int64_t>(source_i) * cols + j + dx;
-                            const svfloat64_t values = svld1_f64(pg_cols, &input[source_index]);
-                            svmopa_za64_f64_m(0, pg_rows, pg_cols, coefficients, values);
+                                pg_cols1,
+                                one_hot_coefficients,
+                                &input[center0 - plane_size - 1 + column_step]);
+                        }
+                        accumulate_address<0>(
+                            pg_rows,
+                            pg_cols0,
+                            one_hot_coefficients,
+                            &input[center0 + plane_size + 1]);
+                        if (has_second_tile) {
+                            accumulate_address<1>(
+                                pg_rows,
+                                pg_cols1,
+                                one_hot_coefficients,
+                                &input[center0 + plane_size + 1 + column_step]);
                         }
                     }
                 }
 
-                // 每个 ZA 水平 slice 对应 tile 中一个不同的输出行。
-                for (int64_t row = 0; row < active_rows; ++row) {
-                    const svfloat64_t result =
-                        svread_hor_za64_m(svdup_n_f64(0.0), pg_cols, 0, row);
-                    const int64_t output_index =
-                        static_cast<int64_t>(k) * plane_size +
-                        static_cast<int64_t>(i + row * stride) * cols + j;
-                    svst1_f64(pg_cols, &output[output_index], result);
+                const int64_t output0 =
+                    static_cast<int64_t>(k) * plane_size +
+                    static_cast<int64_t>(i) * cols + j;
+                write_output_rows<0>(
+                    pg_cols0, &output[output0], cols, Stride, active_rows);
+                if (has_second_tile) {
+                    write_output_rows<1>(
+                        pg_cols1,
+                        &output[output0 + column_step],
+                        cols,
+                        Stride,
+                        active_rows);
                 }
             }
         }
     }
 }
 
+}  // 匿名命名空间
+
+// 使用 SMEStencil 第 IV-A 节的外积映射，计算 stencil_all_sme.cpp 中相同的 3D 13 点算子。
+//
+// stride-1/2 分别生成专用实现；每次用 ZA0/ZA1 计算两个 SVL x SVL 输出 tile。
+__arm_new("za")
+void stencil3d_13point_sme_paper(const double* __restrict__ input,
+                                 double* __restrict__ output,
+                                 int depth,
+                                 int rows,
+                                 int cols,
+                                 int stride)
+    __arm_streaming {
+    if (depth < 3 || rows < 3 || cols < 3 || stride <= 0)
+        return;
+    if (stride == 1)
+        stencil3d_13point_sme_paper_impl<1>(input, output, depth, rows, cols);
+    else if (stride == 2)
+        stencil3d_13point_sme_paper_impl<2>(input, output, depth, rows, cols);
+}
+
 void stencil3d_13point_reference(const double* input,
                                  double* output,
                                  int depth,
                                  int rows,
-                                 int cols) {
+                                 int cols,
+                                 int stride) {
     const int64_t plane_size = static_cast<int64_t>(rows) * cols;
-    for (int k = 1; k < depth - 1; ++k) {
-        for (int i = 1; i < rows - 1; ++i) {
-            for (int j = 1; j < cols - 1; ++j) {
+    for (int k = 1; k < depth - 1; k += stride) {
+        for (int i = 1; i < rows - 1; i += stride) {
+            for (int j = 1; j < cols - 1; j += stride) {
                 const int64_t center = static_cast<int64_t>(k) * plane_size +
                                        static_cast<int64_t>(i) * cols + j;
                 const double sum =
@@ -160,20 +293,28 @@ bool smestencil_paper_3d13_self_test() {
     constexpr int kCols = 17;
     const int64_t element_count = static_cast<int64_t>(kDepth) * kRows * kCols;
     std::vector<double> input(element_count);
-    std::vector<double> reference(element_count, -1.0);
-    std::vector<double> actual(element_count, -1.0);
-
     for (int64_t index = 0; index < element_count; ++index)
         input[index] = std::sin(static_cast<double>(index) * 0.125) + index * 0.001;
 
-    stencil3d_13point_reference(input.data(), reference.data(), kDepth, kRows, kCols);
-    stencil3d_13point_sme_paper(input.data(), actual.data(), kDepth, kRows, kCols, 1);
-
     double max_error = 0.0;
-    for (int64_t index = 0; index < element_count; ++index)
-        max_error = std::max(max_error, std::abs(reference[index] - actual[index]));
+    for (int stride : {1, 2}) {
+        std::vector<double> reference(element_count, -1.0);
+        std::vector<double> actual(element_count, -1.0);
+        stencil3d_13point_reference(
+            input.data(), reference.data(), kDepth, kRows, kCols, stride);
+        stencil3d_13point_sme_paper(
+            input.data(), actual.data(), kDepth, kRows, kCols, stride);
 
-    std::cout << "SMEStencil 3D13P max error: " << max_error << '\n';
+        double stride_error = 0.0;
+        for (int64_t index = 0; index < element_count; ++index) {
+            stride_error =
+                std::max(stride_error, std::abs(reference[index] - actual[index]));
+        }
+        std::cout << "SMEStencil 3D13P stride-" << stride
+                  << " max error: " << stride_error << '\n';
+        max_error = std::max(max_error, stride_error);
+    }
+
     return max_error <= 1.0e-11;
 }
 
