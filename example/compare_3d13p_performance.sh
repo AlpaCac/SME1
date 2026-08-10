@@ -8,6 +8,7 @@
 #
 # 每个可执行文件自身对 stride=1 和 stride=2 各执行 100 次 kernel sweep。
 # 脚本只解析程序打印的 Time:，不把编译、初始化或进程墙钟时间计入结果。
+# 默认使用毕昇 compiler-rt 的 SME ABI 运行时，解决 __arm_tpidr2_save 等链接符号。
 
 set -euo pipefail
 
@@ -35,6 +36,12 @@ die() {
 [[ "${repetitions}" =~ ^[1-9][0-9]*$ ]] || die "SME_PERF_REPETITIONS must be a positive integer"
 [[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || die "SME_PERF_TIMEOUT_SECONDS must be a non-negative integer"
 
+compiler_version="$("${cxx}" --version | sed -n '1p')"
+if [[ "${SME_PERF_ALLOW_NON_BISHENG_CXX:-0}" != "1" &&
+      ! "${compiler_version}" =~ [Bb]i[Ss]heng ]]; then
+  die "compiler is not BiSheng: ${compiler_version}; set BISHENG_CXX or SME_PERF_ALLOW_NON_BISHENG_CXX=1"
+fi
+
 if [[ -n "${cpu}" ]]; then
   command -v taskset >/dev/null 2>&1 || die "SME_PERF_CPU requires taskset"
 fi
@@ -55,10 +62,21 @@ if [[ -n "${SME_PERF_CXXFLAGS:-}" ]]; then
   common_flags+=("${extra_flags[@]}")
 fi
 
+# __arm_tpidr2_save 由毕昇 compiler-rt 的 SME ABI 支持提供。若服务器还需要额外
+# 库路径或库，可通过 SME_PERF_LINK_FLAGS 以空格分隔的形式追加。
+link_flags=(--rtlib=compiler-rt -lgcc_s)
+if [[ -n "${SME_PERF_LINK_FLAGS:-}" ]]; then
+  read -r -a extra_link_flags <<< "${SME_PERF_LINK_FLAGS}"
+  link_flags+=("${extra_link_flags[@]}")
+fi
+
 printf '== 编译 ==\n'
 printf 'compiler: %s\n' "${cxx}"
-"${cxx}" "${common_flags[@]}" "${baseline_source}" -o "${baseline_bin}"
-"${cxx}" "${common_flags[@]}" -DSMESTENCIL_PAPER_DEMO "${paper_source}" -o "${paper_bin}"
+printf 'compiler version: %s\n' "${compiler_version}"
+printf 'SME ABI link flags: %s\n' "${link_flags[*]}"
+"${cxx}" "${common_flags[@]}" "${baseline_source}" "${link_flags[@]}" -o "${baseline_bin}"
+"${cxx}" "${common_flags[@]}" -DSMESTENCIL_PAPER_DEMO "${paper_source}" \
+  "${link_flags[@]}" -o "${paper_bin}"
 
 run_binary() {
   local binary="$1"
