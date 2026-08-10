@@ -95,17 +95,18 @@ fi
 run_binary() {
   local binary="$1"
   local log_file="$2"
+  shift 2
 
   if (( timeout_seconds > 0 )); then
     if [[ -n "${cpu}" ]]; then
-      timeout "${timeout_seconds}" taskset -c "${cpu}" "${binary}" >"${log_file}" 2>&1
+      timeout "${timeout_seconds}" taskset -c "${cpu}" "${binary}" "$@" >"${log_file}" 2>&1
     else
-      timeout "${timeout_seconds}" "${binary}" >"${log_file}" 2>&1
+      timeout "${timeout_seconds}" "${binary}" "$@" >"${log_file}" 2>&1
     fi
   elif [[ -n "${cpu}" ]]; then
-    taskset -c "${cpu}" "${binary}" >"${log_file}" 2>&1
+    taskset -c "${cpu}" "${binary}" "$@" >"${log_file}" 2>&1
   else
-    "${binary}" >"${log_file}" 2>&1
+    "${binary}" "$@" >"${log_file}" 2>&1
   fi
 }
 
@@ -114,8 +115,9 @@ run_binary_checked() {
   local binary="$2"
   local log_file="$3"
   local status
+  shift 3
 
-  if run_binary "${binary}" "${log_file}"; then
+  if run_binary "${binary}" "${log_file}" "$@"; then
     return 0
   else
     status=$?
@@ -175,16 +177,20 @@ for ((run = 1; run <= repetitions; ++run)); do
   single_za_log="${build_dir}/single_za_run_${run}.log"
   no_reuse_log="${build_dir}/no_reuse_run_${run}.log"
   printf 'sample %d/%d: baseline\n' "${run}" "${repetitions}"
-  run_binary_checked "baseline sample ${run}" "${baseline_bin}" "${baseline_log}"
+  run_binary_checked "baseline sample ${run}" "${baseline_bin}" "${baseline_log}" \
+    --3d13p-s1 --3d13p-s2
   printf 'sample %d/%d: paper-style\n' "${run}" "${repetitions}"
-  run_binary_checked "paper-style sample ${run}" "${paper_bin}" "${paper_log}"
+  run_binary_checked "paper-style sample ${run}" "${paper_bin}" "${paper_log}" \
+    --3d13p-s1 --3d13p-s2
   if [[ "${ablations}" == "1" ]]; then
     printf 'sample %d/%d: paper-style single ZA\n' "${run}" "${repetitions}"
     run_binary_checked \
-      "single-ZA sample ${run}" "${single_za_bin}" "${single_za_log}"
+      "single-ZA sample ${run}" "${single_za_bin}" "${single_za_log}" \
+      --3d13p-s1 --3d13p-s2
     printf 'sample %d/%d: paper-style no load reuse\n' "${run}" "${repetitions}"
     run_binary_checked \
-      "no-reuse sample ${run}" "${no_reuse_bin}" "${no_reuse_log}"
+      "no-reuse sample ${run}" "${no_reuse_bin}" "${no_reuse_log}" \
+      --3d13p-s1 --3d13p-s2
   fi
 
   baseline_times=()
