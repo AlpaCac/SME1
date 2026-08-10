@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# 在 AArch64 SME 服务器上比较原始 3D13P 与论文式 ZA 映射实现。
+# 在 AArch64 SME 服务器上逐项比较原始实现与论文式 ZA 映射实现。
 #
 # 用法：
 #   BISHENG_CXX=/path/to/bisheng/bin/clang++ \
 #   SME_PERF_CPU=0 SME_PERF_REPETITIONS=3 \
 #   ./example/compare_3d13p_performance.sh
-# 若要定位双 ZA 或重叠加载复用是否造成负收益，再设置 SME_PERF_ABLATIONS=1。
 #
-# 每个可执行文件自身对 stride=1 和 stride=2 各执行 100 次 kernel sweep。
-# 脚本只解析程序打印的 Time:，不把编译、初始化或进程墙钟时间计入结果。
+# 默认测试六类算子的 stride-1/stride-2，共 12 个用例。可用空格或逗号筛选：
+#   SME_PERF_CASES="2d5p-s1,3d13p-s2" ./example/compare_3d13p_performance.sh
+# 若要比较单 ZA 和禁用重叠加载复用的版本，设置 SME_PERF_ABLATIONS=1。
+#
+# 每条 Time: 是程序内部 100 次 kernel sweep 的总时间，不包括初始化和自检。
 # 默认使用毕昇 compiler-rt 的 SME ABI 运行时，解决 __arm_tpidr2_save 等链接符号。
 
 set -euo pipefail
@@ -19,26 +21,60 @@ repetitions="${SME_PERF_REPETITIONS:-1}"
 cpu="${SME_PERF_CPU:-}"
 timeout_seconds="${SME_PERF_TIMEOUT_SECONDS:-0}"
 ablations="${SME_PERF_ABLATIONS:-0}"
-build_dir="${SME_PERF_BUILD_DIR:-${TMPDIR:-/tmp}/sme1-3d13p-performance}"
+build_dir="${SME_PERF_BUILD_DIR:-${TMPDIR:-/tmp}/sme1-all-stencil-performance}"
+results_csv="${SME_PERF_RESULTS_CSV:-${build_dir}/performance_results.csv}"
 
 baseline_source="${script_dir}/stencil_all_sme.cpp"
 paper_source="${script_dir}/smestencil_paper_3d13.cpp"
 baseline_bin="${build_dir}/stencil_all_sme"
-paper_bin="${build_dir}/smestencil_paper_3d13"
-single_za_bin="${build_dir}/smestencil_paper_3d13_single_za"
-no_reuse_bin="${build_dir}/smestencil_paper_3d13_no_reuse"
+paper_bin="${build_dir}/smestencil_paper"
+single_za_bin="${build_dir}/smestencil_paper_single_za"
+no_reuse_bin="${build_dir}/smestencil_paper_no_reuse"
+
+all_cases=(
+  1d3p-s1 1d3p-s2
+  2d5p-s1 2d5p-s2
+  2d9p-s1 2d9p-s2
+  3d13p-s1 3d13p-s2
+  3d25p-s1 3d25p-s2
+  3d27p-s1 3d27p-s2
+)
 
 die() {
   printf 'error: %s\n' "$*" >&2
   exit 1
 }
 
+case_exists() {
+  local wanted="$1"
+  local candidate
+  for candidate in "${all_cases[@]}"; do
+    [[ "${candidate}" == "${wanted}" ]] && return 0
+  done
+  return 1
+}
+
+selected_cases=()
+if [[ -n "${SME_PERF_CASES:-}" ]]; then
+  requested_cases="${SME_PERF_CASES//,/ }"
+  read -r -a selected_cases <<< "${requested_cases}"
+  ((${#selected_cases[@]} > 0)) || die "SME_PERF_CASES did not select any case"
+  for test_case in "${selected_cases[@]}"; do
+    case_exists "${test_case}" || \
+      die "unknown case '${test_case}'; expected one of: ${all_cases[*]}"
+  done
+else
+  selected_cases=("${all_cases[@]}")
+fi
+
 [[ -x "${cxx}" || -n "$(command -v "${cxx}" 2>/dev/null || true)" ]] || \
   die "compiler not found: ${cxx}; set BISHENG_CXX to the server clang++ path"
 [[ -f "${baseline_source}" ]] || die "missing source: ${baseline_source}"
 [[ -f "${paper_source}" ]] || die "missing source: ${paper_source}"
-[[ "${repetitions}" =~ ^[1-9][0-9]*$ ]] || die "SME_PERF_REPETITIONS must be a positive integer"
-[[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || die "SME_PERF_TIMEOUT_SECONDS must be a non-negative integer"
+[[ "${repetitions}" =~ ^[1-9][0-9]*$ ]] || \
+  die "SME_PERF_REPETITIONS must be a positive integer"
+[[ "${timeout_seconds}" =~ ^[0-9]+$ ]] || \
+  die "SME_PERF_TIMEOUT_SECONDS must be a non-negative integer"
 [[ "${ablations}" == "0" || "${ablations}" == "1" ]] || \
   die "SME_PERF_ABLATIONS must be 0 or 1"
 
@@ -51,25 +87,20 @@ fi
 if [[ -n "${cpu}" ]]; then
   command -v taskset >/dev/null 2>&1 || die "SME_PERF_CPU requires taskset"
 fi
-if (( timeout_seconds > 0 )); then
-  command -v timeout >/dev/null 2>&1 || die "SME_PERF_TIMEOUT_SECONDS requires timeout"
+if ((timeout_seconds > 0)); then
+  command -v timeout >/dev/null 2>&1 || \
+    die "SME_PERF_TIMEOUT_SECONDS requires timeout"
 fi
 
 mkdir -p "${build_dir}"
+mkdir -p "$(dirname "${results_csv}")"
 
-common_flags=(
-  -O3
-  -std=c++17
-  -march=armv9-a+sme+sme-f64f64
-)
+common_flags=(-O3 -std=c++17 -march=armv9-a+sme+sme-f64f64)
 if [[ -n "${SME_PERF_CXXFLAGS:-}" ]]; then
-  # 允许服务器补充例如 -mcpu=native；该变量只应包含空格分隔的编译选项。
   read -r -a extra_flags <<< "${SME_PERF_CXXFLAGS}"
   common_flags+=("${extra_flags[@]}")
 fi
 
-# __arm_tpidr2_save 由毕昇 compiler-rt 的 SME ABI 支持提供。若服务器还需要额外
-# 库路径或库，可通过 SME_PERF_LINK_FLAGS 以空格分隔的形式追加。
 link_flags=(--rtlib=compiler-rt -lgcc_s)
 if [[ -n "${SME_PERF_LINK_FLAGS:-}" ]]; then
   read -r -a extra_link_flags <<< "${SME_PERF_LINK_FLAGS}"
@@ -79,8 +110,10 @@ fi
 printf '== 编译 ==\n'
 printf 'compiler: %s\n' "${cxx}"
 printf 'compiler version: %s\n' "${compiler_version}"
+printf 'cases: %s\n' "${selected_cases[*]}"
 printf 'SME ABI link flags: %s\n' "${link_flags[*]}"
-"${cxx}" "${common_flags[@]}" "${baseline_source}" "${link_flags[@]}" -o "${baseline_bin}"
+"${cxx}" "${common_flags[@]}" "${baseline_source}" \
+  "${link_flags[@]}" -o "${baseline_bin}"
 "${cxx}" "${common_flags[@]}" -DSMESTENCIL_PAPER_DEMO "${paper_source}" \
   "${link_flags[@]}" -o "${paper_bin}"
 if [[ "${ablations}" == "1" ]]; then
@@ -97,9 +130,10 @@ run_binary() {
   local log_file="$2"
   shift 2
 
-  if (( timeout_seconds > 0 )); then
+  if ((timeout_seconds > 0)); then
     if [[ -n "${cpu}" ]]; then
-      timeout "${timeout_seconds}" taskset -c "${cpu}" "${binary}" "$@" >"${log_file}" 2>&1
+      timeout "${timeout_seconds}" taskset -c "${cpu}" \
+        "${binary}" "$@" >"${log_file}" 2>&1
     else
       timeout "${timeout_seconds}" "${binary}" "$@" >"${log_file}" 2>&1
     fi
@@ -130,22 +164,39 @@ run_binary_checked() {
   exit "${status}"
 }
 
-read_times() {
+read_single_time() {
   local log_file="$1"
-  local -n destination="$2"
-
-  mapfile -t destination < <(
-    awk -F ':' '/^Time:/ { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2 }' "${log_file}"
-  )
-  if (( ${#destination[@]} != 2 )); then
-    printf 'expected two Time: lines in %s, got %d\n' "${log_file}" "${#destination[@]}" >&2
+  local parsed
+  parsed="$(awk -F ':' '
+    /^Time:/ {
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+      value = $2
+      count++
+    }
+    END {
+      if (count == 1) print value
+    }' "${log_file}")"
+  if [[ ! "${parsed}" =~ ^[0-9]+([.][0-9]+)?([eE][-+]?[0-9]+)?$ ]]; then
+    printf 'expected exactly one numeric Time: line in %s\n' "${log_file}" >&2
     sed -n '1,160p' "${log_file}" >&2
     exit 1
   fi
+  REPLY="${parsed}"
 }
 
-median() {
-  printf '%s\n' "$@" | LC_ALL=C sort -n | awk '
+sample_file() {
+  printf '%s/samples_%s_%s.txt' "${build_dir}" "$1" "$2"
+}
+
+append_sample() {
+  local variant="$1"
+  local test_case="$2"
+  local value="$3"
+  printf '%s\n' "${value}" >>"$(sample_file "${variant}" "${test_case}")"
+}
+
+median_file() {
+  LC_ALL=C sort -n "$1" | awk '
     { value[NR] = $1 }
     END {
       if (NR == 0) exit 1
@@ -161,94 +212,87 @@ speedup() {
   }'
 }
 
-baseline_s1=()
-baseline_s2=()
-paper_s1=()
-paper_s2=()
-single_za_s1=()
-single_za_s2=()
-no_reuse_s1=()
-no_reuse_s2=()
+measure_variant() {
+  local variant="$1"
+  local binary="$2"
+  local test_case="$3"
+  local run="$4"
+  local log_file="${build_dir}/${variant}_${test_case}_run_${run}.log"
+  printf 'sample %d/%d: %-9s --%s\n' \
+    "${run}" "${repetitions}" "${variant}" "${test_case}"
+  run_binary_checked \
+    "${variant} ${test_case} sample ${run}" \
+    "${binary}" "${log_file}" "--${test_case}"
+  read_single_time "${log_file}"
+}
 
-printf '\n== 运行 ==\n'
-for ((run = 1; run <= repetitions; ++run)); do
-  baseline_log="${build_dir}/baseline_run_${run}.log"
-  paper_log="${build_dir}/paper_run_${run}.log"
-  single_za_log="${build_dir}/single_za_run_${run}.log"
-  no_reuse_log="${build_dir}/no_reuse_run_${run}.log"
-  printf 'sample %d/%d: baseline\n' "${run}" "${repetitions}"
-  run_binary_checked "baseline sample ${run}" "${baseline_bin}" "${baseline_log}" \
-    --3d13p-s1 --3d13p-s2
-  printf 'sample %d/%d: paper-style\n' "${run}" "${repetitions}"
-  run_binary_checked "paper-style sample ${run}" "${paper_bin}" "${paper_log}" \
-    --3d13p-s1 --3d13p-s2
+for test_case in "${selected_cases[@]}"; do
+  : >"$(sample_file baseline "${test_case}")"
+  : >"$(sample_file paper "${test_case}")"
   if [[ "${ablations}" == "1" ]]; then
-    printf 'sample %d/%d: paper-style single ZA\n' "${run}" "${repetitions}"
-    run_binary_checked \
-      "single-ZA sample ${run}" "${single_za_bin}" "${single_za_log}" \
-      --3d13p-s1 --3d13p-s2
-    printf 'sample %d/%d: paper-style no load reuse\n' "${run}" "${repetitions}"
-    run_binary_checked \
-      "no-reuse sample ${run}" "${no_reuse_bin}" "${no_reuse_log}" \
-      --3d13p-s1 --3d13p-s2
-  fi
-
-  baseline_times=()
-  paper_times=()
-  single_za_times=()
-  no_reuse_times=()
-  read_times "${baseline_log}" baseline_times
-  read_times "${paper_log}" paper_times
-  if [[ "${ablations}" == "1" ]]; then
-    read_times "${single_za_log}" single_za_times
-    read_times "${no_reuse_log}" no_reuse_times
-  fi
-  baseline_s1+=("${baseline_times[0]}")
-  baseline_s2+=("${baseline_times[1]}")
-  paper_s1+=("${paper_times[0]}")
-  paper_s2+=("${paper_times[1]}")
-  if [[ "${ablations}" == "1" ]]; then
-    single_za_s1+=("${single_za_times[0]}")
-    single_za_s2+=("${single_za_times[1]}")
-    no_reuse_s1+=("${no_reuse_times[0]}")
-    no_reuse_s2+=("${no_reuse_times[1]}")
+    : >"$(sample_file single-za "${test_case}")"
+    : >"$(sample_file no-reuse "${test_case}")"
   fi
 done
 
-baseline_s1_median="$(median "${baseline_s1[@]}")"
-baseline_s2_median="$(median "${baseline_s2[@]}")"
-paper_s1_median="$(median "${paper_s1[@]}")"
-paper_s2_median="$(median "${paper_s2[@]}")"
+printf '\n== 运行 ==\n'
+case_number=0
+for test_case in "${selected_cases[@]}"; do
+  case_number=$((case_number + 1))
+  for ((run = 1; run <= repetitions; ++run)); do
+    # 按用例和轮次交替顺序，单轮测试也不会始终固定为“基线先运行”。
+    if (((run + case_number) % 2 == 0)); then
+      measure_variant baseline "${baseline_bin}" "${test_case}" "${run}"
+      append_sample baseline "${test_case}" "${REPLY}"
+      measure_variant paper "${paper_bin}" "${test_case}" "${run}"
+      append_sample paper "${test_case}" "${REPLY}"
+    else
+      measure_variant paper "${paper_bin}" "${test_case}" "${run}"
+      append_sample paper "${test_case}" "${REPLY}"
+      measure_variant baseline "${baseline_bin}" "${test_case}" "${run}"
+      append_sample baseline "${test_case}" "${REPLY}"
+    fi
 
-printf '\n== 3D13P 性能结果 ==\n'
-printf '每个 Time: 均为 100 次 kernel sweep 的总时间；单次平均时间需再除以 100。\n'
-printf '| stride | 原始算法中位时间/s | 修改后算法中位时间/s | 加速比（原始/修改后） |\n'
+    if [[ "${ablations}" == "1" ]]; then
+      measure_variant single-za "${single_za_bin}" "${test_case}" "${run}"
+      append_sample single-za "${test_case}" "${REPLY}"
+      measure_variant no-reuse "${no_reuse_bin}" "${test_case}" "${run}"
+      append_sample no-reuse "${test_case}" "${REPLY}"
+    fi
+  done
+done
+
+printf 'case,baseline_median_s,paper_median_s,speedup\n' >"${results_csv}"
+printf '\n== 全算子性能结果 ==\n'
+printf '每个时间为 100 次 kernel sweep 的中位总时间；加速比 = 原始/论文式。\n'
+printf '| 用例 | 原始中位时间/s | 论文式中位时间/s | 加速比 |\n'
 printf '|---|---:|---:|---:|\n'
-printf '| 1 | %s | %s | %sx |\n' \
-  "${baseline_s1_median}" "${paper_s1_median}" "$(speedup "${baseline_s1_median}" "${paper_s1_median}")"
-printf '| 2 | %s | %s | %sx |\n' \
-  "${baseline_s2_median}" "${paper_s2_median}" "$(speedup "${baseline_s2_median}" "${paper_s2_median}")"
-if [[ "${ablations}" == "1" ]]; then
-  single_za_s1_median="$(median "${single_za_s1[@]}")"
-  single_za_s2_median="$(median "${single_za_s2[@]}")"
-  no_reuse_s1_median="$(median "${no_reuse_s1[@]}")"
-  no_reuse_s2_median="$(median "${no_reuse_s2[@]}")"
+for test_case in "${selected_cases[@]}"; do
+  baseline_median="$(median_file "$(sample_file baseline "${test_case}")")"
+  paper_median="$(median_file "$(sample_file paper "${test_case}")")"
+  case_speedup="$(speedup "${baseline_median}" "${paper_median}")"
+  printf '| %s | %s | %s | %sx |\n' \
+    "${test_case}" "${baseline_median}" "${paper_median}" "${case_speedup}"
+  printf '%s,%s,%s,%s\n' \
+    "${test_case}" "${baseline_median}" "${paper_median}" "${case_speedup}" \
+    >>"${results_csv}"
+done
 
+if [[ "${ablations}" == "1" ]]; then
   printf '\n== 消融诊断 ==\n'
-  printf '| 实现 | stride | 中位时间/s | 相对原始算法加速比 |\n'
-  printf '|---|---:|---:|---:|\n'
-  printf '| 双 ZA + 加载复用 | 1 | %s | %sx |\n' \
-    "${paper_s1_median}" "$(speedup "${baseline_s1_median}" "${paper_s1_median}")"
-  printf '| 双 ZA + 加载复用 | 2 | %s | %sx |\n' \
-    "${paper_s2_median}" "$(speedup "${baseline_s2_median}" "${paper_s2_median}")"
-  printf '| 单 ZA + 加载复用 | 1 | %s | %sx |\n' \
-    "${single_za_s1_median}" "$(speedup "${baseline_s1_median}" "${single_za_s1_median}")"
-  printf '| 单 ZA + 加载复用 | 2 | %s | %sx |\n' \
-    "${single_za_s2_median}" "$(speedup "${baseline_s2_median}" "${single_za_s2_median}")"
-  printf '| 双 ZA + 普通加载 | 1 | %s | %sx |\n' \
-    "${no_reuse_s1_median}" "$(speedup "${baseline_s1_median}" "${no_reuse_s1_median}")"
-  printf '| 双 ZA + 普通加载 | 2 | %s | %sx |\n' \
-    "${no_reuse_s2_median}" "$(speedup "${baseline_s2_median}" "${no_reuse_s2_median}")"
+  printf '| 用例 | 单 ZA 时间/s | 单 ZA 加速比 | 无复用时间/s | 无复用加速比 |\n'
+  printf '|---|---:|---:|---:|---:|\n'
+  for test_case in "${selected_cases[@]}"; do
+    baseline_median="$(median_file "$(sample_file baseline "${test_case}")")"
+    single_za_median="$(median_file "$(sample_file single-za "${test_case}")")"
+    no_reuse_median="$(median_file "$(sample_file no-reuse "${test_case}")")"
+    printf '| %s | %s | %sx | %s | %sx |\n' \
+      "${test_case}" \
+      "${single_za_median}" "$(speedup "${baseline_median}" "${single_za_median}")" \
+      "${no_reuse_median}" "$(speedup "${baseline_median}" "${no_reuse_median}")"
+  done
 fi
-printf '\n日志与二进制目录：%s\n' "${build_dir}"
-printf '提示：论文式程序会先执行一次小尺寸标量自检；该自检不包含在 Time: 中。\n'
+
+printf '\nCSV：%s\n' "${results_csv}"
+printf '日志与二进制目录：%s\n' "${build_dir}"
+printf '提示：论文式程序会先执行小尺寸标量自检；该时间不包含在 Time: 中。\n'

@@ -634,10 +634,11 @@ ZA[y,x] = sum(delta=-r..r) a[delta] * input[y,x+delta]
 `ones x neighbor`，使 ZA 各行相同并只读取第 0 行；论文使用移位系数向量，使一次
 外积真正为多个不同输出位置贡献数据。
 
-##### 对应实现：与原代码一致的 3D 13-point
+##### 对应实现：覆盖原代码中的六类算子
 
-`smestencil_paper_3d13.cpp` 新增了
-`stencil3d_13point_sme_paper`。它与 `stencil_all_sme.cpp` 的算子完全采用相同的
+`smestencil_paper_3d13.cpp` 现在包含 1D3P、2D5P、2D9P、3D13P、3D25P 和
+3D27P 的论文式 ZA 映射实现，并为 stride-1/stride-2 生成专用路径。其中
+`stencil3d_13point_sme_paper` 与 `stencil_all_sme.cpp` 的 3D13P 算子采用相同的
 13 个相对访问偏移，并对这 13 项求平均：
 
 ```text
@@ -650,10 +651,8 @@ output = sum(13 个点) / 13
 
 相对偏移按 `(dk, dx)` 分成 7 个连续输入流；每个流的合法 `dy` 关系写入论文式移位
 系数列向量。这样一次外积会填充多个正确的 ZA 行，最后逐行读取 ZA 并写回。实现包含
-与原算子逐点等价的标量参考版本和 `smestencil_paper_3d13_self_test()`，测试尺寸刻意
-包含行、列尾块。性能测试
-`test_stencil_3d_13point()` 则沿用原文件的 `128 x 512 x 512`、输入初始化、100 次
-调用、stride-1/stride-2 和 `Time:`/`Total Time:` 输出流程。
+各算子都有标量参考自检，测试尺寸刻意包含行、列尾块。性能测试沿用原文件的数组
+尺寸、输入初始化、100 次调用、stride-1/stride-2 和 `Time:`/`Total Time:` 输出流程。
 
 原始 `stencil_all_sme.cpp` 没有被替换；它保留为直接对比对象：原实现在每个邻居上
 使用 `ones x neighbor`，导致 ZA 各行重复并仅写回第 0 行；新实现对相同算子使用
@@ -665,7 +664,21 @@ output = sum(13 个点) / 13
 clang++ -std=c++17 -O2 -march=armv9-a+sme+sme-f64f64 \
   -DSMESTENCIL_PAPER_DEMO example/smestencil_paper_3d13.cpp \
   -o smestencil_paper_3d13_demo
-./smestencil_paper_3d13_demo
+./smestencil_paper_3d13_demo --3d13p-s1 --self-test-only
+```
+
+`compare_3d13p_performance.sh` 保留原文件名以兼容服务器上的既有命令，但现在默认比较
+六类算子的 stride-1/stride-2，共 12 个用例。脚本为每个参数分别运行原始程序和论文
+实现，按多轮结果取中位数，输出原始时间、论文式时间和加速比，同时生成 CSV：
+
+```bash
+BISHENG_CXX=/path/to/bisheng/bin/clang++ \
+SME_PERF_CPU=0 SME_PERF_REPETITIONS=3 \
+./example/compare_3d13p_performance.sh
+
+# 只测试指定用例
+SME_PERF_CASES="2d5p-s1,3d13p-s2" \
+./example/compare_3d13p_performance.sh
 ```
 
 ##### 循环视角图解
