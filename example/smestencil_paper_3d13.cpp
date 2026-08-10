@@ -13,70 +13,81 @@ namespace {
 
 constexpr double kPointWeight = 1.0 / 13.0;
 
-// 为 dy=-1/0/+1 的三条平面流构造一份共享移位系数列。
+#if defined(SMESTENCIL_PAPER_SINGLE_ZA)
+constexpr bool kUseTwoZaTiles = false;
+#else
+constexpr bool kUseTwoZaTiles = true;
+#endif
+
+#if defined(SMESTENCIL_PAPER_DISABLE_LOAD_REUSE)
+constexpr bool kReuseOverlappingLoads = false;
+#else
+constexpr bool kReuseOverlappingLoads = true;
+#endif
+
+// 用 MOPA 的纵向谓词选择 dy=-1/0/+1 对应的 ZA 行，避免构造稀疏系数向量。
 template <int Stride>
-static inline __attribute__((always_inline)) svfloat64_t shifted_row_coefficients(
+static inline __attribute__((always_inline)) svbool_t shifted_row_predicate(
     svbool_t pg_rows,
     svint64_t row_lanes,
     int64_t source_row_offset) __arm_streaming {
-    const svint64_t source = svdup_n_s64(source_row_offset);
-    const svint64_t output_offsets = svmul_n_s64_x(pg_rows, row_lanes, Stride);
-    const svint64_t delta = svsub_s64_x(pg_rows, source, output_offsets);
-    svfloat64_t coefficients = svdup_n_f64(0.0);
-
-    for (int dy = -1; dy <= 1; ++dy) {
-        const svbool_t matches = svcmpeq_n_s64(pg_rows, delta, dy);
-        coefficients = svsel_f64(matches, svdup_n_f64(kPointWeight), coefficients);
+    int64_t first_row;
+    int64_t last_row;
+    if constexpr (Stride == 1) {
+        first_row = source_row_offset - 1;
+        last_row = source_row_offset + 1;
+    } else {
+        first_row = source_row_offset < 0 ? -1 : source_row_offset / 2;
+        last_row = (source_row_offset + 1) / 2;
     }
-    return coefficients;
+    const svbool_t lower = svcmpge_n_s64(pg_rows, row_lanes, first_row);
+    const svbool_t upper = svcmple_n_s64(pg_rows, row_lanes, last_row);
+    return svand_b_z(pg_rows, lower, upper);
 }
 
-// 为只允许 dy=0 的四条流构造一份共享 one-hot 系数列。
-static inline __attribute__((always_inline)) svfloat64_t one_hot_row_coefficients(
+// 为只允许 dy=0 的四条流选择唯一的 ZA 输出行。
+static inline __attribute__((always_inline)) svbool_t one_hot_row_predicate(
     svbool_t pg_rows, svint64_t row_lanes, int64_t output_row) __arm_streaming {
-    const svbool_t selected = svcmpeq_n_s64(pg_rows, row_lanes, output_row);
-    return svsel_f64(selected, svdup_n_f64(kPointWeight), svdup_n_f64(0.0));
+    return svcmpeq_n_s64(pg_rows, row_lanes, output_row);
 }
 
 template <int Tile>
 static inline __attribute__((always_inline)) void accumulate_address(
-    svbool_t pg_rows,
+    svbool_t selected_rows,
     svbool_t pg_cols,
-    svfloat64_t coefficients,
+    svfloat64_t weight,
     const double* address) __arm_streaming __arm_inout("za") {
     const svfloat64_t values = svld1_f64(pg_cols, address);
-    svmopa_za64_f64_m(Tile, pg_rows, pg_cols, coefficients, values);
+    svmopa_za64_f64_m(Tile, selected_rows, pg_cols, weight, values);
 }
 
 // 同平面的 dx=-1/0/+1 高度重叠。完整 tile 用两次 load 加两次 ext 构造三个
 // 向量；尾 tile 回退到三个谓词 load，避免跨过当前输入行。
 template <int Tile>
 static inline __attribute__((always_inline)) void accumulate_same_plane(
-    svbool_t pg_rows,
+    svbool_t shifted_rows,
+    svbool_t one_hot_rows,
     svbool_t pg_cols,
     svbool_t pg_two,
-    svfloat64_t shifted_coefficients,
-    svfloat64_t one_hot_coefficients,
+    svfloat64_t weight,
     const double* center_address,
     bool output_row,
     bool full_tile) __arm_streaming __arm_inout("za") {
-    if (output_row && full_tile) {
+    if (output_row && full_tile && kReuseOverlappingLoads) {
         const svfloat64_t left_block = svld1_f64(pg_cols, center_address - 1);
         const svfloat64_t tail_block = svld1_f64(pg_two, center_address + svcntd() - 1);
         const svfloat64_t center = svext_f64(left_block, tail_block, 1);
         const svfloat64_t right = svext_f64(left_block, tail_block, 2);
-        svmopa_za64_f64_m(Tile, pg_rows, pg_cols, shifted_coefficients, center);
-        svmopa_za64_f64_m(Tile, pg_rows, pg_cols, one_hot_coefficients, left_block);
-        svmopa_za64_f64_m(Tile, pg_rows, pg_cols, one_hot_coefficients, right);
+        svmopa_za64_f64_m(Tile, shifted_rows, pg_cols, weight, center);
+        svmopa_za64_f64_m(Tile, one_hot_rows, pg_cols, weight, left_block);
+        svmopa_za64_f64_m(Tile, one_hot_rows, pg_cols, weight, right);
         return;
     }
 
-    accumulate_address<Tile>(pg_rows, pg_cols, shifted_coefficients, center_address);
+    accumulate_address<Tile>(shifted_rows, pg_cols, weight, center_address);
     if (output_row) {
-        accumulate_address<Tile>(
-            pg_rows, pg_cols, one_hot_coefficients, center_address - 1);
-        accumulate_address<Tile>(
-            pg_rows, pg_cols, one_hot_coefficients, center_address + 1);
+        accumulate_address<Tile>(one_hot_rows, pg_cols, weight, center_address - 1);
+        accumulate_address<Tile>(one_hot_rows, pg_cols, weight, center_address + 1);
     }
 }
 
@@ -101,12 +112,14 @@ static inline __attribute__((always_inline)) void stencil3d_13point_sme_paper_im
     int depth,
     int rows,
     int cols) __arm_streaming __arm_inout("za") {
+    static_assert(Stride == 1 || Stride == 2);
     const int64_t lanes = static_cast<int64_t>(svcntd());
     const int64_t plane_size = static_cast<int64_t>(rows) * cols;
     const int64_t column_step = lanes * Stride;
     const svbool_t pg_all = svptrue_b64();
     const svbool_t pg_two = svwhilelt_b64_s64(0, 2);
     const svint64_t row_lanes = svindex_s64(0, 1);
+    const svfloat64_t weight = svdup_n_f64(kPointWeight);
 
     for (int k = 1; k < depth - 1; k += Stride) {
         for (int i = 1; i < rows - 1; i += lanes * Stride) {
@@ -119,48 +132,59 @@ static inline __attribute__((always_inline)) void stencil3d_13point_sme_paper_im
                 std::min<int64_t>(rows, i + (lanes - 1) * Stride + 2);
 
             // ZA0/ZA1 分别处理相邻的两个 j tile，使独立 MOPA 可以交错发射。
-            for (int64_t j = 1; j < cols - 1; j += 2 * column_step) {
+            const int64_t tile_group_step =
+                (kUseTwoZaTiles ? 2 : 1) * column_step;
+            for (int64_t j = 1; j < cols - 1; j += tile_group_step) {
                 const int64_t next_j = j + column_step;
                 const svbool_t pg_cols0 = svwhilelt_b64_s64(j, cols - 1);
                 const svbool_t pg_cols1 = svwhilelt_b64_s64(next_j, cols - 1);
-                const bool has_second_tile = next_j < cols - 1;
+                const bool has_second_tile = kUseTwoZaTiles && next_j < cols - 1;
                 const bool full_tile0 = j + lanes <= cols - 1;
                 const bool full_tile1 = next_j + lanes <= cols - 1;
                 svzero_za();
 
                 for (int source_i = i - 1; source_i < source_row_end; ++source_i) {
                     const int64_t source_row_offset = source_i - i;
-                    const svfloat64_t shifted_coefficients =
-                        shifted_row_coefficients<Stride>(
-                            pg_rows, row_lanes, source_row_offset);
+                    const svbool_t shifted_rows = shifted_row_predicate<Stride>(
+                        pg_rows, row_lanes, source_row_offset);
 
-                    const bool has_output_row =
-                        source_row_offset >= 0 && source_row_offset % Stride == 0 &&
-                        source_row_offset / Stride < active_rows;
-                    const int64_t output_row_index =
-                        has_output_row ? source_row_offset / Stride : 0;
-                    const svfloat64_t one_hot_coefficients = one_hot_row_coefficients(
-                        pg_rows, row_lanes, output_row_index);
+                    bool has_output_row;
+                    int64_t output_row_index;
+                    if constexpr (Stride == 1) {
+                        has_output_row = source_row_offset >= 0 &&
+                                         source_row_offset < active_rows;
+                        output_row_index = source_row_offset;
+                    } else {
+                        has_output_row = source_row_offset >= 0 &&
+                                         (source_row_offset & 1) == 0 &&
+                                         source_row_offset / 2 < active_rows;
+                        output_row_index = source_row_offset / 2;
+                    }
+                    svbool_t one_hot_rows = svpfalse_b();
+                    if (has_output_row) {
+                        one_hot_rows = one_hot_row_predicate(
+                            pg_rows, row_lanes, output_row_index);
+                    }
 
                     const int64_t center0 =
                         static_cast<int64_t>(k) * plane_size +
                         static_cast<int64_t>(source_i) * cols + j;
                     accumulate_same_plane<0>(
-                        pg_rows,
+                        shifted_rows,
+                        one_hot_rows,
                         pg_cols0,
                         pg_two,
-                        shifted_coefficients,
-                        one_hot_coefficients,
+                        weight,
                         &input[center0],
                         has_output_row,
                         full_tile0);
                     if (has_second_tile) {
                         accumulate_same_plane<1>(
-                            pg_rows,
+                            shifted_rows,
+                            one_hot_rows,
                             pg_cols1,
                             pg_two,
-                            shifted_coefficients,
-                            one_hot_coefficients,
+                            weight,
                             &input[center0 + column_step],
                             has_output_row,
                             full_tile1);
@@ -168,54 +192,54 @@ static inline __attribute__((always_inline)) void stencil3d_13point_sme_paper_im
 
                     // 相邻 z 平面的 dx=0 流共享移位系数列。
                     accumulate_address<0>(
-                        pg_rows,
+                        shifted_rows,
                         pg_cols0,
-                        shifted_coefficients,
+                        weight,
                         &input[center0 - plane_size]);
                     if (has_second_tile) {
                         accumulate_address<1>(
-                            pg_rows,
+                            shifted_rows,
                             pg_cols1,
-                            shifted_coefficients,
+                            weight,
                             &input[center0 - plane_size + column_step]);
                     }
                     accumulate_address<0>(
-                        pg_rows,
+                        shifted_rows,
                         pg_cols0,
-                        shifted_coefficients,
+                        weight,
                         &input[center0 + plane_size]);
                     if (has_second_tile) {
                         accumulate_address<1>(
-                            pg_rows,
+                            shifted_rows,
                             pg_cols1,
-                            shifted_coefficients,
+                            weight,
                             &input[center0 + plane_size + column_step]);
                     }
 
                     // 两条跨 z/x 对角流仅在 source_i 对应真实输出行时执行。
                     if (has_output_row) {
                         accumulate_address<0>(
-                            pg_rows,
+                            one_hot_rows,
                             pg_cols0,
-                            one_hot_coefficients,
+                            weight,
                             &input[center0 - plane_size - 1]);
                         if (has_second_tile) {
                             accumulate_address<1>(
-                                pg_rows,
+                                one_hot_rows,
                                 pg_cols1,
-                                one_hot_coefficients,
+                                weight,
                                 &input[center0 - plane_size - 1 + column_step]);
                         }
                         accumulate_address<0>(
-                            pg_rows,
+                            one_hot_rows,
                             pg_cols0,
-                            one_hot_coefficients,
+                            weight,
                             &input[center0 + plane_size + 1]);
                         if (has_second_tile) {
                             accumulate_address<1>(
-                                pg_rows,
+                                one_hot_rows,
                                 pg_cols1,
-                                one_hot_coefficients,
+                                weight,
                                 &input[center0 + plane_size + 1 + column_step]);
                         }
                     }
