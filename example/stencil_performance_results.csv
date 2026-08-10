@@ -1,0 +1,13 @@
+operator,baseline_time_s,optimized_time_s,speedup
+1d3p-s1,,,
+1d3p-s2,,,
+2d5p-s1,,,
+2d5p-s2,,,
+2d9p-s1,,,
+2d9p-s2,,,
+3d13p-s1,,,
+3d13p-s2,,,
+3d25p-s1,,,
+3d25p-s2,,,
+3d27p-s1,,,
+3d27p-s2,,,
