@@ -260,27 +260,41 @@ void stencil3d_13point_sme_paper(const double* __restrict__ input,
         stencil3d_13point_sme_paper_impl<2>(input, output, depth, rows, cols);
 }
 
+int64_t smestencil_streaming_double_lanes() __arm_streaming {
+    return static_cast<int64_t>(svcntd());
+}
+
 void stencil3d_13point_reference(const double* input,
                                  double* output,
                                  int depth,
                                  int rows,
                                  int cols,
-                                 int stride) {
+                                 int stride,
+                                 int64_t lanes) {
     const int64_t plane_size = static_cast<int64_t>(rows) * cols;
     for (int k = 1; k < depth - 1; k += stride) {
         for (int i = 1; i < rows - 1; i += stride) {
-            for (int j = 1; j < cols - 1; j += stride) {
-                const int64_t center = static_cast<int64_t>(k) * plane_size +
-                                       static_cast<int64_t>(i) * cols + j;
-                const double sum =
-                    input[center] +
-                    input[center - plane_size] + input[center + plane_size] +
-                    input[center - cols] + input[center + cols] +
-                    input[center - 1] + input[center + 1] +
-                    input[center - plane_size - cols] + input[center - plane_size + cols] +
-                    input[center + plane_size - cols] + input[center + plane_size + cols] +
-                    input[center - plane_size - 1] + input[center + plane_size + 1];
-                output[center] = kPointWeight * sum;
+            for (int64_t block_j = 1; block_j < cols - 1;
+                 block_j += lanes * stride) {
+                for (int64_t lane = 0;
+                     lane < lanes && block_j + lane < cols - 1;
+                     ++lane) {
+                    const int64_t j = block_j + lane;
+                    const int64_t center = static_cast<int64_t>(k) * plane_size +
+                                           static_cast<int64_t>(i) * cols + j;
+                    const double sum =
+                        input[center] +
+                        input[center - plane_size] + input[center + plane_size] +
+                        input[center - cols] + input[center + cols] +
+                        input[center - 1] + input[center + 1] +
+                        input[center - plane_size - cols] +
+                        input[center - plane_size + cols] +
+                        input[center + plane_size - cols] +
+                        input[center + plane_size + cols] +
+                        input[center - plane_size - 1] +
+                        input[center + plane_size + 1];
+                    output[center] = kPointWeight * sum;
+                }
             }
         }
     }
@@ -296,12 +310,13 @@ bool smestencil_paper_3d13_self_test() {
     for (int64_t index = 0; index < element_count; ++index)
         input[index] = std::sin(static_cast<double>(index) * 0.125) + index * 0.001;
 
+    const int64_t lanes = smestencil_streaming_double_lanes();
     double max_error = 0.0;
     for (int stride : {1, 2}) {
         std::vector<double> reference(element_count, -1.0);
         std::vector<double> actual(element_count, -1.0);
         stencil3d_13point_reference(
-            input.data(), reference.data(), kDepth, kRows, kCols, stride);
+            input.data(), reference.data(), kDepth, kRows, kCols, stride, lanes);
         stencil3d_13point_sme_paper(
             input.data(), actual.data(), kDepth, kRows, kCols, stride);
 
